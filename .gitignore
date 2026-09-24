@@ -11,6 +11,8 @@
 /node_modules/
 /package-lock.json
 /yarn.lock
+/frontend/node_modules/
+/.npm-cache/
 
 # Environment files
 /.env
