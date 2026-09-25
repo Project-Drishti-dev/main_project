@@ -633,6 +633,13 @@ body.workspace-page {
   font-size: var(--ux4g-font-size-14);
 }
 
+.analysis-status {
+  min-height: var(--ux4g-line-height-20);
+  margin: calc(-1 * var(--ux4g-gap-row-s)) 0 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+}
+
 .preview-panel {
   display: grid;
   grid-template-columns: 5rem minmax(0, 1fr);
@@ -711,6 +718,26 @@ body.workspace-page {
   overflow-wrap: anywhere;
 }
 
+.overall-result {
+  margin: 0 0 var(--ux4g-gap-row-m);
+  font-size: var(--ux4g-font-size-16);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.overall-result.is-pass,
+.metric-status.is-pass {
+  color: var(--ux4g-text-status-success);
+}
+
+.overall-result.is-fail,
+.metric-status.is-fail {
+  color: var(--ux4g-text-status-error);
+}
+
+.metric-status.is-na {
+  color: var(--ux4g-text-neutral-secondary);
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -765,6 +792,53 @@ body.workspace-page {
   grid-column: 2 / -1;
   color: var(--ux4g-text-neutral-secondary);
   font-size: var(--ux4g-font-size-11);
+}
+
+.metric-unit {
+  grid-column: 2 / -1;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  overflow-wrap: anywhere;
+}
+
+.metric-detail {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: var(--ux4g-gap-row-xs);
+  padding-top: var(--ux4g-padding-xs);
+  border-top: var(--ux4g-border-width-sm) solid
+    var(--ux4g-border-color-neutral-subtle);
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  line-height: var(--ux4g-line-height-16);
+  overflow-wrap: anywhere;
+}
+
+.metric-detail strong {
+  color: var(--ux4g-text-neutral-primary);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.metric-details {
+  display: grid;
+  gap: var(--ux4g-gap-row-xs);
+  margin: 0;
+}
+
+.metric-details > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: var(--ux4g-gap-column-xs);
+}
+
+.metric-details dt {
+  color: var(--ux4g-text-neutral-primary);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.metric-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .results-actions {

@@ -215,11 +215,11 @@
                   <path d="M12 8v4M12 15h.01" />
                 </svg>
               </div>
-              <p class="eyebrow">PROTOTYPE MODE</p>
-              <h2>Private on this device</h2>
+              <p class="eyebrow">IMAGE HANDLING</p>
+              <h2>Sent only when you submit</h2>
               <p>
-                This frontend preview doesn’t upload or save your selected
-                image. Real analysis will be connected later.
+                The selected image is sent to the configured quality API for
+                analysis. The prototype API does not save image files.
               </p>
             </article>
           </section>
@@ -329,7 +329,18 @@
             <p id="upload-help" class="upload-help">
               Choose a clear, well-lit photo or scan of one document.
             </p>
+            <p class="upload-help">
+              When you run the checks, this image is sent to the configured
+              analysis API. Use a synthetic image for testing.
+            </p>
             <p id="file-error" class="file-error" role="alert" aria-live="assertive"></p>
+            <p
+              id="analysis-status"
+              class="analysis-status"
+              role="status"
+              aria-live="polite"
+              tabindex="-1"
+            ></p>
 
             <div id="preview-panel" class="preview-panel" hidden>
               <img id="image-preview" class="image-preview" alt="Selected document preview" />
@@ -380,59 +391,125 @@
           <div class="results-notice" role="note">
             <span class="results-notice__icon" aria-hidden="true">i</span>
             <p>
-              <strong>Python quality checker is not connected.</strong>
-              These checks are shown as a preview only; no scores or pass/fail
-              results have been calculated.
+              <strong>Prototype only.</strong>
+              Checker thresholds are experimental and are not an
+              identity-verification decision.
             </p>
           </div>
           <p id="results-intro" class="results-intro">
-            Demo preview — the selected image has not been analyzed.
+            Upload and run the quality checks to see the analysis here.
+          </p>
+          <p id="overall-result" class="overall-result" role="status" aria-live="polite">
+            No analysis completed yet.
           </p>
           <ul class="metric-grid" aria-label="Quality check results">
-            <li class="metric-card">
+            <li class="metric-card" data-module="sharpness">
               <span class="metric-number">01</span>
               <span class="metric-copy"><strong>Sharpness</strong><small>Focus and edge clarity</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="noise">
               <span class="metric-number">02</span>
               <span class="metric-copy"><strong>Noise</strong><small>Image grain and artifacts</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="exposure">
               <span class="metric-number">03</span>
               <span class="metric-copy"><strong>Exposure</strong><small>Brightness and contrast</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="uniformity">
               <span class="metric-number">04</span>
               <span class="metric-copy"><strong>Lighting uniformity</strong><small>Evenness of illumination</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="glare">
               <span class="metric-number">05</span>
               <span class="metric-copy"><strong>Glare</strong><small>Reflections on the document</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="ppi">
               <span class="metric-number">06</span>
               <span class="metric-copy"><strong>Resolution (PPI)</strong><small>Image detail and resolution</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="skew">
               <span class="metric-number">07</span>
               <span class="metric-copy"><strong>Skew / perspective</strong><small>Document alignment</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="coverage">
               <span class="metric-number">08</span>
               <span class="metric-copy"><strong>Card coverage</strong><small>Document framing</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
-            <li class="metric-card">
+            <li class="metric-card" data-module="completeness">
               <span class="metric-number">09</span>
               <span class="metric-copy"><strong>Completeness (cut/crop)</strong><small>Content near image edges</small></span>
-              <span class="metric-value">—</span><span class="metric-status">Not run</span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
             </li>
           </ul>
           <div class="results-actions">
@@ -456,6 +533,7 @@
     </div>
 
     <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./api-config.js"></script>
     <script src="./home.js"></script>
   </body>
 </html>

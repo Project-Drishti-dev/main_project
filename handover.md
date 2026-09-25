@@ -7,22 +7,22 @@
 
 ## Resume from here
 
-The DRISHTI login, password-reset prototype, registration page, and initial home-screen screening flow are implemented. A FastAPI backend now exists under `backend/` and locally runs the nine quality checks, but it has not been deployed or connected to the frontend. The home-screen quality results remain placeholders. Read this handover and inspect `git status` before making changes. Next: deploy the API to Cloud Run, then connect the website upload/results flow and deploy the static frontend to Cloudflare Pages.
+The DRISHTI login, password-reset prototype, registration page, home-screen upload flow, and local quality API integration are implemented. The FastAPI backend under `backend/` runs the nine quality checks locally and the frontend calls `POST /api/analyze` from localhost. Neither service has been deployed. Read this handover and inspect `git status` before making changes. Next, manually verify the local browser flow; deployment configuration remains separate follow-up work.
 
 ## Current implementation
 
 - `frontend/index.html`, `login.css`, `login.js`: UX4G-styled login screen and show/hide password control. Login submission bypasses field validation and navigates to `home.html` regardless of entered values. No authentication occurs; `login.css` was not changed for this behavior.
 - `frontend/reset-flow.js`: two-step password-reset prototype displayed in a UX4G modal. It supports account lookup, a demo verification-code/new-password step, back/close/reset behavior, and validation feedback.
 - `frontend/register.html`, `register.css`, `register.js`: separate registration page with name, personnel ID, work email, password, confirmation, show/hide controls, and a link back to login.
-- `frontend/home.html`, `home.css`, `home.js`: modular UX4G home screen with an expandable icon sidebar, placeholder navigation options, image-source modal, local image preview, and results modal.
+- `frontend/home.html`, `home.css`, `home.js`, `api-config.js`: modular UX4G home screen with an expandable icon sidebar, placeholder navigation options, image-source modal, local image preview, and results modal wired to `POST /api/analyze`. API URL defaults to `http://localhost:8080` only on localhost; non-local hosts remain unconfigured until a deployed API URL is supplied.
 - `frontend/home.test.cjs` and other `frontend/*test.cjs`: Node tests for page contracts and login, registration, reset, and home-screen interactions.
 - `frontend/README.md`: run and test instructions.
 - `backend/`: FastAPI service with `GET /health` and `POST /api/analyze`, structured JSON results/errors, exact-origin CORS configuration, upload/media/dimension validation, and no persistent image storage. See `backend/README.md`.
 - `backend/app/quality_checker/`: vendored copies of the nine quality-check modules plus an API runner. The external checker repo was left unchanged; its copied module files were verified byte-for-byte against the source on September 25, 2026.
 
-These flows are **prototypes only**. There is no backend/authentication. Login redirects without authenticating. Registration and password reset do not work against real accounts. The home screen accepts JPEG, PNG, or WebP files up to 10 MB for an in-browser preview, but sends and persists no image. Its nine quality metrics are marked “Not run”; do not present them as actual analysis.
+These flows are **prototypes only**. There is no backend authentication. Login redirects without authenticating. Registration and password reset do not work against real accounts. The home screen accepts JPEG, PNG, or WebP files up to 10 MiB, previews locally, and sends the image to the configured API only when analysis is submitted. The API does not persist uploaded image files. Checker thresholds are experimental and are not an identity-verification decision; use synthetic images for testing.
 
-The original Python checker remains in the separate repo `D:\SIH\SIH_qualitycheck`; `main.py` is a CLI that reads local filesystem paths and can emit JSON for nine quality checks. The new backend uses vendored copies under `backend/app/quality_checker/` so Cloud Run can build from this repo. If the original algorithms change, intentionally resync the copies and rerun backend tests. The backend validates and analyzes uploads but is not deployed or called by the browser yet.
+The original Python checker remains in the separate repo `D:\SIH\SIH_qualitycheck`; `main.py` is a CLI that reads local filesystem paths and can emit JSON for nine quality checks. The backend uses vendored copies under `backend/app/quality_checker/` so it can deploy independently. If the original algorithms change, intentionally resync the copies and rerun backend tests. The backend is not deployed.
 
 ## UX4G and visual decisions — preserve consistency
 
@@ -49,7 +49,7 @@ From `frontend/`:
 
 1. Install dependencies if needed: `npm install`.
 2. Open `index.html` with VS Code Live Server; login routes to `home.html`. Registration is `register.html`.
-3. Tests: `rtk proxy npm test` — **27 tests passed** on September 24, 2026.
+3. Tests: `rtk proxy npm test` — **33 tests passed** on September 25, 2026.
 
 From `backend/`, with Python 3.12 and `requirements-dev.txt` installed:
 
@@ -57,16 +57,18 @@ From `backend/`, with Python 3.12 and `requirements-dev.txt` installed:
 2. Tests: `python -m pytest -q` — **13 tests passed** on September 25, 2026.
 3. `python -m compileall -q backend` passed from the repo root; `/health` was also verified against a running local Uvicorn server.
 
+The global Python used for this session has `opencv-python 5.0.0.93` installed, while `backend/requirements.txt` specifies `opencv-python-headless>=4.8,<5`. The default pytest run printed Windows native access-violation diagnostics during NumPy/OpenCV import despite returning 13 passing tests; the full suite passed cleanly with `-p no:faulthandler`. Use the documented backend virtual environment before manually running the API.
+
 `node --check` passed for `login.js`, `home.js`, `reset-flow.js`, and `register.js`; `git diff --check` passed. The repository instruction in `AGENTS.md` says to prefix shell commands with `rtk`. In this session, plain `rtk npm test` failed because RTK could not determine its Claude config directory; `rtk proxy npm test` worked.
 
 ## Verification still needed
 
-No real-browser visual/runtime pass was possible: Chrome/Edge and Chrome DevTools MCP were unavailable. Do not claim the screens are visually or accessibility verified. When browser tooling is available:
+No real-browser visual/runtime pass was performed for the API integration. Do not claim the screens are visually or accessibility verified. When browser tooling is available:
 
 - Check login, registration, and home at 320, 768, 1024, and 1440 CSS-pixel widths; capture screenshots and inspect console/network.
 - Confirm UX4G CSS/runtime load; exercise reset, source-selection, and results modals (close button, backdrop, Escape), upload/preview, sidebar expansion, and logout.
-- Check keyboard order/focus, modal focus behavior, accessible names/live messages, contrast, image validation, and no image network request or persistence.
-- Connect `frontend/home.js` to the deployed `/api/analyze` endpoint; display scores, pass/fail/N/A, rules, reasons, and details. Add loading/error states and preserve the current honest placeholder until real results arrive.
+- Check keyboard order/focus, modal focus behavior, accessible names/live messages, contrast, image validation, and confirm the upload request occurs only after submission.
+- Run the local end-to-end flow: start the backend on port 8080, serve the frontend on an allowed localhost origin (e.g. Live Server port 5500), and upload a synthetic image.
 - Add a Pages build step that copies the installed UX4G CSS/runtime into the deployment output; HTML currently references ignored `node_modules` paths.
 - Deploy `backend/` to Cloud Run, configure `CORS_ORIGINS` with the exact Pages origin, and keep the public endpoint's upload/instance limits small for the prototype. The API currently has no authentication or rate limiter.
 - The pages currently select light theme only; dark-theme behavior is not implemented or verified.
@@ -93,7 +95,7 @@ Sources inspected:
 
 Scope decisions/deviations to preserve:
 
-- The backend can run the Python checks locally, but it is not deployed or connected to the website; current result rows intentionally say “Not run.”
+- The backend and frontend integration work locally; neither is deployed. `api-config.js` must be configured with the deployed API origin before hosted testing, and the API CORS allowlist must include the exact frontend origin.
 - Camera capture and all sidebar destinations other than logout remain UI placeholders.
 - Login intentionally bypasses authentication for this prototype; do not represent this as a real sign-in flow.
 - Browser visual/runtime verification was unavailable; the test and syntax results above are not a substitute for a browser pass.
