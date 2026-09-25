@@ -35,10 +35,45 @@ synthetic images for local testing and avoid real identity documents.
 
 `api-config.js` selects localhost only when the frontend itself is served from
 `localhost` or `127.0.0.1`. It intentionally leaves the API URL empty on other
-hosts; set `apiBaseUrl` to the deployed API origin when configuring a hosted
-frontend. This is a public, unauthenticated prototype API, not a secure
-document-processing service. Camera capture and the sidebar destinations
-(except logout) remain placeholders.
+hosts. The production build generates `dist/api-config.js` using the
+`DRISHTI_API_BASE_URL` build environment variable.
+
+## Deploy to Cloudflare Pages
+
+The Pages build packages the HTML, CSS, JavaScript, and pinned UX4G CSS/runtime
+into `dist/`. From `frontend/`, verify the build locally with:
+
+```powershell
+$env:DRISHTI_API_BASE_URL = "https://your-cloud-run-service.run.app"
+npm run build
+npm test
+```
+
+Create a Cloudflare Pages project using the Git integration and configure:
+
+- **Root directory:** `frontend`
+- **Build command:** `npm run build`
+- **Build output directory:** `dist`
+- **Framework preset:** None
+- **Production environment variable:** `DRISHTI_API_BASE_URL`, set to the
+  Cloud Run service origin (HTTPS only; no `/api/analyze` path).
+
+The API origin is public browser configuration, not a secret. If the variable
+is omitted, the build warns and the hosted analysis feature stays unconfigured.
+Preview builds can omit it unless you also want those preview sites to call the
+API.
+
+After the first Pages deploy, copy its exact `https://<project>.pages.dev`
+origin into the Cloud Run service's `CORS_ORIGINS` environment variable. Do not
+include a path or trailing slash. If adding a custom domain later, add that
+exact HTTPS origin to `CORS_ORIGINS` too, then deploy the updated Cloud Run
+revision.
+
+The Cloud Run API and frontend login are currently unauthenticated prototypes.
+CORS only restricts browser origins; it is not API authentication. Use
+synthetic images, not real identity documents, until authentication and abuse
+protections are in place. Camera capture and the sidebar destinations (except
+logout) remain placeholders.
 
 ## Test
 
