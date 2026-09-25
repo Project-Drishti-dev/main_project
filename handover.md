@@ -1,12 +1,13 @@
 # DRISHTI Frontend — Handover
 
 **Prepared:** September 24, 2026  
+**Updated:** September 25, 2026
 **Workspace:** `D:\sih\main_project`  
 **Frontend:** `D:\sih\main_project\frontend`
 
 ## Resume from here
 
-The DRISHTI login, password-reset prototype, registration page, and initial home-screen screening flow are implemented. The home-screen quality results are placeholders; the Python checker is not connected. Read this handover and inspect `git status` before making changes. The next integration step needs a backend/API between the browser and the Python CLI.
+The DRISHTI login, password-reset prototype, registration page, and initial home-screen screening flow are implemented. A FastAPI backend now exists under `backend/` and locally runs the nine quality checks, but it has not been deployed or connected to the frontend. The home-screen quality results remain placeholders. Read this handover and inspect `git status` before making changes. Next: deploy the API to Cloud Run, then connect the website upload/results flow and deploy the static frontend to Cloudflare Pages.
 
 ## Current implementation
 
@@ -16,10 +17,12 @@ The DRISHTI login, password-reset prototype, registration page, and initial home
 - `frontend/home.html`, `home.css`, `home.js`: modular UX4G home screen with an expandable icon sidebar, placeholder navigation options, image-source modal, local image preview, and results modal.
 - `frontend/home.test.cjs` and other `frontend/*test.cjs`: Node tests for page contracts and login, registration, reset, and home-screen interactions.
 - `frontend/README.md`: run and test instructions.
+- `backend/`: FastAPI service with `GET /health` and `POST /api/analyze`, structured JSON results/errors, exact-origin CORS configuration, upload/media/dimension validation, and no persistent image storage. See `backend/README.md`.
+- `backend/app/quality_checker/`: vendored copies of the nine quality-check modules plus an API runner. The external checker repo was left unchanged; its copied module files were verified byte-for-byte against the source on September 25, 2026.
 
 These flows are **prototypes only**. There is no backend/authentication. Login redirects without authenticating. Registration and password reset do not work against real accounts. The home screen accepts JPEG, PNG, or WebP files up to 10 MB for an in-browser preview, but sends and persists no image. Its nine quality metrics are marked “Not run”; do not present them as actual analysis.
 
-The Python checker is in the separate, read-only repo `D:\SIH\SIH_QualityCheck`. `main.py` is a CLI: it reads local filesystem paths and can emit JSON for nine quality checks. A browser cannot invoke it directly. Real screening requires a backend/API to receive and validate the upload, invoke the Python code, and return results. Do not modify the external repo as part of frontend-only work.
+The original Python checker remains in the separate repo `D:\SIH\SIH_qualitycheck`; `main.py` is a CLI that reads local filesystem paths and can emit JSON for nine quality checks. The new backend uses vendored copies under `backend/app/quality_checker/` so Cloud Run can build from this repo. If the original algorithms change, intentionally resync the copies and rerun backend tests. The backend validates and analyzes uploads but is not deployed or called by the browser yet.
 
 ## UX4G and visual decisions — preserve consistency
 
@@ -48,6 +51,12 @@ From `frontend/`:
 2. Open `index.html` with VS Code Live Server; login routes to `home.html`. Registration is `register.html`.
 3. Tests: `rtk proxy npm test` — **27 tests passed** on September 24, 2026.
 
+From `backend/`, with Python 3.12 and `requirements-dev.txt` installed:
+
+1. Start locally: `python -m uvicorn main:app --reload --port 8080`.
+2. Tests: `python -m pytest -q` — **13 tests passed** on September 25, 2026.
+3. `python -m compileall -q backend` passed from the repo root; `/health` was also verified against a running local Uvicorn server.
+
 `node --check` passed for `login.js`, `home.js`, `reset-flow.js`, and `register.js`; `git diff --check` passed. The repository instruction in `AGENTS.md` says to prefix shell commands with `rtk`. In this session, plain `rtk npm test` failed because RTK could not determine its Claude config directory; `rtk proxy npm test` worked.
 
 ## Verification still needed
@@ -57,6 +66,9 @@ No real-browser visual/runtime pass was possible: Chrome/Edge and Chrome DevTool
 - Check login, registration, and home at 320, 768, 1024, and 1440 CSS-pixel widths; capture screenshots and inspect console/network.
 - Confirm UX4G CSS/runtime load; exercise reset, source-selection, and results modals (close button, backdrop, Escape), upload/preview, sidebar expansion, and logout.
 - Check keyboard order/focus, modal focus behavior, accessible names/live messages, contrast, image validation, and no image network request or persistence.
+- Connect `frontend/home.js` to the deployed `/api/analyze` endpoint; display scores, pass/fail/N/A, rules, reasons, and details. Add loading/error states and preserve the current honest placeholder until real results arrive.
+- Add a Pages build step that copies the installed UX4G CSS/runtime into the deployment output; HTML currently references ignored `node_modules` paths.
+- Deploy `backend/` to Cloud Run, configure `CORS_ORIGINS` with the exact Pages origin, and keep the public endpoint's upload/instance limits small for the prototype. The API currently has no authentication or rate limiter.
 - The pages currently select light theme only; dark-theme behavior is not implemented or verified.
 
 ## Working-tree caution
@@ -81,7 +93,7 @@ Sources inspected:
 
 Scope decisions/deviations to preserve:
 
-- Python execution and result scores remain deferred until a backend/API is added; current result rows intentionally say “Not run.”
+- The backend can run the Python checks locally, but it is not deployed or connected to the website; current result rows intentionally say “Not run.”
 - Camera capture and all sidebar destinations other than logout remain UI placeholders.
 - Login intentionally bypasses authentication for this prototype; do not represent this as a real sign-in flow.
 - Browser visual/runtime verification was unavailable; the test and syntax results above are not a substitute for a browser pass.
