@@ -14,8 +14,9 @@
    ```
 
 3. Serve `frontend/` with VS Code Live Server on port `5500` (or another
-   localhost origin allowed by `backend/app/config.py`), then open `index.html`.
-4. On the home screen, choose **Start screening now → Upload an image**, select
+   localhost origin allowed by `backend/app/config.py`), then open `index.html`
+   or `home.html`. The root page opens the public demo directly.
+4. On the home screen, choose **Try the demo → Upload an image**, select
    a JPEG, PNG, or WebP up to 10 MiB, then choose **Review quality checks**.
    The browser preview is local; the image is sent to
    `http://localhost:8080/api/analyze` only after submitting.
@@ -23,15 +24,14 @@
 The UX4G CSS and runtime are loaded from the local `node_modules` directory, so
 the page does not depend on the UX4G CDN at runtime.
 
-The login, registration, password-reset, and home-screen flows are frontend
-prototypes only. Login currently routes to the workspace regardless of the
-entered values; it does not authenticate.
-
 The home screen posts the selected image to the local quality API and displays
 its nine module scores, pass/fail/N/A state, rules, reasons, and details. The
 prototype checker thresholds are experimental and are not an
 identity-verification decision. The API does not persist image files; use
 synthetic images for local testing and avoid real identity documents.
+
+The public demo has no login, registration, password-reset, or logout flow.
+It does not authenticate users or make identity-verification decisions.
 
 `api-config.js` selects localhost only when the frontend itself is served from
 `localhost` or `127.0.0.1`. It intentionally leaves the API URL empty on other
@@ -69,11 +69,10 @@ include a path or trailing slash. If adding a custom domain later, add that
 exact HTTPS origin to `CORS_ORIGINS` too, then deploy the updated Cloud Run
 revision.
 
-The Cloud Run API and frontend login are currently unauthenticated prototypes.
-CORS only restricts browser origins; it is not API authentication. Use
-synthetic images, not real identity documents, until authentication and abuse
-protections are in place. Camera capture and the sidebar destinations (except
-logout) remain placeholders.
+The Cloud Run API is publicly callable and unauthenticated. CORS only restricts
+browser origins; it is not API authentication. Use synthetic images, not real
+identity documents, until authentication and abuse protections are in place.
+Camera capture and the sidebar destinations remain placeholders.
 
 ## Test
 

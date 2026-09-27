@@ -203,12 +203,6 @@ body.workspace-page {
   color: var(--ux4g-bg-primary-strong);
 }
 
-.sidebar-footer {
-  margin-top: auto;
-  padding-top: var(--ux4g-padding-s);
-  border-top: var(--ux4g-border-width-sm) solid var(--ux4g-border-color-neutral-subtle);
-}
-
 .sidebar-status {
   width: 100%;
   min-height: 1rem;

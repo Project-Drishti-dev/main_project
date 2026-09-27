@@ -1,0 +1,14 @@
+Hello, I'm participating in the smart india hackathon. and I want you to build the prototype of our selected project.
+You can look into D:\ai_playground\prob_statement.txt to know about our problem statement.
+For now I want you to build the UI with html+css+javascript.
+You must invoke the UX4G skill, as it is an indian government mandated stylesheet.
+Your tasks for today is to design a single login webpage completely, It will have the basic stuff like a field for username and for password with a login button. And ofcourse the 'view password' button along with forgot password and a new to DRISHTI (DRISHTI is our project name) button to make a new account.
+On clicking the forgot password, it should open a popup, which simply asks the user to input their email and just they're able to send a password request.
+On clicking the 'new to DRISHTI?' button, they should be redirected to another webpage, where for now they can enter their basic details such as name, username, email, password and confirm password.
+Of course all of the UI is dummy for now.
+
+After the user clicks the login button (as it's dummy, just allow them through regardless of entering anything), and they should enter the main homepage.
+It should have a banner on top welcoming thet user and below it should be a large button to start the screening. On clicking this button, they'll get a popup, with two options, either to allow them upload an old photo, or they can use their camera. If you can make both of the buttons functioning, thats well and good. They should be able upload an image (we're not using a backend at this moment). But if you look into D:\ai_playground\SIH_QualityCheck, you'll see it's a python script to check an image against some parameters. I want you to atleast implement the UI for that. The backend is not there atm but show them a dummy UI after the sceening with all the scores and the final decision of the checker.
+Also on the homepage, implement a sidebar as seen on modern websites, on clicking it, it expands a bit, It should have the User icon (dummy for now), below it, it should show their username. Also there should be options like 'previous screenings', 'settings', 'guides' and 'log out'. If you can implement something dummy for these pages, well and good, otherwise we can do it later.
+
+Ensure We're using the default themeing or styleset of the UX4G. Ensure all of the colours and design choices are consistent across all webpages. The pages should look modern and minimalistic but not overly simple.

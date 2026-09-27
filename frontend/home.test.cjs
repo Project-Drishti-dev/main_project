@@ -266,10 +266,14 @@ test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
   assert.match(html, /node_modules\/ux4g-web-components\/dist\/runtime\/design-system\.js/);
   assert.doesNotMatch(html, /cdn\.ux4g\.gov\.in/);
   assert.match(html, /class="welcome-banner ux4g-card ux4g-p-l"/);
-  assert.match(html, /Welcome,\s*User!/);
+  assert.match(html, /PUBLIC PROTOTYPE · NO SIGN-IN/);
+  assert.match(html, /DRISHTI image-quality demo/);
+  assert.match(html, /Experimental image-quality checks only—not identity\s+verification/);
+  assert.match(html, /Use synthetic images; do not upload real identity\s+documents/);
   assert.match(html, /id="start-screening"[^>]*data-modal-target="#screening-modal"/);
   assert.match(html, /id="screening-modal"[^>]*role="dialog"/);
   assert.match(html, /id="results-modal"[^>]*role="dialog"/);
+  assert.doesNotMatch(html, /type="password"|Forgot password\?|Personnel ID|Register/);
 });
 
 test("homescreen includes a compact expandable sidebar and placeholder options", () => {
@@ -285,11 +289,10 @@ test("homescreen includes a compact expandable sidebar and placeholder options",
     "Settings",
     "Guide",
     "About",
-    "Logout",
   ]) {
     assert.ok(html.includes(option), `sidebar should include ${option}`);
   }
-  assert.match(html, /href="\.\/index\.html"[^>]*>[\s\S]*?Logout/);
+  assert.doesNotMatch(html, /Logout|sidebar-logout/);
 });
 
 test("screening modal offers image upload and camera placeholder options", () => {

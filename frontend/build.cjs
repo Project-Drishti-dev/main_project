@@ -59,16 +59,9 @@ function buildSite() {
   fs.mkdirSync(outputDirectory, { recursive: true });
 
   const staticFiles = [
-    "index.html",
     "home.html",
-    "register.html",
     "home.css",
-    "login.css",
-    "register.css",
     "home.js",
-    "login.js",
-    "register.js",
-    "reset-flow.js",
   ];
   for (const fileName of staticFiles) {
     fs.copyFileSync(
@@ -103,7 +96,7 @@ function buildSite() {
       "./assets/design-system.js",
     ],
   ];
-  for (const fileName of ["index.html", "home.html", "register.html"]) {
+  for (const fileName of ["home.html"]) {
     let html = fs.readFileSync(
       path.join(outputDirectory, fileName),
       "utf8",
@@ -118,6 +111,11 @@ function buildSite() {
     }
     fs.writeFileSync(path.join(outputDirectory, fileName), html);
   }
+
+  fs.copyFileSync(
+    path.join(outputDirectory, "home.html"),
+    path.join(outputDirectory, "index.html"),
+  );
 
   const apiBaseUrl = getApiBaseUrl();
   const apiConfig = `(() => {
