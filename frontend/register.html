@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Create a DRISHTI screening account." />
+    <title>Create account | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./login.css" />
+    <link rel="stylesheet" href="./register.css" />
+  </head>
+  <body>
+    <main class="login-page register-page">
+      <div class="login-layout">
+        <aside class="login-visual ux4g-radius-m" aria-labelledby="visual-title">
+          <div class="visual-intro">
+            <p class="visual-kicker">SECURE ACCESS <span aria-hidden="true"></span></p>
+            <h2 id="visual-title">A clearer view.<br />A more confident decision.</h2>
+            <p class="visual-description">
+              Create your account to continue the document screening workflow.
+            </p>
+          </div>
+
+          <div class="scan-visual" aria-hidden="true">
+            <div class="scan-orbit scan-orbit--outer"></div>
+            <div class="scan-orbit scan-orbit--inner"></div>
+            <div class="scan-frame">
+              <div class="scan-frame__corner scan-frame__corner--top"></div>
+              <div class="scan-frame__corner scan-frame__corner--bottom"></div>
+              <div class="scan-document ux4g-radius-m">
+                <div class="scan-document__heading">
+                  <span>IDENTITY DOCUMENT</span>
+                  <span class="scan-document__seal"></span>
+                </div>
+                <div class="scan-document__body">
+                  <div class="scan-document__portrait"></div>
+                  <div class="scan-document__lines">
+                    <i></i><i></i><i></i><i></i>
+                  </div>
+                </div>
+                <div class="scan-document__footer">
+                  <span>DOCUMENT CHECK</span>
+                  <span class="scan-document__indicator"></span>
+                </div>
+              </div>
+            </div>
+            <div class="scan-caption">
+              <span>01</span>
+              <span>DOCUMENT&nbsp;&nbsp;&middot;&nbsp;&nbsp;IDENTITY&nbsp;&nbsp;&middot;&nbsp;&nbsp;REVIEW</span>
+            </div>
+          </div>
+        </aside>
+
+        <section class="login-panel ux4g-card ux4g-p-l" aria-labelledby="page-title">
+          <div class="login-copy">
+            <h1 id="page-title">Create your account</h1>
+            <p>Enter your official details to request access.</p>
+          </div>
+
+          <p class="prototype-note" id="prototype-note">
+            Prototype only — no details will be sent or saved.
+          </p>
+
+          <form id="register-form" class="login-form registration-form" method="post">
+            <div class="registration-fields">
+              <div class="form-field registration-field--wide">
+                <label for="full-name">Full name</label>
+                <input
+                  class="ux4g-input ux4g-input-md"
+                  id="full-name"
+                  type="text"
+                  autocomplete="name"
+                  maxlength="100"
+                  placeholder="Enter your full name"
+                  required
+                />
+              </div>
+
+              <div class="form-field">
+                <label for="personnel-id">Personnel ID</label>
+                <input
+                  class="ux4g-input ux4g-input-md"
+                  id="personnel-id"
+                  type="text"
+                  autocomplete="off"
+                  maxlength="40"
+                  placeholder="Enter your ID"
+                  required
+                />
+              </div>
+
+              <div class="form-field">
+                <label for="email">Work email</label>
+                <input
+                  class="ux4g-input ux4g-input-md"
+                  id="email"
+                  type="email"
+                  autocomplete="email"
+                  maxlength="254"
+                  placeholder="name@department.gov.in"
+                  required
+                />
+              </div>
+
+              <div class="form-field">
+                <label for="register-password">Password</label>
+                <div class="password-field">
+                  <input
+                    class="ux4g-input ux4g-input-md"
+                    id="register-password"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="8"
+                    required
+                  />
+                  <button
+                    class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm password-toggle"
+                    id="register-password-toggle"
+                    type="button"
+                    aria-controls="register-password"
+                    aria-pressed="false"
+                  >
+                    Show
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="confirm-password">Confirm password</label>
+                <div class="password-field">
+                  <input
+                    class="ux4g-input ux4g-input-md"
+                    id="confirm-password"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="8"
+                    required
+                  />
+                  <button
+                    class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm password-toggle"
+                    id="confirm-password-toggle"
+                    type="button"
+                    aria-controls="confirm-password"
+                    aria-pressed="false"
+                  >
+                    Show
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              class="ux4g-btn ux4g-btn-primary ux4g-btn-md login-submit"
+              type="submit"
+            >
+              Create account
+            </button>
+            <p id="register-status" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+
+          <div class="register-prompt">
+            <span>Already have an account?</span>
+            <a
+              class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+              href="./index.html"
+            >
+              Sign in
+            </a>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./register.js"></script>
+  </body>
+</html>

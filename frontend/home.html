@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="DRISHTI document screening workspace."
+    />
+    <title>Workspace | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./home.css" />
+  </head>
+  <body class="workspace-page">
+    <div id="workspace-shell" class="workspace-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
+        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
+          <span class="app-brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
+              <circle cx="16" cy="16" r="3.5" />
+            </svg>
+          </span>
+          <span class="sidebar-label app-brand__name">DRISHTI</span>
+        </a>
+
+        <button
+          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
+          id="sidebar-toggle"
+          type="button"
+          aria-label="Expand sidebar"
+          aria-controls="sidebar-navigation"
+          aria-expanded="false"
+          title="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+
+        <div class="sidebar-profile">
+          <span class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </span>
+          <span class="sidebar-label profile-name">User</span>
+        </div>
+
+        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
+          <ul>
+            <li>
+              <button
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                type="button"
+                data-sidebar-placeholder="Previous screenings"
+                aria-label="Previous screenings"
+                title="Previous screenings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M4 12h16M4 17h10" />
+                  <path d="M3 4v16" />
+                </svg>
+                <span class="sidebar-label">Previous screenings</span>
+              </button>
+            </li>
+            <li>
+              <button
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                type="button"
+                data-sidebar-placeholder="Settings"
+                aria-label="Settings"
+                title="Settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
+                </svg>
+                <span class="sidebar-label">Settings</span>
+              </button>
+            </li>
+            <li>
+              <button
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                type="button"
+                data-sidebar-placeholder="Guide"
+                aria-label="Guide"
+                title="Guide"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
+                </svg>
+                <span class="sidebar-label">Guide</span>
+              </button>
+            </li>
+            <li>
+              <button
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                type="button"
+                data-sidebar-placeholder="About"
+                aria-label="About"
+                title="About"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span class="sidebar-label">About</span>
+              </button>
+            </li>
+          </ul>
+
+          <div class="sidebar-footer">
+            <a
+              class="sidebar-link sidebar-logout ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+              href="./index.html"
+              aria-label="Logout"
+              title="Logout"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10" />
+              </svg>
+              <span class="sidebar-label">Logout</span>
+            </a>
+          </div>
+        </nav>
+        <p id="sidebar-status" class="sidebar-status" role="status" aria-live="polite"></p>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <p class="workspace-topbar__label">
+            <span class="topbar-mark" aria-hidden="true"></span>
+            Document screening workspace
+          </p>
+          <span class="workspace-topbar__state">
+            <span aria-hidden="true"></span>
+            Prototype
+          </span>
+        </header>
+
+        <main class="workspace-content">
+          <section class="welcome-banner ux4g-card ux4g-p-l" aria-labelledby="welcome-title">
+            <div class="welcome-copy">
+              <p class="eyebrow">YOUR DOCUMENT REVIEW WORKSPACE</p>
+              <h1 id="welcome-title">Welcome, User!</h1>
+              <p>
+                A clearer first step for every document review starts with a
+                quality check.
+              </p>
+            </div>
+            <div class="welcome-art" aria-hidden="true">
+              <div class="welcome-art__orbit welcome-art__orbit--outer"></div>
+              <div class="welcome-art__orbit welcome-art__orbit--inner"></div>
+              <div class="welcome-art__document">
+                <span></span>
+                <i></i><i></i><i></i>
+                <b></b>
+              </div>
+              <span class="welcome-art__spark welcome-art__spark--one"></span>
+              <span class="welcome-art__spark welcome-art__spark--two"></span>
+            </div>
+          </section>
+
+          <section class="screening-callout ux4g-card ux4g-p-l" aria-labelledby="screening-title">
+            <div class="screening-callout__copy">
+              <p class="eyebrow">READY WHEN YOU ARE</p>
+              <h2 id="screening-title">Start with a document image</h2>
+              <p>
+                Check image clarity, lighting, framing, and other quality
+                signals before moving on.
+              </p>
+            </div>
+            <button
+              class="ux4g-btn ux4g-btn-primary ux4g-btn-lg screening-start"
+              id="start-screening"
+              type="button"
+              data-modal-target="#screening-modal"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5Z" />
+                <circle cx="9" cy="9" r="1.5" />
+                <path d="m5 17 5-5 3 3 2-2 4 4" />
+              </svg>
+              Start screening now
+              <span aria-hidden="true">→</span>
+            </button>
+          </section>
+
+          <section class="workspace-cards" aria-label="Workspace information">
+            <article class="info-card ux4g-card ux4g-p-l">
+              <div class="info-card__icon info-card__icon--quality" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 5h16v14H4zM8 9h8M8 12h5M8 15h3" />
+                  <path d="m16 15 1.5 1.5L20 13" />
+                </svg>
+              </div>
+              <p class="eyebrow">IMAGE QUALITY</p>
+              <h2>Nine signals, one clearer view</h2>
+              <p>
+                The checker is designed to review sharpness, noise, exposure,
+                glare, framing, and more.
+              </p>
+            </article>
+
+            <article class="info-card ux4g-card ux4g-p-l">
+              <div class="info-card__icon info-card__icon--prototype" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 3 4.5 6v5.5c0 4.5 3.2 7.8 7.5 9.5 4.3-1.7 7.5-5 7.5-9.5V6Z" />
+                  <path d="M12 8v4M12 15h.01" />
+                </svg>
+              </div>
+              <p class="eyebrow">IMAGE HANDLING</p>
+              <h2>Sent only when you submit</h2>
+              <p>
+                The selected image is sent to the configured quality API for
+                analysis. The prototype API does not save image files.
+              </p>
+            </article>
+          </section>
+        </main>
+
+        <footer class="workspace-footer">
+          <span>DRISHTI</span>
+          <span>Document quality screening prototype</span>
+        </footer>
+      </div>
+    </div>
+
+    <div
+      id="screening-modal"
+      class="ux4g-modal-backdrop ux4g-modal-backdrop-50 ux4g-modal-backdrop-blur"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="screening-modal-title"
+      tabindex="-1"
+    >
+      <div class="ux4g-modal-box ux4g-modal-m screening-modal-box">
+        <div class="ux4g-modal-header">
+          <div>
+            <p class="eyebrow">NEW SCREENING</p>
+            <h2 id="screening-modal-title">Choose an image source</h2>
+          </div>
+          <button
+            class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+            id="screening-modal-close"
+            type="button"
+            data-close-modal
+            aria-label="Close screening"
+          >
+            Close
+          </button>
+        </div>
+
+        <div class="ux4g-modal-body">
+          <p id="screening-demo-note" class="prototype-note">
+            Demo only — your image stays in this browser and is not sent to a
+            screening service.
+          </p>
+
+          <section id="source-chooser" class="source-chooser" aria-label="Image source">
+            <button
+              class="source-choice ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+              id="choose-upload"
+              type="button"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v5h14v-5" />
+              </svg>
+              <span>
+                <strong>Upload an image</strong>
+                <small>Choose a JPEG, PNG, or WebP file</small>
+              </span>
+            </button>
+            <button
+              class="source-choice ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+              id="choose-camera"
+              type="button"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+                <circle cx="12" cy="13" r="3.5" />
+              </svg>
+              <span>
+                <strong>Use camera</strong>
+                <small>Camera capture is coming soon</small>
+              </span>
+            </button>
+            <p
+              id="screening-source-message"
+              class="screening-source-message"
+              role="status"
+              aria-live="polite"
+            ></p>
+          </section>
+
+          <section id="upload-step" class="upload-step" aria-label="Upload document image" hidden>
+            <button
+              class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm back-to-source"
+              id="back-to-source"
+              type="button"
+            >
+              <span aria-hidden="true">←</span> Change source
+            </button>
+            <label class="upload-dropzone ux4g-radius-m" for="screening-file">
+              <span class="upload-dropzone__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v5h14v-5" />
+                </svg>
+              </span>
+              <strong>Select a document image</strong>
+              <span>JPEG, PNG, or WebP · up to 10 MB</span>
+              <span class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-sm">
+                Browse files
+              </span>
+              <input
+                class="visually-hidden"
+                id="screening-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                aria-describedby="upload-help file-error"
+              />
+            </label>
+            <p id="upload-help" class="upload-help">
+              Choose a clear, well-lit photo or scan of one document.
+            </p>
+            <p class="upload-help">
+              When you run the checks, this image is sent to the configured
+              analysis API. Use a synthetic image for testing.
+            </p>
+            <p id="file-error" class="file-error" role="alert" aria-live="assertive"></p>
+            <p
+              id="analysis-status"
+              class="analysis-status"
+              role="status"
+              aria-live="polite"
+              tabindex="-1"
+            ></p>
+
+            <div id="preview-panel" class="preview-panel" hidden>
+              <img id="image-preview" class="image-preview" alt="Selected document preview" />
+              <div class="preview-copy">
+                <strong id="file-details"></strong>
+                <span id="image-dimensions"></span>
+              </div>
+            </div>
+
+            <button
+              class="ux4g-btn ux4g-btn-primary ux4g-btn-md run-screening"
+              id="run-screening"
+              type="button"
+              disabled
+            >
+              Review quality checks
+            </button>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="results-modal"
+      class="ux4g-modal-backdrop ux4g-modal-backdrop-50 ux4g-modal-backdrop-blur"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="results-modal-title"
+      tabindex="-1"
+    >
+      <div class="ux4g-modal-box ux4g-modal-l results-modal-box">
+        <div class="ux4g-modal-header">
+          <div>
+            <p class="eyebrow">IMAGE QUALITY OVERVIEW</p>
+            <h2 id="results-modal-title">Screening results</h2>
+          </div>
+          <button
+            class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+            id="results-modal-close"
+            type="button"
+            data-close-modal
+            aria-label="Close results"
+          >
+            Close
+          </button>
+        </div>
+        <div class="ux4g-modal-body">
+          <div class="results-notice" role="note">
+            <span class="results-notice__icon" aria-hidden="true">i</span>
+            <p>
+              <strong>Prototype only.</strong>
+              Checker thresholds are experimental and are not an
+              identity-verification decision.
+            </p>
+          </div>
+          <p id="results-intro" class="results-intro">
+            Upload and run the quality checks to see the analysis here.
+          </p>
+          <p id="overall-result" class="overall-result" role="status" aria-live="polite">
+            No analysis completed yet.
+          </p>
+          <ul class="metric-grid" aria-label="Quality check results">
+            <li class="metric-card" data-module="sharpness">
+              <span class="metric-number">01</span>
+              <span class="metric-copy"><strong>Sharpness</strong><small>Focus and edge clarity</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="noise">
+              <span class="metric-number">02</span>
+              <span class="metric-copy"><strong>Noise</strong><small>Image grain and artifacts</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="exposure">
+              <span class="metric-number">03</span>
+              <span class="metric-copy"><strong>Exposure</strong><small>Brightness and contrast</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="uniformity">
+              <span class="metric-number">04</span>
+              <span class="metric-copy"><strong>Lighting uniformity</strong><small>Evenness of illumination</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="glare">
+              <span class="metric-number">05</span>
+              <span class="metric-copy"><strong>Glare</strong><small>Reflections on the document</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="ppi">
+              <span class="metric-number">06</span>
+              <span class="metric-copy"><strong>Resolution (PPI)</strong><small>Image detail and resolution</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="skew">
+              <span class="metric-number">07</span>
+              <span class="metric-copy"><strong>Skew / perspective</strong><small>Document alignment</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="coverage">
+              <span class="metric-number">08</span>
+              <span class="metric-copy"><strong>Card coverage</strong><small>Document framing</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+            <li class="metric-card" data-module="completeness">
+              <span class="metric-number">09</span>
+              <span class="metric-copy"><strong>Completeness (cut/crop)</strong><small>Content near image edges</small></span>
+              <span class="metric-value" data-metric-score>—</span>
+              <span class="metric-status" data-metric-status>Not run</span>
+              <span class="metric-unit" data-metric-unit></span>
+              <div class="metric-detail">
+                <p><strong>Rule:</strong> <span data-metric-rule></span></p>
+                <p><strong>Reasons:</strong> <span data-metric-reasons></span></p>
+                <dl class="metric-details" data-metric-details></dl>
+              </div>
+            </li>
+          </ul>
+          <div class="results-actions">
+            <button
+              class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+              id="choose-another-image"
+              type="button"
+            >
+              Choose another image
+            </button>
+            <button
+              class="ux4g-btn ux4g-btn-primary ux4g-btn-md"
+              type="button"
+              data-close-modal
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./api-config.js"></script>
+    <script src="./home.js"></script>
+  </body>
+</html>

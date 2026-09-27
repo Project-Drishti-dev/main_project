@@ -1,0 +1,12 @@
+{
+  "name": "drishti-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "node build.cjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ux4g-web-components": "2.1.0"
+  }
+}
