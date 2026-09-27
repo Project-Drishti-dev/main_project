@@ -1,0 +1,10 @@
+opencv-python-headless>=4.8
+numpy>=1.24
+pytesseract>=0.3.10
+
+# NOTE: pytesseract is a thin wrapper around the `tesseract` binary, which
+# is a separate system package, not a pip package. Install it via your OS
+# package manager, e.g.:
+#   Debian/Ubuntu:  apt-get install tesseract-ocr
+#   macOS (brew):   brew install tesseract
+#   RHEL/CentOS:    yum install tesseract

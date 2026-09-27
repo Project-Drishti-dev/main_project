@@ -1,0 +1,13 @@
+{
+  "entries": [
+    {
+      "document_number": "X12345678",
+      "issuing_country": "UTO",
+      "reason": "Reported stolen on 2025-03-14"
+    },
+    {
+      "document_number": "AB1234567",
+      "reason": "Previously flagged as fraudulent (all issuing countries)"
+    }
+  ]
+}
