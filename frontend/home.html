@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="DRISHTI document screening workspace."
+      content="Public DRISHTI image-quality demo. No accounts or sign-in."
     />
-    <title>Workspace | DRISHTI</title>
+    <title>Image quality demo | DRISHTI</title>
     <link
       rel="stylesheet"
       href="./node_modules/ux4g-web-components/styles/ux4g.css"
@@ -48,7 +48,7 @@
               <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
             </svg>
           </span>
-          <span class="sidebar-label profile-name">User</span>
+          <span class="sidebar-label profile-name">Demo</span>
         </div>
 
         <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
@@ -115,19 +115,6 @@
             </li>
           </ul>
 
-          <div class="sidebar-footer">
-            <a
-              class="sidebar-link sidebar-logout ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-              href="./index.html"
-              aria-label="Logout"
-              title="Logout"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10" />
-              </svg>
-              <span class="sidebar-label">Logout</span>
-            </a>
-          </div>
         </nav>
         <p id="sidebar-status" class="sidebar-status" role="status" aria-live="polite"></p>
       </aside>
@@ -136,7 +123,7 @@
         <header class="workspace-topbar">
           <p class="workspace-topbar__label">
             <span class="topbar-mark" aria-hidden="true"></span>
-            Document screening workspace
+            Public image-quality demo
           </p>
           <span class="workspace-topbar__state">
             <span aria-hidden="true"></span>
@@ -147,11 +134,12 @@
         <main class="workspace-content">
           <section class="welcome-banner ux4g-card ux4g-p-l" aria-labelledby="welcome-title">
             <div class="welcome-copy">
-              <p class="eyebrow">YOUR DOCUMENT REVIEW WORKSPACE</p>
-              <h1 id="welcome-title">Welcome, User!</h1>
+              <p class="eyebrow">PUBLIC PROTOTYPE · NO SIGN-IN</p>
+              <h1 id="welcome-title">DRISHTI image-quality demo</h1>
               <p>
-                A clearer first step for every document review starts with a
-                quality check.
+                Experimental image-quality checks only—not identity
+                verification. Use synthetic images; do not upload real identity
+                documents.
               </p>
             </div>
             <div class="welcome-art" aria-hidden="true">
@@ -170,7 +158,7 @@
           <section class="screening-callout ux4g-card ux4g-p-l" aria-labelledby="screening-title">
             <div class="screening-callout__copy">
               <p class="eyebrow">READY WHEN YOU ARE</p>
-              <h2 id="screening-title">Start with a document image</h2>
+              <h2 id="screening-title">Try an image-quality check</h2>
               <p>
                 Check image clarity, lighting, framing, and other quality
                 signals before moving on.
@@ -187,7 +175,7 @@
                 <circle cx="9" cy="9" r="1.5" />
                 <path d="m5 17 5-5 3 3 2-2 4 4" />
               </svg>
-              Start screening now
+              Try the demo
               <span aria-hidden="true">→</span>
             </button>
           </section>

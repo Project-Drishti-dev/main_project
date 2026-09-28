@@ -5,6 +5,14 @@ const path = require("node:path");
 const test = require("node:test");
 
 const frontendDirectory = path.resolve(__dirname);
+const legacyAuthArtifacts = [
+  "register.html",
+  "login.css",
+  "login.js",
+  "reset-flow.js",
+  "register.css",
+  "register.js",
+];
 
 function withBuildOutput(environment, assertBuild) {
   const outputDirectory = fs.mkdtempSync(
@@ -38,7 +46,7 @@ function withBuildOutput(environment, assertBuild) {
   }
 }
 
-test("static build packages pages, UX4G assets, and the configured API origin", () => {
+test("static build publishes the screening demo without account flows", () => {
   withBuildOutput(
     {
       CF_PAGES: "1",
@@ -50,14 +58,9 @@ test("static build packages pages, UX4G assets, and the configured API origin", 
       for (const fileName of [
         "index.html",
         "home.html",
-        "register.html",
-        "login.css",
-        "login.js",
-        "reset-flow.js",
-        "register.css",
-        "register.js",
         "home.css",
         "home.js",
+        "api-config.js",
       ]) {
         assert.ok(
           fs.existsSync(path.join(outputDirectory, fileName)),
@@ -65,7 +68,25 @@ test("static build packages pages, UX4G assets, and the configured API origin", 
         );
       }
 
-      for (const fileName of ["index.html", "home.html", "register.html"]) {
+      for (const fileName of legacyAuthArtifacts) {
+        assert.equal(
+          fs.existsSync(path.join(outputDirectory, fileName)),
+          false,
+          `build must not publish ${fileName}`,
+        );
+      }
+
+      const homeHtml = fs.readFileSync(
+        path.join(outputDirectory, "home.html"),
+        "utf8",
+      );
+      assert.equal(
+        fs.readFileSync(path.join(outputDirectory, "index.html"), "utf8"),
+        homeHtml,
+        "the public root should open the screening demo directly",
+      );
+
+      for (const fileName of ["index.html", "home.html"]) {
         const html = fs.readFileSync(
           path.join(outputDirectory, fileName),
           "utf8",
@@ -73,6 +94,10 @@ test("static build packages pages, UX4G assets, and the configured API origin", 
         assert.match(html, /href="\.\/assets\/ux4g\.css"/);
         assert.match(html, /src="\.\/assets\/design-system\.js"/);
         assert.doesNotMatch(html, /node_modules/);
+        assert.doesNotMatch(
+          html,
+          /type="password"|Forgot password\?|Personnel ID|Verification code|Register/,
+        );
       }
 
       assert.ok(
