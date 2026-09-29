@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Review previous DRISHTI image-quality screenings. Prototype with sample data."
+    />
+    <title>Previous screenings | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./home.css" />
+    <link rel="stylesheet" href="./pages.css" />
+    <script src="./preferences.js"></script>
+  </head>
+  <body class="workspace-page">
+    <div id="workspace-shell" class="workspace-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
+        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
+          <span class="app-brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
+              <circle cx="16" cy="16" r="3.5" />
+            </svg>
+          </span>
+          <span class="sidebar-label app-brand__name">DRISHTI</span>
+        </a>
+
+        <button
+          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
+          id="sidebar-toggle"
+          type="button"
+          aria-label="Expand sidebar"
+          aria-controls="sidebar-navigation"
+          aria-expanded="false"
+          title="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+
+        <a class="sidebar-profile" href="./profile.html" aria-label="Open your profile">
+          <span class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </span>
+          <span class="sidebar-label profile-name">Demo</span>
+        </a>
+
+        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./home.html"
+                data-nav="home"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 11 12 4l8 7" />
+                  <path d="M6 10v10h12V10" />
+                </svg>
+                <span class="sidebar-label">Overview</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./screenings.html"
+                data-nav="screenings"
+                aria-current="page"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M4 12h16M4 17h10" />
+                  <path d="M3 4v16" />
+                </svg>
+                <span class="sidebar-label">Previous screenings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./profile.html"
+                data-nav="profile"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                </svg>
+                <span class="sidebar-label">Profile</span>
+              </a>
+            </li>
+          </ul>
+          <hr class="sidebar-divider" />
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./settings.html"
+                data-nav="settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
+                </svg>
+                <span class="sidebar-label">Settings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./guide.html"
+                data-nav="guide"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
+                </svg>
+                <span class="sidebar-label">Guide</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./about.html"
+                data-nav="about"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span class="sidebar-label">About</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <p class="workspace-topbar__label">
+            <span class="topbar-mark" aria-hidden="true"></span>
+            Previous screenings
+          </p>
+          <span class="workspace-topbar__state">
+            <span aria-hidden="true"></span>
+            Prototype
+          </span>
+        </header>
+
+        <main class="workspace-content">
+          <section class="page-header" aria-labelledby="screenings-title">
+            <div class="page-header__copy">
+              <p class="eyebrow">HISTORY</p>
+              <h1 id="screenings-title">Previous screenings</h1>
+              <p class="page-header__description">
+                Every image-quality check you have run in this browser. Records
+                are sample data for now and no screening is stored on a server.
+              </p>
+            </div>
+            <div class="page-header__actions">
+              <button
+                class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+                id="export-screenings"
+                type="button"
+              >
+                Export
+              </button>
+              <a class="ux4g-btn ux4g-btn-primary ux4g-btn-md" href="./home.html">
+                New screening
+              </a>
+            </div>
+          </section>
+
+          <div class="ux4g-alert ux4g-alert-info" id="screenings-notice" role="note">
+            <span
+              ><strong>Sample data.</strong> These rows are placeholders.
+              Persistent history needs a backend record store, and quality checks
+              are not identity verification.</span
+            >
+          </div>
+
+          <section class="stat-grid" aria-label="Screening summary">
+            <article class="stat-tile ux4g-card ux4g-p-l">
+              <p class="stat-tile__label">Total screenings</p>
+              <strong class="stat-tile__value" data-stat="total">128</strong>
+              <span class="stat-tile__hint">Last 30 days</span>
+            </article>
+            <article class="stat-tile ux4g-card ux4g-p-l">
+              <p class="stat-tile__label">Passed</p>
+              <strong class="stat-tile__value" data-stat="passed">96</strong>
+              <span class="stat-tile__hint">75% of all screenings</span>
+            </article>
+            <article class="stat-tile ux4g-card ux4g-p-l">
+              <p class="stat-tile__label">Needs attention</p>
+              <strong class="stat-tile__value" data-stat="failed">24</strong>
+              <span class="stat-tile__hint">8 unresolved</span>
+            </article>
+            <article class="stat-tile ux4g-card ux4g-p-l">
+              <p class="stat-tile__label">Average score</p>
+              <strong class="stat-tile__value" data-stat="average">78</strong>
+              <span class="stat-tile__hint">Out of 100</span>
+            </article>
+          </section>
+
+          <section class="table-panel ux4g-card" aria-labelledby="records-title">
+            <h2 id="records-title" class="visually-hidden">Screening records</h2>
+            <div class="ux4g-card-body">
+              <div class="table-toolbar">
+                <div class="table-toolbar__filters">
+                  <div class="ux4g-search-container ux4g-search-m">
+                    <label class="visually-hidden" for="screening-search">
+                      Search screenings
+                    </label>
+                    <input
+                      type="search"
+                      class="ux4g-search-input"
+                      id="screening-search"
+                      placeholder="Search by ID or document"
+                    />
+                  </div>
+                  <div
+                    class="ux4g-filter-chip-group"
+                    id="result-filters"
+                    role="group"
+                    aria-label="Filter by result"
+                  >
+                    <button
+                      class="ux4g-filter-chip-md active"
+                      type="button"
+                      data-filter="all"
+                      aria-pressed="true"
+                    >
+                      All
+                    </button>
+                    <button
+                      class="ux4g-filter-chip-md"
+                      type="button"
+                      data-filter="pass"
+                      aria-pressed="false"
+                    >
+                      Passed
+                    </button>
+                    <button
+                      class="ux4g-filter-chip-md"
+                      type="button"
+                      data-filter="attention"
+                      aria-pressed="false"
+                    >
+                      Needs attention
+                    </button>
+                  </div>
+                </div>
+                <p class="table-toolbar__meta" id="result-count" role="status" aria-live="polite">
+                  Showing 6 of 6 screenings
+                </p>
+              </div>
+            </div>
+
+            <div class="table-scroll">
+              <table class="ux4g-table ux4g-table-m ux4g-table-zebra-rows ux4g-table-interactive screenings-table">
+                <caption class="visually-hidden">
+                  Previous image-quality screenings, most recent first
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Screening</th>
+                    <th scope="col">Document</th>
+                    <th scope="col" aria-sort="descending" data-sort-key="checked">
+                      <button
+                        class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                        id="sort-checked"
+                        type="button"
+                      >
+                        Checked
+                      </button>
+                    </th>
+                    <th scope="col">Mode</th>
+                    <th scope="col">Score</th>
+                    <th scope="col">Result</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="screenings-body">
+                  <tr data-result="pass" data-search="scr-2041 passport page 1">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2041</strong>
+                        <small>Photo</small>
+                      </span>
+                    </td>
+                    <td>Passport page 1</td>
+                    <td><time datetime="2026-09-30T09:12">30 Sep 2026, 09:12</time></td>
+                    <td>Photo</td>
+                    <td>92</td>
+                    <td>
+                      <span class="ux4g-tag-filled-success ux4g-tag-s">Pass</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2041</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2041</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr data-result="attention" data-search="scr-2040 aadhaar card sample">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2040</strong>
+                        <small>Scan</small>
+                      </span>
+                    </td>
+                    <td>Aadhaar card (sample)</td>
+                    <td><time datetime="2026-09-29T17:45">29 Sep 2026, 17:45</time></td>
+                    <td>Scan</td>
+                    <td>74</td>
+                    <td>
+                      <span class="ux4g-tag-filled-warning ux4g-tag-s">Needs attention</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2040</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2040</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr data-result="pass" data-search="scr-2039 pan card sample">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2039</strong>
+                        <small>Photo</small>
+                      </span>
+                    </td>
+                    <td>PAN card (sample)</td>
+                    <td><time datetime="2026-09-29T11:03">29 Sep 2026, 11:03</time></td>
+                    <td>Photo</td>
+                    <td>88</td>
+                    <td>
+                      <span class="ux4g-tag-filled-success ux4g-tag-s">Pass</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2039</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2039</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr data-result="attention" data-search="scr-2038 driver licence sample">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2038</strong>
+                        <small>Scan</small>
+                      </span>
+                    </td>
+                    <td>Driver licence (sample)</td>
+                    <td><time datetime="2026-09-28T15:20">28 Sep 2026, 15:20</time></td>
+                    <td>Scan</td>
+                    <td>61</td>
+                    <td>
+                      <span class="ux4g-tag-filled-warning ux4g-tag-s">Needs attention</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2038</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2038</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr data-result="pass" data-search="scr-2037 passport page 2">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2037</strong>
+                        <small>Photo</small>
+                      </span>
+                    </td>
+                    <td>Passport page 2</td>
+                    <td><time datetime="2026-09-28T10:08">28 Sep 2026, 10:08</time></td>
+                    <td>Photo</td>
+                    <td>95</td>
+                    <td>
+                      <span class="ux4g-tag-filled-success ux4g-tag-s">Pass</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2037</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2037</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr data-result="pass" data-search="scr-2036 voter id sample">
+                    <td class="ux4g-table-cell-text">
+                      <span class="cell-primary">
+                        <strong>SCR-2036</strong>
+                        <small>Photo</small>
+                      </span>
+                    </td>
+                    <td>Voter ID (sample)</td>
+                    <td><time datetime="2026-09-27T19:31">27 Sep 2026, 19:31</time></td>
+                    <td>Photo</td>
+                    <td>83</td>
+                    <td>
+                      <span class="ux4g-tag-filled-success ux4g-tag-s">Pass</span>
+                    </td>
+                    <td>
+                      <div class="cell-actions">
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="view"
+                        >
+                          View
+                          <span class="visually-hidden">SCR-2036</span>
+                        </button>
+                        <button
+                          class="ux4g-btn ux4g-btn-text-primary ux4g-btn-sm"
+                          type="button"
+                          data-row-action="delete"
+                        >
+                          Delete
+                          <span class="visually-hidden">SCR-2036</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="ux4g-card-body" id="screenings-empty" hidden>
+              <div class="empty-panel">
+                <div class="ux4g-empty-state">
+                  <span class="empty-panel__icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" focusable="false">
+                      <circle cx="11" cy="11" r="6" />
+                      <path d="m20 20-4.5-4.5" />
+                    </svg>
+                  </span>
+                  <h2>No screenings match your search</h2>
+                  <p id="screenings-empty-hint">
+                    Try a different screening ID or clear the result filter.
+                  </p>
+                  <div class="empty-panel__actions">
+                    <button
+                      class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+                      id="clear-filters"
+                      type="button"
+                    >
+                      Clear filters
+                    </button>
+                    <a class="ux4g-btn ux4g-btn-primary ux4g-btn-md" href="./home.html">
+                      Run a new screening
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="table-footer">
+              <p class="table-footer__note">
+                Page 1 of 1 · Sample records only
+              </p>
+              <nav class="ux4g-pagination ux4g-pagination-compact" aria-label="Screening pages">
+                <button class="ux4g-pagination-prev" type="button" disabled aria-label="Previous page">
+                  &laquo;
+                </button>
+                <button class="active" type="button" aria-current="page">1</button>
+                <button class="ux4g-pagination-next" type="button" disabled aria-label="Next page">
+                  &raquo;
+                </button>
+              </nav>
+            </div>
+          </section>
+        </main>
+
+        <footer class="workspace-footer">
+          <span>DRISHTI</span>
+          <span>Document quality screening prototype</span>
+        </footer>
+      </div>
+    </div>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./pages.js"></script>
+  </body>
+</html>

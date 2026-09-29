@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Prototype profile page for the DRISHTI image-quality demo. Sample data only."
+    />
+    <title>Profile | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./home.css" />
+    <link rel="stylesheet" href="./pages.css" />
+    <script src="./preferences.js"></script>
+  </head>
+  <body class="workspace-page">
+    <div id="workspace-shell" class="workspace-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
+        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
+          <span class="app-brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
+              <circle cx="16" cy="16" r="3.5" />
+            </svg>
+          </span>
+          <span class="sidebar-label app-brand__name">DRISHTI</span>
+        </a>
+
+        <button
+          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
+          id="sidebar-toggle"
+          type="button"
+          aria-label="Expand sidebar"
+          aria-controls="sidebar-navigation"
+          aria-expanded="false"
+          title="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+
+        <a
+          class="sidebar-profile"
+          href="./profile.html"
+          aria-label="Open your profile"
+          aria-current="page"
+        >
+          <span class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </span>
+          <span class="sidebar-label profile-name">Demo</span>
+        </a>
+
+        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./home.html"
+                data-nav="home"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 11 12 4l8 7" />
+                  <path d="M6 10v10h12V10" />
+                </svg>
+                <span class="sidebar-label">Overview</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./screenings.html"
+                data-nav="screenings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M4 12h16M4 17h10" />
+                  <path d="M3 4v16" />
+                </svg>
+                <span class="sidebar-label">Previous screenings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./profile.html"
+                data-nav="profile"
+                aria-current="page"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                </svg>
+                <span class="sidebar-label">Profile</span>
+              </a>
+            </li>
+          </ul>
+          <hr class="sidebar-divider" />
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./settings.html"
+                data-nav="settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
+                </svg>
+                <span class="sidebar-label">Settings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./guide.html"
+                data-nav="guide"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
+                </svg>
+                <span class="sidebar-label">Guide</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./about.html"
+                data-nav="about"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span class="sidebar-label">About</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <p class="workspace-topbar__label">
+            <span class="topbar-mark" aria-hidden="true"></span>
+            Profile
+          </p>
+          <span class="workspace-topbar__state">
+            <span aria-hidden="true"></span>
+            Prototype
+          </span>
+        </header>
+
+        <main class="workspace-content">
+          <section class="page-header" aria-labelledby="profile-title">
+            <div class="page-header__copy">
+              <p class="eyebrow">YOUR DETAILS</p>
+              <h1 id="profile-title">Profile</h1>
+              <p class="page-header__description">
+                A sample profile for the demo. There is no account behind it and
+                nothing you type here is sent anywhere.
+              </p>
+            </div>
+          </section>
+
+          <div class="ux4g-alert ux4g-alert-info" role="note">
+            <span
+              ><strong>Sample profile.</strong> This build has no sign-in, so there is
+              no password to change. Edits below stay in this browser tab and are
+              cleared when you close it.</span
+            >
+          </div>
+
+          <section class="ux4g-card ux4g-p-l profile-header" aria-labelledby="identity-title">
+            <div class="profile-avatar-large">
+              <div class="ux4g-avatar ux4g-avatar-profile ux4g-avatar-2xl" id="profile-avatar">
+                <span class="avatar-initials" id="avatar-initials" aria-hidden="true">DS</span>
+                <img id="avatar-image" alt="" hidden />
+              </div>
+              <span class="profile-avatar-large__overlay" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false">
+                  <path d="M4 8h3l1.5-2h7L17 8h3v11H4z" />
+                  <circle cx="12" cy="13" r="3" />
+                </svg>
+              </span>
+            </div>
+            <div class="profile-header__copy">
+              <h2 id="identity-title" data-display="name">Demo Sample</h2>
+              <p data-display="email">demo.sample@example.com</p>
+              <p>
+                <span class="ux4g-tag-tonal-primary ux4g-tag-s">Prototype reviewer</span>
+              </p>
+            </div>
+            <div class="page-header__actions">
+              <label class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" for="avatar-file">
+                Change photo
+              </label>
+              <input
+                class="visually-hidden"
+                id="avatar-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+              />
+              <button
+                class="ux4g-btn ux4g-btn-text-primary ux4g-btn-md"
+                id="remove-photo"
+                type="button"
+              >
+                Remove
+              </button>
+            </div>
+          </section>
+
+          <p
+            class="upload-help"
+            id="avatar-status"
+            role="status"
+            aria-live="polite"
+            tabindex="-1"
+          ></p>
+
+          <div class="profile-grid">
+            <section class="ux4g-card ux4g-p-l settings-group" aria-labelledby="contact-title">
+              <h2 class="settings-group__title" id="contact-title">Contact details</h2>
+              <p class="settings-group__hint">
+                Update the name and email shown on this prototype profile.
+              </p>
+
+              <form class="field-grid" id="profile-form" novalidate>
+                <div class="ux4g-input-container ux4g-input-md ux4g-input-default">
+                  <label class="ux4g-label-m-default" for="profile-name">Full name</label>
+                  <div class="ux4g-input">
+                    <input
+                      class="ux4g-input-input"
+                      id="profile-name"
+                      name="name"
+                      type="text"
+                      autocomplete="off"
+                      value="Demo Sample"
+                      aria-describedby="profile-name-helper"
+                    />
+                  </div>
+                  <span class="ux4g-input-helper" id="profile-name-helper">
+                    Shown in the sidebar and on this page.
+                  </span>
+                </div>
+
+                <div
+                  class="ux4g-input-container ux4g-input-md ux4g-input-default"
+                  id="email-field"
+                >
+                  <label class="ux4g-label-m-default" for="profile-email">Email address</label>
+                  <div class="ux4g-input">
+                    <input
+                      class="ux4g-input-input"
+                      id="profile-email"
+                      name="email"
+                      type="email"
+                      autocomplete="off"
+                      value="demo.sample@example.com"
+                      aria-describedby="profile-email-helper"
+                    />
+                  </div>
+                  <span class="ux4g-input-helper" id="profile-email-helper">
+                    Use an address you control. Nothing is sent or verified.
+                  </span>
+                </div>
+
+                <p
+                  class="file-error"
+                  id="profile-error"
+                  role="alert"
+                  aria-live="assertive"
+                ></p>
+
+                <div class="field-actions">
+                  <button
+                    class="ux4g-btn ux4g-btn-primary ux4g-btn-md"
+                    id="save-profile"
+                    type="submit"
+                  >
+                    Save changes
+                  </button>
+                  <button
+                    class="ux4g-btn ux4g-btn-text-primary ux4g-btn-md"
+                    id="reset-profile"
+                    type="button"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </form>
+            </section>
+
+            <section class="ux4g-card ux4g-p-l" aria-labelledby="details-title">
+                <h2 class="settings-group__title" id="details-title">Details</h2>
+                <p class="settings-group__hint">Sample values for this build.</p>
+                <dl class="readonly-list">
+                  <div class="readonly-value">
+                    <dt>Role</dt>
+                    <dd>Prototype reviewer</dd>
+                  </div>
+                  <div class="readonly-value">
+                    <dt>Organisation</dt>
+                    <dd>Smart India Hackathon team</dd>
+                  </div>
+                  <div class="readonly-value">
+                    <dt>Location</dt>
+                    <dd>Bengaluru, Karnataka</dd>
+                  </div>
+                  <div class="readonly-value">
+                    <dt>Default analysis mode</dt>
+                    <dd>Automatic</dd>
+                  </div>
+                  <div class="readonly-value">
+                    <dt>Screenings this month</dt>
+                    <dd>24</dd>
+                  </div>
+                </dl>
+            </section>
+          </div>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="security-title">
+            <h2 class="settings-group__title" id="security-title">Security</h2>
+            <p class="settings-group__hint">
+              Account security becomes available only when real authentication is
+              implemented.
+            </p>
+
+            <div class="security-grid">
+              <div class="settings-row">
+                <div class="settings-row__copy">
+                  <strong>Change password</strong>
+                  <small id="password-help">
+                    Unavailable in this build. There is no account or stored
+                    password to change.
+                  </small>
+                </div>
+                <div class="settings-row__control">
+                  <button
+                    class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+                    id="change-password"
+                    type="button"
+                    aria-disabled="true"
+                    aria-describedby="password-help"
+                  >
+                    Change password
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row__copy">
+                  <strong>Two-factor authentication</strong>
+                  <small>Not available in this build.</small>
+                </div>
+                <div class="settings-row__control">
+                  <label class="ux4g-switch ux4g-switch-md">
+                    <input
+                      class="ux4g-switch-input"
+                      type="checkbox"
+                      role="switch"
+                      disabled
+                    />
+                    <span class="ux4g-switch-control">
+                      <span class="ux4g-switch-track">
+                        <span class="ux4g-switch-thumb"></span>
+                      </span>
+                    </span>
+                    <span class="visually-hidden">
+                      Two-factor authentication (not available)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="settings-row">
+                <div class="settings-row__copy">
+                  <strong>Download my data</strong>
+                  <small>No personal data is stored, so there is nothing to export.</small>
+                </div>
+                <div class="settings-row__control">
+                  <button
+                    class="ux4g-btn ux4g-btn-text-primary ux4g-btn-md"
+                    id="download-data"
+                    type="button"
+                    aria-disabled="true"
+                  >
+                    Download
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+
+        <footer class="workspace-footer">
+          <span>DRISHTI</span>
+          <span>Document quality screening prototype</span>
+        </footer>
+      </div>
+    </div>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./pages.js"></script>
+  </body>
+</html>

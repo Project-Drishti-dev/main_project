@@ -13,6 +13,8 @@
       href="./node_modules/ux4g-web-components/styles/ux4g.css"
     />
     <link rel="stylesheet" href="./home.css" />
+    <link rel="stylesheet" href="./pages.css" />
+    <script src="./preferences.js"></script>
   </head>
   <body class="workspace-page">
     <div id="workspace-shell" class="workspace-shell">
@@ -41,7 +43,7 @@
           </svg>
         </button>
 
-        <div class="sidebar-profile">
+        <a class="sidebar-profile" href="./profile.html" aria-label="Open your profile">
           <span class="profile-avatar" aria-hidden="true">
             <svg viewBox="0 0 24 24" focusable="false">
               <circle cx="12" cy="8" r="3.5" />
@@ -49,74 +51,94 @@
             </svg>
           </span>
           <span class="sidebar-label profile-name">Demo</span>
-        </div>
+        </a>
 
         <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
           <ul>
             <li>
-              <button
+              <a
                 class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Previous screenings"
-                aria-label="Previous screenings"
-                title="Previous screenings"
+                href="./home.html"
+                data-nav="home"
+                aria-current="page"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 11 12 4l8 7" />
+                  <path d="M6 10v10h12V10" />
+                </svg>
+                <span class="sidebar-label">Overview</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./screenings.html"
+                data-nav="screenings"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="M4 7h16M4 12h16M4 17h10" />
                   <path d="M3 4v16" />
                 </svg>
                 <span class="sidebar-label">Previous screenings</span>
-              </button>
+              </a>
             </li>
             <li>
-              <button
+              <a
                 class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Settings"
-                aria-label="Settings"
-                title="Settings"
+                href="./profile.html"
+                data-nav="profile"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                </svg>
+                <span class="sidebar-label">Profile</span>
+              </a>
+            </li>
+          </ul>
+          <hr class="sidebar-divider" />
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./settings.html"
+                data-nav="settings"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <circle cx="12" cy="12" r="3" />
                   <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
                 </svg>
                 <span class="sidebar-label">Settings</span>
-              </button>
+              </a>
             </li>
             <li>
-              <button
+              <a
                 class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Guide"
-                aria-label="Guide"
-                title="Guide"
+                href="./guide.html"
+                data-nav="guide"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <circle cx="12" cy="12" r="9" />
                   <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
                 </svg>
                 <span class="sidebar-label">Guide</span>
-              </button>
+              </a>
             </li>
             <li>
-              <button
+              <a
                 class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="About"
-                aria-label="About"
-                title="About"
+                href="./about.html"
+                data-nav="about"
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <circle cx="12" cy="12" r="9" />
                   <path d="M12 11v5M12 8h.01" />
                 </svg>
                 <span class="sidebar-label">About</span>
-              </button>
+              </a>
             </li>
           </ul>
-
         </nav>
-        <p id="sidebar-status" class="sidebar-status" role="status" aria-live="polite"></p>
       </aside>
 
       <div class="workspace-main">

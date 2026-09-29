@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Learn how to capture a clear document image and what each DRISHTI quality check measures."
+    />
+    <title>Guide | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./home.css" />
+    <link rel="stylesheet" href="./pages.css" />
+    <script src="./preferences.js"></script>
+  </head>
+  <body class="workspace-page">
+    <div id="workspace-shell" class="workspace-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
+        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
+          <span class="app-brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
+              <circle cx="16" cy="16" r="3.5" />
+            </svg>
+          </span>
+          <span class="sidebar-label app-brand__name">DRISHTI</span>
+        </a>
+
+        <button
+          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
+          id="sidebar-toggle"
+          type="button"
+          aria-label="Expand sidebar"
+          aria-controls="sidebar-navigation"
+          aria-expanded="false"
+          title="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+
+        <a class="sidebar-profile" href="./profile.html" aria-label="Open your profile">
+          <span class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </span>
+          <span class="sidebar-label profile-name">Demo</span>
+        </a>
+
+        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./home.html"
+                data-nav="home"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 11 12 4l8 7" />
+                  <path d="M6 10v10h12V10" />
+                </svg>
+                <span class="sidebar-label">Overview</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./screenings.html"
+                data-nav="screenings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M4 12h16M4 17h10" />
+                  <path d="M3 4v16" />
+                </svg>
+                <span class="sidebar-label">Previous screenings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./profile.html"
+                data-nav="profile"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                </svg>
+                <span class="sidebar-label">Profile</span>
+              </a>
+            </li>
+          </ul>
+          <hr class="sidebar-divider" />
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./settings.html"
+                data-nav="settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
+                </svg>
+                <span class="sidebar-label">Settings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./guide.html"
+                data-nav="guide"
+                aria-current="page"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
+                </svg>
+                <span class="sidebar-label">Guide</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./about.html"
+                data-nav="about"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span class="sidebar-label">About</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <p class="workspace-topbar__label">
+            <span class="topbar-mark" aria-hidden="true"></span>
+            Guide
+          </p>
+          <span class="workspace-topbar__state">
+            <span aria-hidden="true"></span>
+            Prototype
+          </span>
+        </header>
+
+        <main class="workspace-content">
+          <section class="page-header" aria-labelledby="guide-title">
+            <div class="page-header__copy">
+              <p class="eyebrow">HOW IT WORKS</p>
+              <h1 id="guide-title">Guide</h1>
+              <p class="page-header__description">
+                How to capture an image that passes the checks, and what each of
+                the nine quality signals actually measures.
+              </p>
+            </div>
+          </section>
+
+          <div class="ux4g-alert ux4g-alert-warning" role="note">
+            <span
+              ><strong>Use sample images only.</strong> These thresholds are
+              experimental and do not verify anyone&rsquo;s identity. Never upload a
+              real identity document to this prototype.</span
+            >
+          </div>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="steps-title">
+            <h2 class="settings-group__title" id="steps-title">The four steps</h2>
+            <p class="settings-group__hint">
+              Where you are in the screening flow.
+            </p>
+            <div class="ux4g-stepper ux4g-stepper-horizontal ux4g-stepper-center guide-stepper">
+              <div class="ux4g-stepper-step ux4g-stepper-completed ux4g-stepper-done">
+                <div class="ux4g-stepper-head">
+                  <span class="ux4g-stepper-head-icon">
+                    <span class="ux4g-stepper-head-check"></span>
+                    <span class="ux4g-stepper-head-icon-active">1</span>
+                  </span>
+                  <span class="ux4g-stepper-label">Choose an image</span>
+                  <span class="ux4g-stepper-label-success">Choose an image</span>
+                </div>
+              </div>
+              <div class="ux4g-stepper-step ux4g-stepper-completed ux4g-stepper-inprogress">
+                <div class="ux4g-stepper-head">
+                  <span class="ux4g-stepper-head-icon">
+                    <span class="ux4g-stepper-head-check"></span>
+                    <span class="ux4g-stepper-head-icon-active">2</span>
+                  </span>
+                  <span class="ux4g-stepper-label">Run the checks</span>
+                  <span class="ux4g-stepper-label-inprogress">Run the checks</span>
+                </div>
+              </div>
+              <div class="ux4g-stepper-step">
+                <div class="ux4g-stepper-head">
+                  <span class="ux4g-stepper-head-icon">
+                    <span class="ux4g-stepper-head-check"></span>
+                    <span class="ux4g-stepper-head-icon-active">3</span>
+                  </span>
+                  <span class="ux4g-stepper-label">Review results</span>
+                </div>
+              </div>
+              <div class="ux4g-stepper-step">
+                <div class="ux4g-stepper-head">
+                  <span class="ux4g-stepper-head-icon">
+                    <span class="ux4g-stepper-head-check"></span>
+                    <span class="ux4g-stepper-head-icon-active">4</span>
+                  </span>
+                  <span class="ux4g-stepper-label">Retake if needed</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="guide-layout">
+            <section class="ux4g-card ux4g-p-l" aria-labelledby="checks-title">
+              <h2 class="settings-group__title" id="checks-title">What each check measures</h2>
+              <p class="settings-group__hint">
+                Expand a check to see what causes a failure and how to fix it.
+              </p>
+
+              <div class="ux4g-accordion ux4g-accordion-arrow-right guide-accordion">
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="true"
+                      aria-controls="check-sharpness"
+                    >
+                      <span class="check-index" aria-hidden="true">01</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Sharpness</span>
+                        <span class="check-summary">Is the text crisp, or does it look soft?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse show" id="check-sharpness">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Measures edge clarity across the document. A blurry photo
+                        usually means the camera moved while the shutter was open.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Rest your phone or scanner on a surface, or hold steady.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-noise"
+                    >
+                      <span class="check-index" aria-hidden="true">02</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Noise</span>
+                        <span class="check-summary">Is there grain or speckling in flat areas?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-noise">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Looks for grain and speckling, which usually come from a
+                        dim scene where the camera boosts its gain.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Add more light rather than brightening the image afterwards.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-exposure"
+                    >
+                      <span class="check-index" aria-hidden="true">03</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Exposure</span>
+                        <span class="check-summary">Is the page too dark or washed out?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-exposure">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Compares overall brightness and contrast. Very dark or
+                        washed-out images fail here first.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Avoid direct flash and shoot in even, indirect light.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-uniformity"
+                    >
+                      <span class="check-index" aria-hidden="true">04</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Lighting uniformity</span>
+                        <span class="check-summary">Is one corner darker than another?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-uniformity">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Measures how evenly the page is lit. A bright corner with a
+                        dark opposite corner is a common cause of rejection.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Use a single light source away from the page.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-glare"
+                    >
+                      <span class="check-index" aria-hidden="true">05</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Glare</span>
+                        <span class="check-summary">Are there reflections on the page?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-glare">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Detects reflections and hotspots on the surface of the
+                        document.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Tilt the document slightly and move away from direct light.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-ppi"
+                    >
+                      <span class="check-index" aria-hidden="true">06</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Resolution (PPI)</span>
+                        <span class="check-summary">Is there enough detail to read it?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-ppi">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Estimates print resolution. Small images scaled up look soft
+                        even when the focus is fine.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Capture at the highest quality the device offers.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-skew"
+                    >
+                      <span class="check-index" aria-hidden="true">07</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Skew / perspective</span>
+                        <span class="check-summary">Do the edges look straight?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-skew">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Checks whether the document edges look rectangular. Phone
+                        photos taken at an angle often skew.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Hold the camera parallel to the page.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-coverage"
+                    >
+                      <span class="check-index" aria-hidden="true">08</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Card coverage</span>
+                        <span class="check-summary">Does the document fill the frame?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-coverage">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Measures how much of the frame the document fills. A small
+                        document in a large frame loses detail.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Move closer until the page fills most of the frame.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ux4g-accordion__item">
+                  <div class="ux4g-accordion__header">
+                    <button
+                      class="ux4g-accordion__button"
+                      type="button"
+                      data-ux4g-accordion-toggle
+                      aria-expanded="false"
+                      aria-controls="check-completeness"
+                    >
+                      <span class="check-index" aria-hidden="true">09</span>
+                      <span class="ux4g-accordion__button-content">
+                        <span class="ux4g-accordion__title">Completeness (cut/crop)</span>
+                        <span class="check-summary">Is any part of the page cut off?</span>
+                      </span>
+                    </button>
+                  </div>
+                  <div class="ux4g-accordion__collapse" id="check-completeness">
+                    <div class="ux4g-accordion__body">
+                      <p>
+                        Checks that no part of the document is cut off by the edge
+                        of the image.
+                      </p>
+                      <p class="check-fix">
+                        <span class="check-fix__label" aria-hidden="true">Fix</span>
+                        Leave a small margin around every edge.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <aside class="guide-aside" aria-label="Quick checklist">
+              <section class="ux4g-card ux4g-p-l" aria-labelledby="checklist-title">
+                <h2 class="settings-group__title" id="checklist-title">
+                  Before you upload
+                </h2>
+                <ol class="checklist">
+                  <li>
+                    <span class="checklist__index" aria-hidden="true">1</span>
+                    <span>Place the document on a plain, contrasting surface.</span>
+                  </li>
+                  <li>
+                    <span class="checklist__index" aria-hidden="true">2</span>
+                    <span>Use indirect light and turn off the flash.</span>
+                  </li>
+                  <li>
+                    <span class="checklist__index" aria-hidden="true">3</span>
+                    <span>Keep the camera parallel to the page.</span>
+                  </li>
+                  <li>
+                    <span class="checklist__index" aria-hidden="true">4</span>
+                    <span>Fill the frame without cropping any edge.</span>
+                  </li>
+                  <li>
+                    <span class="checklist__index" aria-hidden="true">5</span>
+                    <span>Hold steady and check the preview before submitting.</span>
+                  </li>
+                </ol>
+              </section>
+
+              <section class="ux4g-card ux4g-p-l" aria-labelledby="formats-title">
+                <h2 class="settings-group__title" id="formats-title">
+                  Accepted files
+                </h2>
+                <ul class="ux4g-list ux4g-list-default ux4g-list-s">
+                  <li class="ux4g-list-item">
+                    <div class="ux4g-list-item-row">
+                      <span class="ux4g-list-item-start">JPEG</span>
+                    </div>
+                  </li>
+                  <li class="ux4g-list-item">
+                    <div class="ux4g-list-item-row">
+                      <span class="ux4g-list-item-start">PNG</span>
+                    </div>
+                  </li>
+                  <li class="ux4g-list-item">
+                    <div class="ux4g-list-item-row">
+                      <span class="ux4g-list-item-start">WebP</span>
+                    </div>
+                  </li>
+                  <li class="ux4g-list-item">
+                    <div class="ux4g-list-item-row">
+                      <span class="ux4g-list-item-start">Up to 10 MB</span>
+                    </div>
+                  </li>
+                </ul>
+              </section>
+
+              <section class="ux4g-card ux4g-p-l link-card" aria-labelledby="start-title">
+                <h2 class="settings-group__title" id="start-title">Ready to try?</h2>
+                <p>Run the checks on a sample image and see the nine signals.</p>
+                <a class="ux4g-btn ux4g-btn-primary ux4g-btn-md" href="./home.html">
+                  Go to the demo
+                </a>
+              </section>
+            </aside>
+          </div>
+        </main>
+
+        <footer class="workspace-footer">
+          <span>DRISHTI</span>
+          <span>Document quality screening prototype</span>
+        </footer>
+      </div>
+    </div>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./pages.js"></script>
+  </body>
+</html>

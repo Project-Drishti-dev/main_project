@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="About the DRISHTI document image-quality screening prototype."
+    />
+    <title>About | DRISHTI</title>
+    <link
+      rel="stylesheet"
+      href="./node_modules/ux4g-web-components/styles/ux4g.css"
+    />
+    <link rel="stylesheet" href="./home.css" />
+    <link rel="stylesheet" href="./pages.css" />
+    <script src="./preferences.js"></script>
+  </head>
+  <body class="workspace-page">
+    <div id="workspace-shell" class="workspace-shell">
+      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
+        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
+          <span class="app-brand__mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" focusable="false">
+              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
+              <circle cx="16" cy="16" r="3.5" />
+            </svg>
+          </span>
+          <span class="sidebar-label app-brand__name">DRISHTI</span>
+        </a>
+
+        <button
+          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
+          id="sidebar-toggle"
+          type="button"
+          aria-label="Expand sidebar"
+          aria-controls="sidebar-navigation"
+          aria-expanded="false"
+          title="Expand sidebar"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+
+        <a class="sidebar-profile" href="./profile.html" aria-label="Open your profile">
+          <span class="profile-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false">
+              <circle cx="12" cy="8" r="3.5" />
+              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+            </svg>
+          </span>
+          <span class="sidebar-label profile-name">Demo</span>
+        </a>
+
+        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./home.html"
+                data-nav="home"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 11 12 4l8 7" />
+                  <path d="M6 10v10h12V10" />
+                </svg>
+                <span class="sidebar-label">Overview</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./screenings.html"
+                data-nav="screenings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 7h16M4 12h16M4 17h10" />
+                  <path d="M3 4v16" />
+                </svg>
+                <span class="sidebar-label">Previous screenings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./profile.html"
+                data-nav="profile"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+                </svg>
+                <span class="sidebar-label">Profile</span>
+              </a>
+            </li>
+          </ul>
+          <hr class="sidebar-divider" />
+          <ul>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./settings.html"
+                data-nav="settings"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
+                </svg>
+                <span class="sidebar-label">Settings</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./guide.html"
+                data-nav="guide"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
+                </svg>
+                <span class="sidebar-label">Guide</span>
+              </a>
+            </li>
+            <li>
+              <a
+                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
+                href="./about.html"
+                data-nav="about"
+                aria-current="page"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span class="sidebar-label">About</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </aside>
+
+      <div class="workspace-main">
+        <header class="workspace-topbar">
+          <p class="workspace-topbar__label">
+            <span class="topbar-mark" aria-hidden="true"></span>
+            About
+          </p>
+          <span class="workspace-topbar__state">
+            <span aria-hidden="true"></span>
+            Prototype
+          </span>
+        </header>
+
+        <main class="workspace-content">
+          <section class="about-hero ux4g-card ux4g-p-l" aria-labelledby="about-title">
+            <div class="page-header__copy">
+              <p class="eyebrow">ABOUT</p>
+              <h1 id="about-title">DRISHTI</h1>
+              <p class="page-header__description">
+                DRISHTI is a document image-quality screening prototype. It looks
+                at a photo or scan of a document and reports nine quality signals
+                so a person can retake a bad image before submitting it.
+              </p>
+              <p class="page-header__description">
+                This build demonstrates the interface and the checking pipeline.
+                It is not an identity-verification service.
+              </p>
+            </div>
+            <div class="welcome-art" aria-hidden="true">
+              <div class="welcome-art__orbit welcome-art__orbit--outer"></div>
+              <div class="welcome-art__orbit welcome-art__orbit--inner"></div>
+              <div class="welcome-art__document">
+                <span></span>
+                <i></i><i></i><i></i>
+                <b></b>
+              </div>
+              <span class="welcome-art__spark welcome-art__spark--one"></span>
+              <span class="welcome-art__spark welcome-art__spark--two"></span>
+            </div>
+          </section>
+
+          <div class="ux4g-alert ux4g-alert-warning" role="note">
+            <span
+              ><strong>Prototype disclaimer.</strong> Quality thresholds are
+              experimental, results are advisory, and nothing here confirms who a
+              document belongs to. Do not upload real identity documents.</span
+            >
+          </div>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="facts-title">
+            <h2 class="settings-group__title" id="facts-title">Prototype facts</h2>
+            <p class="settings-group__hint">
+              Sample values for this demonstration build.
+            </p>
+            <dl class="spec-grid">
+              <div>
+                <dt>Version</dt>
+                <dd>0.4.0 (prototype)</dd>
+              </div>
+              <div>
+                <dt>Quality checks</dt>
+                <dd>Nine</dd>
+              </div>
+              <div>
+                <dt>Accepted formats</dt>
+                <dd>JPEG, PNG, WebP</dd>
+              </div>
+              <div>
+                <dt>Maximum upload</dt>
+                <dd>10 MB</dd>
+              </div>
+              <div>
+                <dt>Analysis modes</dt>
+                <dd>Photo and scan</dd>
+              </div>
+              <div>
+                <dt>Interface</dt>
+                <dd>UX4G design system</dd>
+              </div>
+              <div>
+                <dt>Accounts</dt>
+                <dd>None</dd>
+              </div>
+              <div>
+                <dt>Image storage</dt>
+                <dd>None</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="built-title">
+            <h2 class="settings-group__title" id="built-title">How it is built</h2>
+            <div class="workspace-cards">
+              <article class="info-card ux4g-card ux4g-p-l">
+                <div class="info-card__icon info-card__icon--quality" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M4 5h16v14H4zM8 9h8M8 12h5M8 15h3" />
+                    <path d="m16 15 1.5 1.5L20 13" />
+                  </svg>
+                </div>
+                <p class="eyebrow">INTERFACE</p>
+                <h2>UX4G web components</h2>
+                <p>
+                  Plain HTML, CSS and JavaScript styled with the UX4G design
+                  system. Light and dark themes come from the same token set.
+                </p>
+              </article>
+
+              <article class="info-card ux4g-card ux4g-p-l">
+                <div class="info-card__icon info-card__icon--prototype" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" focusable="false">
+                    <path d="M12 3 4.5 6v5.5c0 4.5 3.2 7.8 7.5 9.5 4.3-1.7 7.5-5 7.5-9.5V6Z" />
+                    <path d="M12 8v4M12 15h.01" />
+                  </svg>
+                </div>
+                <p class="eyebrow">SERVICE</p>
+                <h2>Python analysis API</h2>
+                <p>
+                  A small FastAPI service validates the upload and runs the nine
+                  quality modules. It is public and has no rate limiting.
+                </p>
+              </article>
+            </div>
+          </section>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="privacy-title">
+            <h2 class="settings-group__title" id="privacy-title">Data and privacy</h2>
+            <ul class="ux4g-list ux4g-list-default ux4g-list-m">
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    Images are analysed in memory and are not written to disk.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    Theme and text size are the only values stored in your
+                    browser, under a single preferences key.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    There is no account, sign-in or password storage in this build.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    The screening history you see is sample data, not a real
+                    record store.
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </section>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="limits-title">
+            <h2 class="settings-group__title" id="limits-title">Known limitations</h2>
+            <ul class="ux4g-list ux4g-list-warning ux4g-list-m">
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    Camera capture is a placeholder; upload an existing image.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    Screening history is not persisted between visits.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    The analysis endpoint is unauthenticated and unrated, so it
+                    should only be used with synthetic images.
+                  </span>
+                </div>
+              </li>
+              <li class="ux4g-list-item">
+                <div class="ux4g-list-item-row">
+                  <span class="ux4g-list-item-start">
+                    Thresholds have not been calibrated against a real document
+                    set.
+                  </span>
+                </div>
+              </li>
+            </ul>
+          </section>
+
+          <section class="ux4g-card ux4g-p-l" aria-labelledby="next-title">
+            <h2 class="settings-group__title" id="next-title">Where to next</h2>
+            <div class="page-header__actions">
+              <a class="ux4g-btn ux4g-btn-primary ux4g-btn-md" href="./home.html">
+                Run the demo
+              </a>
+              <a class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" href="./guide.html">
+                Read the guide
+              </a>
+              <a
+                class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+                href="./screenings.html"
+              >
+                Previous screenings
+              </a>
+              <a class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" href="./settings.html">
+                Settings
+              </a>
+            </div>
+          </section>
+        </main>
+
+        <footer class="workspace-footer">
+          <span>DRISHTI</span>
+          <span>Document quality screening prototype</span>
+        </footer>
+      </div>
+    </div>
+
+    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
+    <script src="./pages.js"></script>
+  </body>
+</html>

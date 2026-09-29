@@ -9,7 +9,6 @@
   const workspaceShell = document.getElementById("workspace-shell");
   const sidebar = document.getElementById("app-sidebar");
   const sidebarToggle = document.getElementById("sidebar-toggle");
-  const sidebarStatus = document.getElementById("sidebar-status");
   const sourceChooser = document.getElementById("source-chooser");
   const uploadStep = document.getElementById("upload-step");
   const uploadButton = document.getElementById("choose-upload");
@@ -85,13 +84,6 @@
       "title",
       expanded ? "Collapse sidebar" : "Expand sidebar",
     );
-  });
-
-  document.querySelectorAll("[data-sidebar-placeholder]").forEach((option) => {
-    option.addEventListener("click", () => {
-      const label = option.getAttribute("data-sidebar-placeholder");
-      sidebarStatus.textContent = `${label} is a placeholder in this prototype.`;
-    });
   });
 
   uploadButton.addEventListener("click", () => {

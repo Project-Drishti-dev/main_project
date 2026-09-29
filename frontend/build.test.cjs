@@ -5,6 +5,14 @@ const path = require("node:path");
 const test = require("node:test");
 
 const frontendDirectory = path.resolve(__dirname);
+const pageFileNames = [
+  "home.html",
+  "screenings.html",
+  "settings.html",
+  "guide.html",
+  "about.html",
+  "profile.html",
+];
 const legacyAuthArtifacts = [
   "register.html",
   "login.css",
@@ -60,6 +68,14 @@ test("static build publishes the screening demo without account flows", () => {
         "home.html",
         "home.css",
         "home.js",
+        "pages.css",
+        "pages.js",
+        "preferences.js",
+        "screenings.html",
+        "settings.html",
+        "guide.html",
+        "about.html",
+        "profile.html",
         "api-config.js",
       ]) {
         assert.ok(
@@ -86,7 +102,7 @@ test("static build publishes the screening demo without account flows", () => {
         "the public root should open the screening demo directly",
       );
 
-      for (const fileName of ["index.html", "home.html"]) {
+      for (const fileName of ["index.html", ...pageFileNames]) {
         const html = fs.readFileSync(
           path.join(outputDirectory, fileName),
           "utf8",
@@ -97,6 +113,28 @@ test("static build publishes the screening demo without account flows", () => {
         assert.doesNotMatch(
           html,
           /type="password"|Forgot password\?|Personnel ID|Verification code|Register/,
+        );
+      }
+
+      for (const fileName of pageFileNames) {
+        const html = fs.readFileSync(
+          path.join(outputDirectory, fileName),
+          "utf8",
+        );
+        assert.match(
+          html,
+          /href="\.\/pages\.css"/,
+          `${fileName} should load the shared page stylesheet`,
+        );
+        assert.match(
+          html,
+          /src="\.\/preferences\.js"/,
+          `${fileName} should load the shared preferences script`,
+        );
+        assert.match(
+          html,
+          fileName === "home.html" ? /src="\.\/home\.js"/ : /src="\.\/pages\.js"/,
+          `${fileName} should load its page script`,
         );
       }
 

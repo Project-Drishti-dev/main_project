@@ -132,7 +132,6 @@ function loadHomeScript({
     "workspace-shell",
     "app-sidebar",
     "sidebar-toggle",
-    "sidebar-status",
     "source-chooser",
     "upload-step",
     "choose-upload",
@@ -158,16 +157,6 @@ function loadHomeScript({
   ];
   const elements = new Map(ids.map((id) => [id, createElement()]));
   const metricCards = MODULE_KEYS.map(createMetricCard);
-  const sidebarOptions = [
-    "Previous screenings",
-    "Settings",
-    "Guide",
-    "About",
-  ].map((label) => {
-    const option = createElement();
-    option.setAttribute("data-sidebar-placeholder", label);
-    return option;
-  });
   const document = {
     body: { style: {} },
     activeElement: null,
@@ -179,7 +168,6 @@ function loadHomeScript({
       return createElement(tagName);
     },
     querySelectorAll(selector) {
-      if (selector === "[data-sidebar-placeholder]") return sidebarOptions;
       if (selector === ".metric-card") return metricCards;
       return [];
     },
@@ -187,7 +175,7 @@ function loadHomeScript({
       this.listeners[event] = callback;
     },
   };
-  for (const element of [...elements.values(), ...sidebarOptions]) {
+  for (const element of elements.values()) {
     element.focus = function focus() {
       this.focused = true;
       document.activeElement = this;
@@ -215,7 +203,7 @@ function loadHomeScript({
       callback();
     },
   });
-  return { elements, document, metricCards, objectUrls, sidebarOptions };
+  return { elements, document, metricCards, objectUrls };
 }
 
 function makeAnalysisResponse(overrides = {}) {
@@ -276,7 +264,7 @@ test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
   assert.doesNotMatch(html, /type="password"|Forgot password\?|Personnel ID|Register/);
 });
 
-test("homescreen includes a compact expandable sidebar and placeholder options", () => {
+test("homescreen includes a compact expandable sidebar with working navigation", () => {
   const html = fs.readFileSync(homePath, "utf8");
   const css = fs.readFileSync(path.join(__dirname, "home.css"), "utf8");
 
@@ -284,14 +272,25 @@ test("homescreen includes a compact expandable sidebar and placeholder options",
   assert.match(html, /class="profile-avatar/);
   assert.match(css, /\.profile-name\s*\{[^}]*visibility:\s*visible/s);
   assert.match(css, /\.workspace-shell\.is-sidebar-expanded \.sidebar-label/);
-  for (const option of [
-    "Previous screenings",
-    "Settings",
-    "Guide",
-    "About",
+  for (const [href, label] of [
+    ["./home.html", "Overview"],
+    ["./screenings.html", "Previous screenings"],
+    ["./profile.html", "Profile"],
+    ["./settings.html", "Settings"],
+    ["./guide.html", "Guide"],
+    ["./about.html", "About"],
   ]) {
-    assert.ok(html.includes(option), `sidebar should include ${option}`);
+    assert.ok(html.includes(label), `sidebar should include ${label}`);
+    assert.match(
+      html,
+      new RegExp(`href="${href.replace(".", "\\.")}"`),
+      `sidebar should link to ${href}`,
+    );
   }
+  assert.match(html, /href="\.\/home\.html"[^>]*aria-current="page"|aria-current="page"[^>]*href="\.\/home\.html"/);
+  assert.match(html, /data-nav="home"/);
+  assert.doesNotMatch(html, /data-sidebar-placeholder/);
+  assert.doesNotMatch(html, /sidebar-status/);
   assert.doesNotMatch(html, /Logout|sidebar-logout/);
 });
 
@@ -373,15 +372,6 @@ test("sidebar expands and updates its accessible state", () => {
   toggle.listeners.click();
   assert.equal(sidebar.classList.contains("is-expanded"), false);
   assert.equal(toggle.attributes["aria-expanded"], "false");
-});
-
-test("sidebar placeholder options announce that they are not implemented", () => {
-  const { elements, sidebarOptions } = loadHomeScript();
-
-  sidebarOptions[0].listeners.click();
-
-  assert.match(elements.get("sidebar-status").textContent, /Previous screenings/);
-  assert.match(elements.get("sidebar-status").textContent, /placeholder/);
 });
 
 test("screening modal traps keyboard focus within the open dialog", () => {

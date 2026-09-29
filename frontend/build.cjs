@@ -62,6 +62,14 @@ function buildSite() {
     "home.html",
     "home.css",
     "home.js",
+    "pages.css",
+    "pages.js",
+    "preferences.js",
+    "screenings.html",
+    "settings.html",
+    "guide.html",
+    "about.html",
+    "profile.html",
   ];
   for (const fileName of staticFiles) {
     fs.copyFileSync(
@@ -96,7 +104,14 @@ function buildSite() {
       "./assets/design-system.js",
     ],
   ];
-  for (const fileName of ["home.html"]) {
+  for (const fileName of [
+    "home.html",
+    "screenings.html",
+    "settings.html",
+    "guide.html",
+    "about.html",
+    "profile.html",
+  ]) {
     let html = fs.readFileSync(
       path.join(outputDirectory, fileName),
       "utf8",
