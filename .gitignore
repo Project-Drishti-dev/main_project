@@ -1,5 +1,4 @@
 # Angular specific
-/dist/
 /out-tsc/
 /tmp/
 /coverage/
@@ -12,11 +11,20 @@
 /package-lock.json
 /yarn.lock
 /frontend/node_modules/
-/frontend/dist/
 /.npm-cache/
 
+# Build output
+dist/
+
 # Environment files
-/.env
+.env
+
+# Local databases and throwaway artefacts
+*.db
+*.sqlite3
+
+# Local verification screenshots
+screenshots/
 
 # Angular CLI and build artefacts
 /.angular-cli.json

@@ -10,6 +10,13 @@ Hackathon prototype for screening uploaded document images.
   deployment notes.
 - `lorebook/` — project reference material.
 
-The backend is implemented but is not deployed or connected to the frontend
-yet. The checker thresholds are experimental and must not be treated as a
-production identity-verification decision.
+The backend is deployed on Google Cloud Run and the frontend is connected to
+it. The frontend sends an uploaded image to `POST /api/analyze` on the API
+origin supplied at build time through `DRISHTI_API_BASE_URL`; the origin is not
+checked into this repository. The static frontend is published on Cloudflare
+Pages and GitHub Pages, and Cloud Run's `CORS_ORIGINS` allowlist must contain
+the exact browser origins that serve it.
+
+The checker thresholds are experimental and must not be treated as a
+production identity-verification decision. The prototype is unauthenticated:
+there is no login, and use synthetic images only.

@@ -9,7 +9,7 @@ static frontend to Google Cloud Run.
 - `app/main.py` — FastAPI routes, CORS, and HTTP error handling.
 - `app/analysis.py` — upload validation and in-memory image decoding.
 - `app/quality_checker/` — the nine checker modules and API-facing runner.
-- `tests/` — API and checker contract tests.
+- `tests/unit/` and `tests/api/` — checker unit tests and API contract tests.
 - `main.py` and `Procfile` — Cloud Run buildpack entry points.
 
 The checker modules in `app/quality_checker/` are a vendored copy of

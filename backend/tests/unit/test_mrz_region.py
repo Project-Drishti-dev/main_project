@@ -1,0 +1,2011 @@
+"""Part 4.1-4.2 -- the working image is rotated upright, then cut into ink.
+
+The subject of this file is not OpenCV.  It is the claim that the angle comes
+from :mod:`app.quality_checker.m7_skew` rather than from a second estimator
+written here: two estimators for "how far round is this image" would agree on
+a synthetic page and disagree on a held document, and only one of them would
+be the one the quality gate already told the officer about.
+
+4.2 adds the two steps after the rotation -- :func:`mrz_region.to_gray` and
+:func:`mrz_region.binarize_inverted` -- and the subject there is equally not a
+pair of OpenCV calls.  It is that the cut is *local*, because 4.1 deliberately
+did not assume the paper was white, and that the ink comes out as the white,
+because everything from 4.3 onwards reads ink as "the thing to look at".
+"""
+
+import ast
+import dataclasses
+import pathlib
+import statistics
+import subprocess
+import sys
+
+import cv2
+import numpy as np
+import pytest
+
+from app.pipeline.tier0 import mrz, mrz_region
+from app.quality_checker import m7_skew
+
+
+# --- the fixture ---------------------------------------------------------
+
+# 4.14 builds the real generator for all three formats; this one is the
+# smallest thing that has a *measurable* tilt, and it is deliberately written
+# here rather than imported so that 4.1's test says what 4.1 does.  Width and
+# height, because that is the order every OpenCV call in this file takes them
+# in, and the one thing a fixture should not add is an order to remember.
+PAGE_WIDTH, PAGE_HEIGHT = 600, 300
+LINES = ("P<UTOERIKSSON<<ANNA<MARIA", "L898902C36UTO7408122F1204159")
+
+
+def upright_mrz():
+    """A white page with two lines of MRZ glyphs on it, in BGR."""
+    height, width = PAGE_HEIGHT, PAGE_WIDTH
+    image = np.full((height, width, 3), 255, np.uint8)
+    for row, text in enumerate(LINES):
+        cv2.putText(
+            image, text, (40, 120 + 70 * row),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2, cv2.LINE_AA,
+        )
+    return image
+
+
+def rotated_mrz(angle):
+    """The same page, turned by ``angle`` degrees about its centre.
+
+    Filled with a per-channel white, for the reason ``_border_fill``'s
+    docstring gives: a scalar ``borderValue`` would make these corners blue.
+    """
+    height, width = PAGE_HEIGHT, PAGE_WIDTH
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), angle, 1.0)
+    return cv2.warpAffine(
+        upright_mrz(), matrix, (width, height),
+        borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255),
+    )
+
+
+def measured_tilt(image):
+    """The tilt of the ink in degrees, read by m7_skew's *other* estimator.
+
+    Deliberately not the estimator ``deskew`` follows.  ``m7_skew.text_skew``
+    in scan mode searches a row-projection profile; this is the photo-mode
+    ``minAreaRect``, which shares no code with it and agrees with the angle the
+    fixture was built with.  A test that measured the result with the same
+    function that produced it would pass on a sign flip, because a sign flip
+    makes the estimator confidently wrong rather than wrong-looking.
+    """
+    return m7_skew.text_skew(image, mode="photo")
+
+
+def ink_pixels(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+    return int(np.count_nonzero(binary))
+
+
+# --- the task's test -----------------------------------------------------
+
+
+def test_a_deliberately_rotated_image_comes_back_upright():
+    # The test 4.1 asks for.  Both halves matter: the corrected page has to be
+    # flat *and* the starting page has to be visibly tilted, or the assertion
+    # below is one an identity function would also pass.
+    tilted = rotated_mrz(5.0)
+    corrected = mrz_region.deskew(tilted)
+
+    assert abs(measured_tilt(tilted)) > 4.0, "the fixture is not actually tilted"
+    assert abs(measured_tilt(corrected)) <= 0.5
+
+
+# --- and the sign, which is the whole of it ------------------------------
+
+
+@pytest.mark.parametrize(
+    "angle",
+    [
+        pytest.param(1.0, id="one-degree-clockwise"),
+        pytest.param(-2.5, id="two-and-a-half-degrees-anticlockwise"),
+        pytest.param(5.0, id="five-degrees-clockwise"),
+        pytest.param(-5.0, id="five-degrees-anticlockwise"),
+        pytest.param(8.0, id="eight-degrees-clockwise"),
+        pytest.param(-8.0, id="eight-degrees-anticlockwise"),
+    ],
+)
+def test_every_angle_is_corrected_in_the_direction_that_undoes_it(angle):
+    # Each rotation is paired with its mirror in this list on purpose.  An
+    # estimator whose sign was taken the wrong way round would pass on the
+    # first of a pair and fail on the second, and a helper that applied the
+    # negation of the reading would leave ~2x the tilt on *both*.
+    tilted = rotated_mrz(angle)
+    corrected = mrz_region.deskew(tilted)
+
+    assert abs(measured_tilt(tilted)) >= abs(angle) - 0.5
+    assert abs(measured_tilt(corrected)) <= 0.5
+
+
+def test_the_corrected_page_is_the_flat_page_and_not_a_blank_one():
+    # Deskew rotates; it does not redraw.  An implementation that filled the
+    # frame (rather than the corners) would satisfy the tilt assertion above
+    # and hand 4.2 an empty image to threshold.
+    corrected = mrz_region.deskew(rotated_mrz(5.0))
+
+    assert ink_pixels(corrected) == pytest.approx(ink_pixels(upright_mrz()), rel=0.1)
+
+
+# --- the frame does not move ---------------------------------------------
+
+
+def test_the_frame_is_unchanged_so_a_region_means_the_same_pixel_afterwards():
+    # 4.8 emits polygons and 4.12 returns field boxes, both in image pixels,
+    # and 11.2 draws them on the image the officer is looking at.  A deskew
+    # that enlarged the canvas would offset every one of them, and nothing
+    # downstream carries an offset.
+    corrected = mrz_region.deskew(rotated_mrz(6.0))
+
+    assert corrected.shape == (PAGE_HEIGHT, PAGE_WIDTH, 3)
+    assert corrected.dtype == np.uint8
+
+
+def test_the_new_corners_take_the_images_own_median_colour():
+    # The blue-corner trap: OpenCV reads a scalar borderValue as (v, 0, 0) on a
+    # three-channel image, so a scalar white fill fills blue, which binarises
+    # as ink and hands 4.3 a component spanning the whole page.
+    corrected = mrz_region.deskew(rotated_mrz(6.0))
+    corner = corrected[0, 0]
+
+    assert int(corner[0]) == int(corner[1]) == int(corner[2])
+    assert int(corner[0]) > 200
+
+
+def test_a_page_that_is_already_upright_keeps_its_pixels():
+    # Not an identity claim -- deskew still resamples, and the reading on an
+    # upright page is a couple of 1e-16 rather than a true zero.  What is
+    # claimed is the one an officer would care about: straightening a good
+    # photograph does not touch a single pixel of it, so the glyphs 4.2 is
+    # about to threshold are the glyphs that were captured.
+    page = upright_mrz()
+
+    assert np.array_equal(mrz_region.deskew(page), page)
+
+
+# --- the reuse, which is the point ---------------------------------------
+
+
+def test_the_angle_is_m7_skews_own_reading_and_not_a_second_measurement():
+    tilted = rotated_mrz(4.0)
+
+    assert mrz_region.skew_deg(tilted) == m7_skew.text_skew(tilted, mode="scan")
+    assert mrz_region.skew_deg(tilted, mode="photo") == m7_skew.text_skew(
+        tilted, mode="photo"
+    )
+
+
+def test_the_rotation_follows_m7_skews_reading_when_that_reading_changes(
+    monkeypatch,
+):
+    # The strongest form of "reuses": stand a sentinel in m7_skew's place and
+    # assert the image comes out rotated by exactly the sentinel.  A local
+    # estimator would ignore the sentinel and this would still pass on a
+    # fixture that happened to be tilted by the same amount.
+    tilted = rotated_mrz(5.0)
+    sentinel = 3.0
+    monkeypatch.setattr(m7_skew, "text_skew", lambda image, mode="scan": sentinel)
+
+    corrected = mrz_region.deskew(tilted)
+    height, width = PAGE_HEIGHT, PAGE_WIDTH
+    expected = cv2.warpAffine(
+        tilted,
+        cv2.getRotationMatrix2D((width / 2.0, height / 2.0), sentinel, 1.0),
+        (width, height),
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255),
+    )
+    assert np.array_equal(corrected, expected)
+
+
+def test_the_largest_angle_deskew_will_act_on_is_the_quality_gates_own():
+    # Not a restated number.  `MAX_SKEW_DEG` is where m7_skew's verdict is
+    # already a failure, and a second constant would be a second definition of
+    # "too rotated" that could drift from the one on the officer's screen.
+    assert mrz_region.MAX_DESKEW_DEG == m7_skew.MAX_SKEW_DEG
+
+
+@pytest.mark.parametrize("reading", [0.0, 1.0, -1.0])
+def test_any_angle_inside_the_bound_is_rotated_by(reading, monkeypatch):
+    image = upright_mrz()
+    monkeypatch.setattr(mrz_region, "skew_deg", lambda image, mode="scan": reading)
+
+    result = mrz_region.deskew(image)
+
+    assert result is not image
+    assert result.shape == image.shape
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [0.0, 3.0, -3.0, mrz_region.MAX_DESKEW_DEG, -mrz_region.MAX_DESKEW_DEG],
+)
+def test_the_bound_itself_is_applied_and_is_not_off_by_one(reading, monkeypatch):
+    # `>` and not `>=`: a document at exactly the gate's threshold is one the
+    # gate passes, so refusing to straighten it would make this helper
+    # disagree with the verdict printed above it on the same screen.
+    image = upright_mrz()
+    monkeypatch.setattr(mrz_region, "skew_deg", lambda image, mode="scan": reading)
+
+    assert mrz_region.deskew(image) is not image
+
+
+@pytest.mark.parametrize(
+    "reading",
+    [
+        pytest.param(mrz_region.MAX_DESKEW_DEG + 0.1, id="just-past-the-bound"),
+        pytest.param(-mrz_region.MAX_DESKEW_DEG - 0.1, id="and-the-other-way"),
+        pytest.param(14.9, id="where-m7-skews-search-runs-out"),
+        pytest.param(None, id="and-no-text-to-measure"),
+    ],
+)
+def test_a_rotation_the_gate_would_have_rejected_is_not_applied(reading, monkeypatch):
+    # Past the bound, m7_skew's reading is the edge of its own search rather
+    # than a measurement of the page, and rotating by it can leave the image
+    # less upright than it was.  Returning the frame untouched is also what a
+    # blank image needs: the scan estimator answers an empty page with the end
+    # of its search range, which lands here too.
+    image = upright_mrz()
+    monkeypatch.setattr(mrz_region, "skew_deg", lambda image, mode="scan": reading)
+
+    result = mrz_region.deskew(image)
+
+    assert result is image
+
+
+@pytest.mark.parametrize("mode", ["scan", "photo"])
+def test_a_page_with_no_text_on_it_is_returned_unchanged(mode):
+    blank = np.full((200, 400, 3), 255, np.uint8)
+
+    assert mrz_region.deskew(blank, mode=mode) is blank
+
+
+def test_deskew_never_returns_a_different_size_for_a_different_reason():
+    # Two ways this could go wrong that the tilt test cannot see: a canvas
+    # that silently changed size, and a fill that swallowed the glyphs.  Both
+    # are checked above; this is the cheap total statement of "the page that
+    # comes out is the page that went in, rotated".
+    tilted = rotated_mrz(7.0)
+    corrected = mrz_region.deskew(tilted)
+
+    assert corrected.shape == tilted.shape
+    assert not np.array_equal(corrected, tilted)
+
+
+# =========================================================================
+# 4.2 -- to_gray, then binarize_inverted
+# =========================================================================
+
+# The frames the two steps are handed.  All three are built *on top of*
+# `upright_mrz` rather than beside it, because 4.14 replaces that one fixture
+# for all three formats and a second generator would be a second thing to
+# reconcile against it.
+
+#: The dimmest a photographed page gets on the far side of the lamp.  A factor
+#: rather than a grey level, so the fixture is a *shadow* and not a different
+#: piece of paper: the glyphs stay 0 and the paper falls off across the page.
+SHADOW_FLOOR = 0.5
+
+#: Sigma of the sensor noise, in grey levels, for the grain case.  6 is
+#: visible grain on a cheap capture rather than a camera fault.
+GRAIN_SIGMA = 6.0
+
+#: Distance between the two text baselines in `upright_mrz`, in pixels -- the
+#: MRZ line pitch, which is one of the three rules the block size is held to.
+LINE_PITCH = 70
+
+
+def shadowed_mrz(floor=SHADOW_FLOOR):
+    """The fixture as a photograph: a lamp at the left edge, shade at the right."""
+    ramp = np.linspace(1.0, floor, PAGE_WIDTH, dtype=np.float32)[None, :, None]
+    return np.clip(upright_mrz().astype(np.float32) * ramp, 0, 255).astype(np.uint8)
+
+
+def dim_mrz(level=90):
+    """The fixture photographed in low light: everything darker, nothing uneven."""
+    return (upright_mrz().astype(np.float32) * (level / 255.0)).astype(np.uint8)
+
+
+def grainy_mrz(sigma=GRAIN_SIGMA, seed=7):
+    """The fixture with sensor grain on it.  Fixed seed, so a failure repeats."""
+    rng = np.random.default_rng(seed)
+    page = upright_mrz().astype(np.float32)
+    return np.clip(page + rng.normal(0.0, sigma, page.shape), 0, 255).astype(np.uint8)
+
+
+def glyph_mask(grow=1):
+    """Where the fixture's ink is: the same two lines drawn without smoothing.
+
+    `upright_mrz` draws with ``LINE_AA``, so the ink it puts down is a fringe
+    of greys around a solid core, and a threshold is meant to find the fringe
+    too.  This is the core, grown by ``grow`` pixels so the comparison allows
+    for it -- the fixture is *drawn*, which is the one thing about it that
+    makes a ground truth available at all.
+    """
+    mask = np.zeros((PAGE_HEIGHT, PAGE_WIDTH), np.uint8)
+    for row, text in enumerate(LINES):
+        cv2.putText(
+            mask, text, (40, 120 + 70 * row),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.7, 255, 2, cv2.LINE_8,
+        )
+    return cv2.dilate(mask, np.ones((2 * grow + 1, 2 * grow + 1), np.uint8))
+
+
+def ink_fraction(binary):
+    """The share of the page that is ink.  "Mostly binary" has to be measured."""
+    return float(np.count_nonzero(binary)) / binary.size
+
+
+def _widest_and_tallest(binary):
+    count, _, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+    if count <= 1:
+        return 0, 0
+    return (
+        int(stats[1:, cv2.CC_STAT_WIDTH].max()),
+        int(stats[1:, cv2.CC_STAT_HEIGHT].max()),
+    )
+
+
+def widest_component(binary):
+    return _widest_and_tallest(binary)[0]
+
+
+def tallest_component(binary):
+    return _widest_and_tallest(binary)[1]
+
+
+def row_bands(binary):
+    """How many separate strips of rows carry any ink at all.
+
+    Two lines of MRZ on a page are two bands.  A cut that has lost the page --
+    a global threshold across a shadow, a polarity flip, a blank frame -- gives
+    one, or none, and this is the cheapest way to say so.  Deliberately has no
+    threshold in it: ``grainy_mrz`` is the frame this cannot answer for, and
+    the tests below say what it can answer instead.
+    """
+    rows = np.flatnonzero(binary.any(axis=1))
+    if rows.size == 0:
+        return 0
+    return 1 + int(np.count_nonzero(np.diff(rows) > 1))
+
+
+def one_cut_for_the_whole_page(gray):
+    """The alternative this task does not take: a single Otsu cut.
+
+    Not a straw man -- it is the estimator ``m7_skew`` itself uses to find
+    text to measure a skew on, and it is the right answer for a flat scan.
+    It is written out longhand here because the two have to be compared on the
+    same frame, and a test that only asserted what the local cut does could
+    not tell a deliberate choice from a lucky fixture.
+    """
+    out = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    return (np.asarray(out[-1]) > 0).astype(np.uint8) * 255
+
+
+def cut_with(gray, block, offset):
+    """``binarize_inverted`` with the module's constants stood aside."""
+    return cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, block, offset,
+    )
+
+
+FRAMES = {
+    "flat-scan": upright_mrz,
+    "one-sided-shadow": shadowed_mrz,
+    "low-light": dim_mrz,
+}
+
+
+# --- the task's own test -------------------------------------------------
+
+
+def test_the_mrz_glyphs_come_back_white_on_black():
+    # The test 4.2 asks for.  Polarity is the half that is easy to get
+    # backwards: THRESH_BINARY is the flag most snippets reach for, and it
+    # hands 4.3 one full-page component to reject before it has read a glyph.
+    binary = mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))
+
+    assert set(np.unique(binary)) == {0, 255}
+    assert row_bands(binary) == 2
+
+
+def test_the_white_is_the_glyphs_and_nothing_outside_them():
+    # A polarity claim measured against the fixture's own drawing rather than
+    # against a proxy.  Zero white outside the glyphs is the strong half: the
+    # other way round puts ~174,000 pixels of paper outside it, so this fails
+    # on a THRESH_BINARY swap and on a global cut alike, for different reasons.
+    mask = glyph_mask() > 0
+    white = mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz())) > 0
+
+    assert int(np.count_nonzero(white & ~mask)) == 0
+    assert int(white.sum()) > 0
+
+
+def test_the_cut_finds_at_least_as_much_ink_as_a_hard_cut_does():
+    # The other half of the same question.  An adaptive cut is a *lower* bar
+    # than a fixed one in shadow and a *higher* one in light, so it can drop
+    # the anti-aliased edge of a stroke as easily as it can add one.  This
+    # says it is not quietly eating the fixture's glyphs: it finds every pixel
+    # a 127 cut finds, and not many more.
+    gray = mrz_region.to_gray(upright_mrz())
+    hard = int(np.count_nonzero(cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)[1]))
+    found = int(np.count_nonzero(mrz_region.binarize_inverted(gray)))
+
+    assert hard <= found <= hard * 1.5
+
+
+# --- single channel, which is the other half of the task's test ----------
+
+
+@pytest.mark.parametrize("name", FRAMES)
+def test_both_steps_hand_back_one_channel_at_the_size_they_were_given(name):
+    # 4.1 spent a test on this and it is still true after 4.2: 4.8 emits
+    # polygons and 4.12 returns field boxes in image pixels, and every one of
+    # them is meaningless against a frame the pipeline quietly resized.
+    image = FRAMES[name]()
+    gray = mrz_region.to_gray(image)
+    binary = mrz_region.binarize_inverted(gray)
+
+    assert gray.shape == (PAGE_HEIGHT, PAGE_WIDTH)
+    assert gray.dtype == np.uint8
+    assert binary.shape == gray.shape
+    assert binary.dtype == np.uint8
+
+
+@pytest.mark.parametrize("name", FRAMES)
+def test_the_output_is_two_values_and_not_a_greyscale(name):
+    # "Binary" asserted as an exact set rather than as a proportion.  A helper
+    # that returned the threshold's input, or a blurred page, would have a
+    # plausible mean and fail here.
+    binary = mrz_region.binarize_inverted(mrz_region.to_gray(FRAMES[name]()))
+
+    assert set(np.unique(binary)) == {0, 255}
+
+
+@pytest.mark.parametrize("name", FRAMES)
+def test_the_output_is_mostly_paper(name):
+    # The other reading of "mostly", and the one 4.3 depends on: if ink were
+    # the majority then the component 4.3 is about to find is the page.  The
+    # band is measured across all four frames rather than asserted: 2.6% on
+    # the flat scan, 2.9% under the shadow, 2.8% in low light, 3.0% with grain.
+    binary = mrz_region.binarize_inverted(mrz_region.to_gray(FRAMES[name]()))
+
+    assert 0.01 < ink_fraction(binary) < 0.15
+
+
+@pytest.mark.parametrize("name", FRAMES)
+def test_the_white_falls_in_the_two_bands_the_lines_are_printed_in(name):
+    # Where, not how much.  Two lines of MRZ are two row bands, and this is
+    # the assertion that fails first on a polarity flip, on a blank frame, and
+    # on a page whose shadow has been read as ink end to end.
+    binary = mrz_region.binarize_inverted(mrz_region.to_gray(FRAMES[name]()))
+
+    assert row_bands(binary) == 2
+
+
+def test_to_gray_hands_back_a_frame_that_is_already_single_channel():
+    # The opposite of `deskew`'s deliberate refusal, and for a stated reason:
+    # here the conversion is the job, so a frame that has been converted is
+    # already the answer.  The same object rather than a copy, as `deskew`
+    # does, so a caller can tell "nothing to do" from "this made a copy".
+    gray = mrz_region.to_gray(upright_mrz())
+
+    assert mrz_region.to_gray(gray) is gray
+
+
+def test_the_greyscale_is_weighted_luma_and_not_the_mean_of_three_channels():
+    # The three primaries, filled in BGR, against the mean that a channel
+    # average would give.  A mean says a saturated red and a saturated blue are
+    # the same brightness, which is how blue ink or a red security tint ends up
+    # sitting exactly where black belongs.  The values are the longhand ones,
+    # not read back from the call, so a change of weights fails here.
+    readings = {
+        (0, 0, 255): 76,     # red
+        (0, 255, 0): 150,   # green
+        (255, 0, 0): 29,    # blue
+        (128, 128, 128): 128,
+    }
+
+    for bgr, expected in readings.items():
+        assert int(mrz_region.to_gray(np.full((1, 1, 3), bgr, np.uint8))[0, 0]) == expected
+    assert sum((0, 0, 255)) // 3 == 85, "a channel mean would read 85 for all three"
+
+
+# --- why the cut is local, which is the reason the task says adaptive -----
+
+
+def test_one_cut_for_the_whole_page_would_read_the_shadowed_half_as_ink():
+    # Both halves of the comparison on one frame, because a test asserting
+    # only what the local cut does could not tell a decision from a fixture
+    # that happened to be evenly lit.  4.1 is the reason this matters: it
+    # filled the new corners with the image's own median precisely because the
+    # paper cannot be assumed white, and a single cut inherits that assumption
+    # straight back.  Measured on this fixture: 88% of the shadowed half
+    # against 2.9% of the page.
+    page = shadowed_mrz()
+    shadowed_half = PAGE_WIDTH // 2
+    gray = mrz_region.to_gray(page)
+    local = mrz_region.binarize_inverted(gray)
+    one_cut = one_cut_for_the_whole_page(gray)
+
+    assert ink_fraction(local[:, shadowed_half:]) < 0.10
+    assert ink_fraction(one_cut[:, shadowed_half:]) > 0.50
+    assert widest_component(local) < 40
+    assert widest_component(one_cut) > 200
+
+
+def test_the_cut_travels_with_the_paper_so_a_shadowed_page_still_reads_the_same():
+    # The claim underneath the one above, in the form 4.3 would experience it:
+    # a shadowed page and a flat page of the same document come back with the
+    # same amount of ink in the same two places.  A global cut does not manage
+    # either -- it puts the shadowed page's bands together into one.
+    flat = mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))
+    shaded = mrz_region.binarize_inverted(mrz_region.to_gray(shadowed_mrz()))
+
+    assert ink_fraction(shaded) == pytest.approx(ink_fraction(flat), rel=0.10)
+    assert row_bands(shaded) == row_bands(flat) == 2
+    assert row_bands(one_cut_for_the_whole_page(mrz_region.to_gray(shadowed_mrz()))) == 1
+
+
+def test_low_light_alone_does_not_need_the_local_cut_and_this_does_not_claim_it():
+    # The honest limit of the claim above, written down as a test so nobody
+    # widens it later.  Dimming the whole page moves every pixel and the local
+    # mean with it, so a single cut handles that fine; what defeats a single
+    # cut is a page that is *uneven*, and only that is claimed.
+    dim = mrz_region.binarize_inverted(mrz_region.to_gray(dim_mrz()))
+
+    assert ink_fraction(dim) == pytest.approx(ink_fraction(
+        mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))), rel=0.10)
+
+
+# --- the order, which 4.1 fixed: deskew, to_gray, binarize_inverted ------
+
+
+def test_the_whole_chain_still_lands_on_the_two_lines_of_a_tilted_page():
+    # 4.1's handover fixes the order and 4.2 sits inside it.  Run end to end
+    # from a deliberately tilted page: the frame is the one that went in, and
+    # the ink is on the lines rather than on the corners the rotation opened.
+    tilted = rotated_mrz(5.0)
+    binary = mrz_region.binarize_inverted(
+        mrz_region.to_gray(mrz_region.deskew(tilted))
+    )
+
+    assert binary.shape == (PAGE_HEIGHT, PAGE_WIDTH)
+    assert row_bands(binary) == 2
+    assert ink_fraction(binary) == pytest.approx(ink_fraction(
+        mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))), rel=0.10)
+
+
+# --- the two constants, and what each of them is for ----------------------
+
+
+def test_an_offset_of_zero_reads_the_paper_as_ink_and_this_one_does_not():
+    # Not a taste claim.  `THRESH_BINARY_INV` marks a pixel white when it is
+    # at or below `local mean - C`, so at C = 0 a *uniform* page compares equal
+    # to its own neighbourhood mean and every one of its pixels becomes ink:
+    # 84% of the flat fixture is white there, against 2.9% here.  A helper
+    # that stood the offset at zero would satisfy every other test here and
+    # hand 4.3 one component the width of the page.
+    gray = mrz_region.to_gray(upright_mrz())
+
+    assert mrz_region.ADAPTIVE_C > 0
+    assert ink_fraction(cut_with(gray, mrz_region.ADAPTIVE_BLOCK_SIZE, 0)) > 0.50
+    assert ink_fraction(mrz_region.binarize_inverted(gray)) < 0.10
+
+
+def test_sensor_grain_does_not_run_the_page_white():
+    # The second job the offset does, and the reason it is not tuned down to
+    # the last grey level.  Grain is the case where a local mean alone is not
+    # enough, because a single dark speck is darker than its neighbourhood
+    # whatever that neighbourhood is.
+    gray = mrz_region.to_gray(grainy_mrz())
+    clean = mrz_region.to_gray(upright_mrz())
+
+    assert ink_fraction(mrz_region.binarize_inverted(gray)) == pytest.approx(
+        ink_fraction(mrz_region.binarize_inverted(clean)), rel=0.50)
+    assert ink_fraction(cut_with(gray, mrz_region.ADAPTIVE_BLOCK_SIZE, 0)) > 0.30
+
+
+def test_grain_leaves_the_glyphs_the_size_the_rest_of_part_4_filters_on():
+    # What the grain *is* allowed to do, said as a test rather than left to
+    # 4.4: it makes isolated single pixels, and on this fixture it makes whole
+    # rows of them, so no row-band claim survives it.  The claim that does
+    # survive is the one 4.4 is about -- the largest and the tallest component
+    # are the same glyph they are on a clean page, so the height band it is
+    # about to write rejects the speckle and keeps the print.
+    flat = mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))
+    grain = mrz_region.binarize_inverted(mrz_region.to_gray(grainy_mrz()))
+
+    assert _widest_and_tallest(grain) == _widest_and_tallest(flat) == (22, 15)
+
+
+def test_the_block_size_obeys_the_three_rules_it_is_pinned_on():
+    # Odd, because OpenCV refuses an even neighbourhood; at least twice a
+    # glyph, or the window is small enough to measure the glyph's own level
+    # and stops being a cut relative to the paper; and under a line pitch, or a
+    # pixel in the gap between two MRZ lines takes both lines' ink into its
+    # mean.  The two sizes are measured from the fixture rather than restated
+    # here, so 4.14 replacing the generator cannot quietly invalidate the rule.
+    binary = mrz_region.binarize_inverted(mrz_region.to_gray(upright_mrz()))
+    glyph = tallest_component(binary)
+
+    assert mrz_region.ADAPTIVE_BLOCK_SIZE % 2 == 1
+    assert mrz_region.ADAPTIVE_BLOCK_SIZE >= 2 * glyph
+    assert mrz_region.ADAPTIVE_BLOCK_SIZE < LINE_PITCH
+    assert glyph == 15
+
+
+def test_the_reading_does_not_depend_on_which_odd_block_is_used():
+    # The measurement behind the test above being a *rule* rather than a tuned
+    # optimum: every odd block from 11 to 61 gives the same reading on this
+    # fixture.  So the constant is held to the three rules and not to a number
+    # that happened to be tried first, and a later task that needs a different
+    # block has to re-run this before it may claim the same answer.
+    gray = mrz_region.to_gray(upright_mrz())
+    readings = {
+        block: cut_with(gray, block, mrz_region.ADAPTIVE_C) for block in range(11, 62, 2)
+    }
+    module_reading = mrz_region.binarize_inverted(gray)
+
+    assert len(readings) == 26
+    for block, binary in readings.items():
+        assert ink_fraction(binary) == pytest.approx(
+            ink_fraction(module_reading), rel=0.15
+        ), f"block {block} reads differently"
+        assert tallest_component(binary) == tallest_component(module_reading)
+
+
+# --- the caller's mistake, left visible ----------------------------------
+
+
+def test_a_colour_frame_handed_to_binarize_is_not_papered_over():
+    # The same `cv2.error` 4.1 documents for `deskew`, and for a related
+    # reason: this function reads a frame the caller already holds rather than
+    # measuring one, so converting quietly would hide a mistake in the caller
+    # behind an answer that looked fine.  The two functions are separate so
+    # the channel question is settled in `to_gray`, where it is known.
+    with pytest.raises(cv2.error):
+        mrz_region.binarize_inverted(upright_mrz())
+
+
+# --- 4.3: the ink, numbered and measured ----------------------------------
+
+# 4.14 replaces `upright_mrz` with a generator for all three formats, so
+# everything below reads the fixture through `LINES` rather than through a
+# count written here.  A plausible component count is a property of what was
+# drawn, and what was drawn is these two strings.
+
+#: Every character the fixture prints, across both lines.  The ceiling on a
+#: component count, because a blob holds at least one character's ink and a
+#: component with nothing behind it is a cut that failed.
+PRINTED_CHARACTERS = sum(len(line) for line in LINES)
+
+
+def binary_of(frame):
+    return mrz_region.binarize_inverted(mrz_region.to_gray(frame))
+
+
+def components_of(frame):
+    """The whole chain, so a test names the pipeline it is testing."""
+    return mrz_region.extract_components(binary_of(frame))
+
+
+def solid_frame(*blocks):
+    """A binary frame with known rectangles on it, in ``(x, y, w, h)`` order."""
+    height = max(y + h for _, y, _, h in blocks) + 4
+    width = max(x + w for x, _, w, _ in blocks) + 4
+    frame = np.zeros((height, width), np.uint8)
+    for x, y, w, h in blocks:
+        frame[y:y + h, x:x + w] = 255
+    return frame
+
+
+def drawn_extent():
+    """The fixture's ink as the ``(top, bottom, left, right)`` it occupies.
+
+    Measured off ``glyph_mask`` rather than written down, for the reason 4.2
+    drew that mask at all: the fixture is *drawn*, which is the one thing
+    about it that makes a ground truth available, and a box held as a literal
+    here would be a second thing for 4.14 to invalidate.
+    """
+    rows, cols = np.nonzero(glyph_mask())
+    return rows.min(), rows.max(), cols.min(), cols.max()
+
+
+def test_a_two_line_page_comes_back_as_a_plausible_number_of_glyphs():
+    # The test 4.3 asks for.  "Plausible" is four claims and not one, because
+    # a bare count is satisfied by a page that went white and came back as a
+    # single component just as comfortably as by two lines of print.
+    binary = binary_of(upright_mrz())
+    components = components_of(upright_mrz())
+
+    # One blob per printed character at most, and no more than a quarter of
+    # them merged into a neighbour.  Measured: 51, from 53.
+    assert len(components) <= PRINTED_CHARACTERS
+    assert len(components) >= 3 * PRINTED_CHARACTERS // 4
+
+    # The list covers the ink exactly.  The areas partition the white pixels,
+    # so this fails if a component is dropped, counted twice, or if the page
+    # sneaks back in as a component of its own.
+    assert sum(c.area for c in components) == int(np.count_nonzero(binary))
+
+    # Every blob is a glyph and not a photograph, a frame edge, or a corner
+    # 4.1 filled: all of them sit inside the ink the fixture drew.
+    top, bottom, left, right = drawn_extent()
+    for c in components:
+        assert left <= c.left and c.bbox[2] <= right + 1
+        assert top <= c.top and c.bbox[3] <= bottom + 1
+
+    # And the extremes are 4.2's own numbers, read by 4.2's own helper rather
+    # than by this task's.  4.4's height band is about to be written against
+    # them, and the two tasks have to stay checkable against each other.
+    assert max(c.width for c in components) == widest_component(binary)
+    assert max(c.height for c in components) == tallest_component(binary)
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES))
+def test_the_count_is_the_same_on_every_clean_capture(name):
+    # The three ways 4.2 photographs a page -- flat, one-sided shadow, low
+    # light -- have to agree about how much ink there is, or 4.4's band is
+    # being written against a fixture that flatters itself.  Measured: 51, 51
+    # and 52, so the band is two wide rather than one.
+    count = len(components_of(FRAMES[name]()))
+
+    assert count <= PRINTED_CHARACTERS
+    assert count >= PRINTED_CHARACTERS - 5
+
+
+def test_a_grainy_capture_is_not_cleaned_up_here():
+    # 4.3 numbers what the cut produced; 4.4 decides what a glyph is.  A
+    # function that filtered here would be applying a band nobody wrote down,
+    # and the handover's note about 4.4 possibly needing an area filter is
+    # exactly the failure this exists to catch.  Measured: 313 components on
+    # the grainy frame against 51 on the clean one, single-pixel areas among
+    # them.
+    clean = components_of(upright_mrz())
+    grainy = components_of(grainy_mrz())
+
+    assert len(grainy) > 3 * len(clean)
+    assert min(c.area for c in grainy) < min(c.area for c in clean)
+
+    # The claim 4.4 rests on, restated through this task's own output: the
+    # speckle adds blobs and takes none of the print away.
+    assert max(c.width for c in grainy) == max(c.width for c in clean)
+    assert max(c.height for c in grainy) == max(c.height for c in clean)
+
+
+def test_every_number_is_measured_against_the_frame_it_came_from():
+    # The task's other half.  A count cannot tell a correct measurement from a
+    # plausible one, so the box, the extent and the area are checked against
+    # rectangles whose coordinates are written in the test.
+    components = mrz_region.extract_components(
+        solid_frame((10, 20, 5, 7), (40, 20, 3, 9), (40, 60, 30, 10))
+    )
+
+    assert [c.bbox for c in components] == [
+        (10, 20, 15, 27), (40, 20, 43, 29), (40, 60, 70, 70),
+    ]
+    assert [c.width for c in components] == [5, 3, 30]
+    assert [c.height for c in components] == [7, 9, 10]
+    assert [c.area for c in components] == [35, 27, 300]
+
+
+def test_the_centroid_is_the_mean_of_the_pixels_and_not_the_middle_of_the_box():
+    # A staircase: solid, and nothing like its own box.  4.9 fits a line
+    # through these to find the residual skew inside a line, so a box centre
+    # would tilt that fit towards whichever glyph shape is in the group.
+    staircase = np.zeros((20, 20), np.uint8)
+    staircase[2:4, 2:12] = 255
+    staircase[4:6, 4:12] = 255
+    staircase[6:8, 6:12] = 255
+
+    (component,) = mrz_region.extract_components(staircase)
+
+    assert component.centroid == (component.cx, component.cy)
+    assert component.cx == pytest.approx(7.333333, abs=1e-6)
+    assert component.cy == pytest.approx(4.166667, abs=1e-6)
+    # The reading it must not be confused with.
+    assert component.cy != pytest.approx((component.bbox[1] + component.bbox[3]) / 2)
+    assert (component.area, component.width, component.height) == (48, 10, 6)
+
+
+def test_the_centroid_of_every_component_is_the_mean_of_its_own_pixels():
+    # The staircase says the two readings differ; this says the one that was
+    # chosen is right -- over every component of a real page rather than over
+    # one hand-drawn shape.
+    binary = binary_of(upright_mrz())
+    _, labels, _, _ = cv2.connectedComponentsWithStats(
+        binary, connectivity=mrz_region.CONNECTIVITY
+    )
+
+    for component in mrz_region.extract_components(binary):
+        # The box is tight, so the only label inside it is its own.
+        window = labels[component.top:component.bbox[3],
+                        component.left:component.bbox[2]]
+        rows, cols = np.nonzero(window)
+
+        assert component.cx == pytest.approx(component.left + cols.mean())
+        assert component.cy == pytest.approx(component.top + rows.mean())
+        assert component.left <= component.cx <= component.bbox[2]
+        assert component.top <= component.cy <= component.bbox[3]
+
+
+def test_the_box_is_half_open_and_says_which_one_it_is():
+    # One pixel at (6, 4).  OpenCV's own cv::Rect counts the far edge in and
+    # would call it (6, 4, 6, 4); the half-open form is what makes
+    # `binary[top:top + height, left:left + width]` this component and nothing
+    # else, which is the slice 4.8 and 4.12 are cut from.
+    frame = np.zeros((10, 10), np.uint8)
+    frame[4, 6] = 255
+
+    (component,) = mrz_region.extract_components(frame)
+
+    assert component.bbox == (6, 4, 7, 5)
+    assert component.bbox != (6, 4, 6, 4)
+    assert frame[component.top:component.bbox[3],
+                 component.left:component.bbox[2]].sum() == 255
+
+
+def test_the_numbers_are_plain_python_and_not_numpy_scalars():
+    # 4.4 compares these against a band and 4.5 sorts them, and a record
+    # carrying numpy.int32 is one that cannot go in a JSON body when 4.13's
+    # empty result becomes a response.
+    (component,) = mrz_region.extract_components(solid_frame((3, 4, 5, 6)))
+
+    for value in (component.left, component.top, component.width,
+                  component.height, component.area):
+        assert type(value) is int
+    for value in (component.cx, component.cy):
+        assert type(value) is float
+
+
+def test_the_record_is_frozen_and_compares_by_value():
+    # 4.1's frame does not move, and neither does a measurement: a record that
+    # could be edited would let a measured glyph become a convenient one.
+    first = mrz_region.extract_components(solid_frame((3, 4, 5, 6)))[0]
+    second = mrz_region.extract_components(solid_frame((3, 4, 5, 6)))[0]
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        first.width = 99
+    assert first == second
+    assert hash(first) == hash(second)
+
+
+def test_the_page_is_dropped_by_label_and_not_by_size():
+    # The load-bearing half of 4.2's polarity decision, and the case it was
+    # made for.  An all-ink frame is the page that went white: OpenCV numbers
+    # the *empty* background anyway, so the first row of `stats` is the
+    # sentinel [-1, 2147483647, 0, 0, 0] and the only real component is the
+    # whole page.  Dropping the widest, the last or the largest-area row would
+    # report a clean page here, and 4.4 would have nothing left to reject.
+    components = mrz_region.extract_components(
+        np.full((PAGE_HEIGHT, PAGE_WIDTH), 255, np.uint8)
+    )
+
+    assert len(components) == 1
+    assert components[0].bbox == (0, 0, PAGE_WIDTH, PAGE_HEIGHT)
+    assert components[0].area == PAGE_WIDTH * PAGE_HEIGHT
+
+    # The same rule when the background is small rather than absent.  A page
+    # that is all ink except a hole is still one component, so a reading that
+    # dropped "the biggest blob" would return the hole instead.
+    ring = np.full((40, 40), 255, np.uint8)
+    ring[10:30, 10:30] = 0
+
+    (component,) = mrz_region.extract_components(ring)
+
+    assert component.bbox == (0, 0, 40, 40)
+    assert component.area == 40 * 40 - 20 * 20
+
+
+def test_a_page_with_no_ink_has_no_components():
+    # 4.13 is where this becomes an empty result rather than a raise; the
+    # input half is here so the two cannot drift apart.
+    assert mrz_region.extract_components(
+        np.zeros((PAGE_HEIGHT, PAGE_WIDTH), np.uint8)
+    ) == ()
+
+
+def test_two_glyphs_touching_diagonally_are_one_component():
+    # What CONNECTIVITY is for, measured.  A diagonal pixel run is
+    # 8-connected and not 4-connected, and MRZ strokes are diagonal -- the
+    # leg of a 7, the crossbar of a 4.  Under 4-connectivity this
+    # twelve-pixel stroke is twelve glyphs.
+    stroke = np.zeros((20, 20), np.uint8)
+    for step in range(12):
+        stroke[2 + step, 2 + step] = 255
+
+    assert mrz_region.CONNECTIVITY == 8
+    assert len(mrz_region.extract_components(stroke)) == 1
+    assert cv2.connectedComponentsWithStats(stroke, connectivity=4)[0] - 1 == 12
+
+
+def test_the_connectivity_is_passed_by_keyword_and_not_positionally(monkeypatch):
+    # OpenCV's signature is connectedComponentsWithStats(image[, labels[,
+    # stats[, centroids[, connectivity[, ltype]]]]]) -- the second positional
+    # parameter is the `labels` *output*, so a call written `(binary, 8)` binds
+    # the 8 there and silently gets the default.  The default is 8, which is
+    # why it cannot be noticed by looking at the answers; it shows up on a
+    # diagonal stroke, where the positional form reports one component and
+    # 4-connectivity reports twelve.
+    stroke = np.zeros((20, 20), np.uint8)
+    for step in range(12):
+        stroke[2 + step, 2 + step] = 255
+
+    assert cv2.connectedComponentsWithStats(stroke, 8)[0] == \
+        cv2.connectedComponentsWithStats(stroke, 4)[0]
+    assert cv2.connectedComponentsWithStats(
+        stroke, connectivity=4
+    )[0] - 1 == 12
+
+    seen = {}
+    original = cv2.connectedComponentsWithStats
+
+    def record(image, *args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return original(image, connectivity=kwargs.get("connectivity", 8))
+
+    monkeypatch.setattr(mrz_region.cv2, "connectedComponentsWithStats", record)
+    mrz_region.extract_components(stroke)
+
+    assert seen["args"] == ()
+    assert seen["kwargs"] == {"connectivity": mrz_region.CONNECTIVITY}
+
+
+def test_the_list_reads_down_the_page_and_then_across_it():
+    # 4.5 groups by vertical overlap and 4.10 segments along x, so both want
+    # this order and neither can want OpenCV's.  Asserting the sort is not
+    # enough on its own: OpenCV numbers labels in raster-scan order, which is
+    # already (top, left) on most frames, so the fixture is also checked for
+    # being the frame where it is not.
+    order = [(c.top, c.left) for c in components_of(upright_mrz())]
+
+    assert order == sorted(order)
+    assert len(set(order)) == len(order)
+
+    count, _, stats, _ = cv2.connectedComponentsWithStats(
+        binary_of(upright_mrz()), connectivity=mrz_region.CONNECTIVITY
+    )
+    as_labelled = [
+        (int(stats[label, cv2.CC_STAT_TOP]), int(stats[label, cv2.CC_STAT_LEFT]))
+        for label in range(1, count)
+    ]
+    assert as_labelled != sorted(as_labelled)
+
+
+def test_a_colour_frame_handed_to_extract_components_is_not_papered_over():
+    # 4.2's rule restated for this function: it reads a frame the caller
+    # holds rather than measuring one, so a three-channel frame comes back as
+    # a cv2.error rather than a quiet conversion.
+    with pytest.raises(cv2.error):
+        mrz_region.extract_components(upright_mrz())
+
+
+def test_a_greyscale_frame_is_accepted_and_its_answer_is_the_page():
+    # The other caller mistake, which is *not* caught, and saying so is the
+    # point.  OpenCV reads every non-zero pixel as ink, so `to_gray`'s own
+    # output handed straight in -- skipping `binarize_inverted` -- gives 24
+    # components on this fixture and one of them spans the page.  That is the
+    # page-turned-white failure reached by another route, and refusing it
+    # would need a raise this module may not have.
+    components = mrz_region.extract_components(
+        mrz_region.to_gray(upright_mrz())
+    )
+
+    assert max(c.width for c in components) == PAGE_WIDTH
+    assert len(components) < PRINTED_CHARACTERS
+
+
+# =========================================================================
+# 4.4 -- filter_glyphs: a height band and an aspect-ratio band
+# =========================================================================
+
+# The two blobs a document frame actually carries, added to the fixture on
+# purpose rather than described.  Both are measured by the tests below before
+# anything is claimed about them, because the whole point of the two cases the
+# task names is *which half of the band* does the refusing, and that is only
+# worth anything if each blob's own numbers are read off the frame.
+
+#: The photo box, as ``(top, left, height, width)``.  Flat-toned on purpose:
+#: a printed portrait is an even wash of tone, and -- the part worth knowing --
+#: a *uniform* patch is not ink to a local cut at all, so what comes through
+#: is the box's outline rather than its face.  It is still one blob of the
+#: box's own size, which is the thing the height band has to refuse.
+PHOTO_TOP, PHOTO_LEFT, PHOTO_HEIGHT, PHOTO_WIDTH, PHOTO_LEVEL = 40, 380, 120, 180, 60
+
+
+def photo_page(level=PHOTO_LEVEL):
+    """The fixture with a printed photo box on it, in the empty corner."""
+    page = upright_mrz()
+    page[PHOTO_TOP:PHOTO_TOP + PHOTO_HEIGHT, PHOTO_LEFT:PHOTO_LEFT + PHOTO_WIDTH] = level
+    return page
+
+
+def signature_page(amplitude=9, thickness=2):
+    """The fixture with a signature's stroke on it -- one long thin curve.
+
+    Amplitude 9 rather than the 18 a first attempt used, and that is the whole
+    design of the case: the stroke has to come through the cut *inside* the
+    height band, or the height half would refuse it and the aspect band would
+    never be exercised at all.
+    """
+    page = upright_mrz()
+    stroke = np.array(
+        [[PHOTO_LEFT + i * 5, 230 - int(amplitude * np.sin(i / 2.2))] for i in range(30)],
+        np.int32,
+    )
+    cv2.polylines(page, [stroke], False, (0, 0, 0), thickness, cv2.LINE_AA)
+    return page
+
+
+def component_at(components, left, top):
+    """The one component whose box starts at ``(left, top)``, or None."""
+    return next(
+        (c for c in components if c.left == left and c.top == top), None
+    )
+
+
+def glyphs_of(frame):
+    """The whole chain, filtered.  A test names the pipeline it is testing."""
+    return mrz_region.filter_glyphs(components_of(frame))
+
+
+def inside_drawn_glyphs(components):
+    """Whether every blob sits inside the ink the fixture drew, 4.3's test."""
+    top, bottom, left, right = drawn_extent()
+    return all(
+        left <= c.left and c.bbox[2] <= right + 1
+        and top <= c.top and c.bbox[3] <= bottom + 1
+        for c in components
+    )
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES))
+def test_a_clean_page_keeps_every_glyph_it_printed(name):
+    # The band has to be a filter and not a sieve.  All three ways 4.2
+    # photographs a page -- flat, one-sided shadow, low light -- come through
+    # 4.3 with a different count (51, 51, 52, because two pairs of neighbours
+    # merge at different points on the cut), and the band has to be wide enough
+    # for the widest of them and narrow enough to reject everything else.
+    components = components_of(FRAMES[name]())
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert glyphs == components
+    assert all(
+        mrz_region.GLYPH_MIN_HEIGHT_PX <= c.height <= mrz_region.GLYPH_MAX_HEIGHT_PX
+        and mrz_region.GLYPH_MIN_ASPECT
+        <= c.width / c.height
+        <= mrz_region.GLYPH_MAX_ASPECT
+        for c in glyphs
+    )
+
+
+def test_a_large_photo_region_is_rejected():
+    # The first case the task names, and the half of the band that has to do
+    # it: a photo box is roughly as wide as it is tall, so its aspect ratio
+    # sits inside the aspect band and only the height bound can refuse it.  If
+    # the numbers below did not come out that way this test would be passing
+    # for the wrong reason, so they are read off the frame first.
+    components = components_of(photo_page())
+    photo = component_at(components, PHOTO_LEFT, PHOTO_TOP)
+
+    assert (photo.width, photo.height) == (PHOTO_WIDTH, PHOTO_HEIGHT)
+    assert mrz_region.GLYPH_MIN_ASPECT <= photo.width / photo.height <= (
+        mrz_region.GLYPH_MAX_ASPECT
+    )
+
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert photo not in glyphs
+    assert component_at(glyphs, PHOTO_LEFT, PHOTO_TOP) is None
+    # And the box took nothing with it: the two lines of print are untouched,
+    # and what is left is every survivor 4.3 measured on the bare fixture.
+    assert len(glyphs) == len(components_of(upright_mrz()))
+    assert inside_drawn_glyphs(glyphs)
+
+
+def test_a_signature_blob_is_rejected():
+    # The second case the task names, and the *other* half of the band: a
+    # signature is a long horizontal scrawl whose own height is inside the
+    # height band, so nothing but the aspect bound can refuse it.
+    components = components_of(signature_page())
+    signature = max(components, key=lambda c: c.width)
+
+    assert mrz_region.GLYPH_MIN_HEIGHT_PX <= signature.height <= (
+        mrz_region.GLYPH_MAX_HEIGHT_PX
+    )
+    assert signature.width / signature.height > mrz_region.GLYPH_MAX_ASPECT
+
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert signature not in glyphs
+    assert len(glyphs) == len(components_of(upright_mrz()))
+    assert inside_drawn_glyphs(glyphs)
+
+
+def test_the_grain_falls_away_and_both_lines_stay():
+    # 4.3's handover note said the band would be asked to do this, and this is
+    # the claim it was resting on: the speckle a sigma-6 capture leaves behind
+    # is one and two pixels tall, so the height floor removes every one of
+    # 4.3's 313 components except the print -- and the print it keeps is the
+    # print, not a handful of the blobs that happened to be big enough.
+    components = components_of(grainy_mrz())
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert len(components) > 3 * len(components_of(upright_mrz()))
+    assert len(glyphs) == len(components_of(upright_mrz()))
+    assert inside_drawn_glyphs(glyphs)
+
+
+def test_a_page_whose_cut_went_white_has_no_glyphs_to_group():
+    # The failure 4.3 deliberately left in the list for this task: when 4.2's
+    # cut loses the page the frame is entirely ink, and OpenCV leaves 4.3 a
+    # single component 600 by 300.  Reporting that as a glyph would give 4.5 a
+    # line of one and 4.7 a document type, so the ceiling is above every glyph
+    # on this fixture and below a page.
+    components = mrz_region.extract_components(np.full((PAGE_HEIGHT, PAGE_WIDTH), 255, np.uint8))
+
+    assert [(c.width, c.height) for c in components] == [(PAGE_WIDTH, PAGE_HEIGHT)]
+    assert mrz_region.filter_glyphs(components) == ()
+
+
+def test_a_greyscale_frame_is_only_partly_cured_and_the_number_is_written_down():
+    # 4.3's other open exposure, and the handover was explicit that this is
+    # where it starts to hurt: skipping `binarize_inverted` gives 24
+    # components with the page among them, and the band removes the page and
+    # most of the rest but not all of it.  A caller gets a partial answer
+    # rather than a loud failure, which is the worse of the two, so the number
+    # is asserted here rather than left to be discovered in the field.
+    components = mrz_region.extract_components(mrz_region.to_gray(upright_mrz()))
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert len(components) == 24
+    assert max(c.width for c in components) == PAGE_WIDTH
+    assert len(glyphs) == 6
+    # Every survivor is a speck of *paper* rather than of print: a row band of
+    # it that is 10 pixels tall -- inside the height band, unavoidably -- but
+    # shorter than the shortest glyph the fixture drew, which is exactly the
+    # shape a band cannot separate and the reason this stays a known limit.
+    assert all(c.width < mrz_region.GLYPH_MIN_HEIGHT_PX for c in glyphs)
+    assert max(c.height for c in glyphs) < min(
+        c.height for c in components_of(upright_mrz())
+    )
+
+
+def test_the_band_is_held_to_the_rules_it_is_pinned_on():
+    # The four constants are this project's own numbers and 4.14 replaces the
+    # fixture they were measured on, so what is pinned here is the *rules*
+    # rather than the readings: each bound is measured against the frame and
+    # each rule is stated where it can be checked.
+    binaries = {
+        name: binary_of(FRAMES[name]()) for name in sorted(FRAMES)
+    }
+    heights = [
+        c.height for binary in binaries.values()
+        for c in mrz_region.extract_components(binary)
+    ]
+    aspects = [
+        c.width / c.height for binary in binaries.values()
+        for c in mrz_region.extract_components(binary)
+    ]
+
+    # Every glyph on the fixture is inside the band, at both ends.
+    assert min(heights) > mrz_region.GLYPH_MIN_HEIGHT_PX
+    assert max(heights) <= mrz_region.GLYPH_MAX_HEIGHT_PX
+    assert min(aspects) > mrz_region.GLYPH_MIN_ASPECT
+    assert max(aspects) < mrz_region.GLYPH_MAX_ASPECT
+
+    # The floor is at least half the tallest glyph -- half is where a mark
+    # stops being one -- and the ceiling is under half the line pitch, or a
+    # glyph could be taller than the gap to the line above it.
+    assert mrz_region.GLYPH_MIN_HEIGHT_PX * 2 >= max(heights)
+    assert mrz_region.GLYPH_MAX_HEIGHT_PX <= LINE_PITCH // 2
+    # An MRZ character cell is about square, so even a merged pair is nearer
+    # 2:1; three is the generous end of what a character can be.
+    assert mrz_region.GLYPH_MAX_ASPECT <= 3.0
+
+    # And the band is two ordered bands, not four loose numbers.
+    assert (
+        0 < mrz_region.GLYPH_MIN_HEIGHT_PX < mrz_region.GLYPH_MAX_HEIGHT_PX
+        and 0 < mrz_region.GLYPH_MIN_ASPECT < mrz_region.GLYPH_MAX_ASPECT
+    )
+
+
+@pytest.mark.parametrize(
+    "width, height, kept",
+    [
+        # Exactly on each of the four bounds, and exactly a step outside it.
+        # Off-by-one either way fails: the bounds are half-open nowhere.
+        (5, mrz_region.GLYPH_MIN_HEIGHT_PX, True),
+        (5, mrz_region.GLYPH_MIN_HEIGHT_PX - 1, False),
+        (20, mrz_region.GLYPH_MAX_HEIGHT_PX, True),
+        (20, mrz_region.GLYPH_MAX_HEIGHT_PX + 1, False),
+        (2, 10, True),
+        (1, 10, False),
+        (20, 8, True),
+        (21, 8, False),
+    ],
+)
+def test_each_edge_of_the_band_is_inside_it(width, height, kept):
+    # 2/10 is 0.2 and 20/8 is 2.5, so these are the bounds themselves rather
+    # than numbers near them; the four that fail are one step outside on the
+    # side that has to be strict.
+    record = mrz_region.MrzComponent(
+        left=0, top=0, width=width, height=height, area=width * height,
+        cx=0.0, cy=0.0,
+    )
+
+    assert (mrz_region.filter_glyphs((record,)) == (record,)) is kept
+
+
+def test_area_is_not_what_decides():
+    # The handover's standing note, made non-vacuous: `area` is carried on the
+    # record and nothing reads it.  These two blobs have the *same* area and
+    # opposite verdicts, so no filter on area could produce both answers,
+    # whichever direction it were written.
+    hairline, rule = mrz_region.extract_components(
+        solid_frame((10, 10, 3, 13), (40, 10, 1, 39))
+    )
+
+    assert hairline.area == rule.area == 39
+    assert mrz_region.filter_glyphs((hairline,)) == (hairline,)
+    assert mrz_region.filter_glyphs((rule,)) == ()
+
+
+def test_the_records_that_survive_are_the_ones_that_came_in():
+    # 4.5 groups them and 4.9 fits a line through their centroids, so a
+    # rebuilt record would be a second measurement of the same blob.  The
+    # order 4.3 chose is kept for the same reason it was chosen.
+    components = components_of(grainy_mrz())
+    glyphs = mrz_region.filter_glyphs(components)
+
+    assert isinstance(glyphs, tuple)
+    assert len({id(c) for c in glyphs}) == len(glyphs)
+    assert all(any(c is kept for kept in glyphs) for c in glyphs)
+    assert len(glyphs) < len(components)
+    assert [(c.top, c.left) for c in glyphs] == sorted(
+        (c.top, c.left) for c in glyphs
+    )
+    # Filtering is a projection, so filtering twice is filtering once, and an
+    # empty page of blobs is not an error.
+    assert mrz_region.filter_glyphs(glyphs) == glyphs
+    assert mrz_region.filter_glyphs(()) == ()
+
+
+def test_a_record_of_no_height_is_refused_rather_than_divided_by():
+    # `connectedComponentsWithStats` cannot produce one -- every component has
+    # at least one pixel -- but a caller can hand a record over, and the
+    # aspect bound is a division.  The height bound is tested first, so this
+    # is a filtered blob rather than a `ZeroDivisionError`.
+    flat = mrz_region.MrzComponent(
+        left=0, top=0, width=0, height=0, area=0, cx=0.0, cy=0.0
+    )
+
+    assert mrz_region.filter_glyphs((flat,)) == ()
+
+
+# --- 4.5: the survivors, grouped into lines by vertical overlap ----------
+
+
+def drawn_bands():
+    """The rows the fixture's ink occupies, one ``(first, last)`` per line.
+
+    Measured off ``glyph_mask`` rather than written down, for 4.2's reason:
+    the fixture is *drawn*, which is the one thing about it that makes a
+    ground truth available at all, and a pair of literals here would be a
+    second thing for 4.14 to invalidate.
+    """
+    rows = np.flatnonzero((glyph_mask() > 0).any(axis=1))
+    bands = []
+    for row in rows:
+        if bands and int(row) == bands[-1][1] + 1:
+            bands[-1][1] = int(row)
+        else:
+            bands.append([int(row), int(row)])
+    return tuple((first, last) for first, last in bands)
+
+
+def lines_of(frame):
+    """The whole chain, grouped.  A test names the pipeline it is testing."""
+    return mrz_region.group_lines(glyphs_of(frame))
+
+
+def component_record(left, top, width=10, height=10):
+    """A glyph-sized record at a written-in box, for the hand-made cases."""
+    return mrz_region.MrzComponent(
+        left=left, top=top, width=width, height=height, area=width * height,
+        cx=left + width / 2, cy=top + height / 2,
+    )
+
+
+def line_rows(line):
+    """A line's own vertical extent, half-open like the boxes it came from."""
+    return min(c.top for c in line), max(c.bbox[3] for c in line)
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES) + ["grainy"])
+def test_a_two_line_page_comes_back_as_exactly_two_lines(name):
+    # The test 4.5 asks for, and the count on its own is a weak claim: one
+    # group holding both lines answers "2" just as comfortably as two groups
+    # holding one line each.  So the count is checked against what was drawn
+    # -- each line sits inside one of the fixture's own row bands, and the
+    # bands are used one apiece -- and against the fact that the grouping is
+    # a *partition* of what 4.4 kept rather than a summary of it.
+    #
+    # The grainy capture is in the list because 4.4's band is what makes it
+    # answerable at all: without it this counts 313 blobs, and a grouping
+    # that had to survive speckle would be 4.4's band written a second time.
+    frame = grainy_mrz() if name == "grainy" else FRAMES[name]()
+    glyphs = glyphs_of(frame)
+    lines = mrz_region.group_lines(glyphs)
+    bands = drawn_bands()
+
+    assert len(lines) == 2
+    assert len(bands) == 2
+    for line, (first, last) in zip(lines, bands):
+        assert line, "a drawn line of print came back empty"
+        assert all(first <= c.top and c.bbox[3] <= last for c in line)
+
+    # Two lines, not one read twice: their rows are disjoint and the gap
+    # between them is larger than the tallest glyph on the page -- which is
+    # 4.4's own reason for putting its ceiling under half the line pitch.
+    assert line_rows(lines[0])[1] < line_rows(lines[1])[0]
+    assert (line_rows(lines[1])[0] - line_rows(lines[0])[1]) > max(
+        c.height for c in glyphs
+    )
+
+    # Every survivor arrives exactly once, and it arrives as the record 4.3
+    # measured rather than as a copy of it.
+    assert sum(len(line) for line in lines) == len(glyphs)
+    assert {id(c) for line in lines for c in line} == {id(c) for c in glyphs}
+
+
+def test_a_blob_joins_a_line_only_while_it_shares_a_row_with_it():
+    # The rule itself, on boxes whose coordinates are written down rather
+    # than measured off a cut, so the boundary is visible: rows 10-20,
+    # 15-25 and 20-30.  The first two share row 19 and the third starts
+    # exactly where the second ends -- sharing no row with it -- and opens a
+    # line of its own.  Half-open at both ends, and neither reading is a
+    # preference: an inclusive edge merges two adjacent lines at a printed
+    # baseline, a strict one splits a line whose glyphs merely touch.
+    first, second, third, fourth = (
+        component_record(0, 10),
+        component_record(30, 15),
+        component_record(60, 20),
+        component_record(90, 30),
+    )
+
+    lines = mrz_region.group_lines((first, second, third, fourth))
+
+    assert lines == ((first, second, third), (fourth,))
+    assert line_rows(lines[0]) == (10, 30)
+    assert line_rows(lines[1]) == (30, 40)
+
+
+def test_a_line_is_closed_by_its_deepest_member_and_not_by_its_last_one():
+    # The other half of the same rule, and the one the first test above
+    # cannot see: comparing each blob against the *previous* one is enough to
+    # pass it, because there every blob reaches lower than the one before it.
+    # Rows 10-31, 15-17 and 30-32: the middle blob stops 14 rows short of
+    # where it started, so a rule that adopted its bottom as the new edge
+    # would put the third blob somewhere else entirely -- and a rule that
+    # lost a row off the edge while it did so would lose this one too.
+    deep, shallow, later = (
+        component_record(0, 10, width=11, height=21),
+        component_record(30, 15, width=11, height=2),
+        component_record(60, 30, width=11, height=2),
+    )
+
+    lines = mrz_region.group_lines((deep, shallow, later))
+
+    assert lines == ((deep, shallow, later),)
+    assert line_rows(lines[0]) == (10, 32)
+    # The shape that makes it load-bearing: the middle blob ends well above
+    # the third, and the first and the third share row 30.
+    assert shallow.bbox[3] < later.top
+    assert deep.top < shallow.top < later.top < deep.bbox[3]
+
+    # And the transitivity the module docstring claims, in the direction the
+    # other test reads it: a blob that shares no row with the *first* member
+    # is still on that member's line when something between them bridges.
+    bridged, bridge, hanging = (
+        component_record(0, 10),
+        component_record(30, 15),
+        component_record(60, 20),
+    )
+
+    assert mrz_region.group_lines((bridged, bridge, hanging)) == (
+        (bridged, bridge, hanging),
+    )
+    assert bridged.bbox[3] == hanging.top  # they share no row at all
+
+
+def test_a_blob_holding_two_characters_is_still_one_line():
+    # 4.3's note that this has to survive, and it is about the blob count
+    # rather than about the grouping: two pairs of neighbours touch at this
+    # cut, so each line comes back with fewer blobs than it has printed
+    # characters and one of them is roughly twice as wide as its neighbours.
+    # Written longhand rather than waited for on the fixture, because which
+    # pairs merge is a property of the cut and 4.14 replaces it.
+    merged, plain, below = (
+        component_record(30, 10, width=22, height=14),
+        component_record(0, 10, width=11, height=14),
+        component_record(0, 60, width=11, height=14),
+    )
+
+    lines = mrz_region.group_lines((below, merged, plain))
+
+    assert lines == ((plain, merged), (below,))
+    # The wide blob did not become a second group, and it did not drag the
+    # line below it up with it either.
+    assert len(lines) == 2
+    assert line_rows(lines[0])[1] <= line_rows(lines[1])[0]
+
+
+def test_each_line_holds_the_characters_of_one_baseline_and_nothing_else():
+    # The per-line half of "two lines", measured against what was printed:
+    # one blob per character at most, and never so few that characters went
+    # missing rather than merged.  Measured on this fixture: 24 and 27
+    # against 25 and 28 on a flat scan, 25 and 27 in low light.
+    lines = lines_of(upright_mrz())
+
+    assert len(lines) == len(LINES)
+    for line, text in zip(lines, LINES):
+        assert 3 * len(text) // 4 <= len(line) <= len(text)
+        # And the merge is inside a line rather than between two: the line
+        # is as wide as the print is, and a blob that had leaked into its
+        # neighbour would push it past the drawn extent.
+        _, _, left, right = drawn_extent()
+        assert left <= min(c.left for c in line)
+        assert max(c.bbox[2] for c in line) <= right + 1
+
+
+def test_the_lines_read_down_the_page_and_the_glyphs_read_across_it():
+    # Neither order is the one 4.3 chose, and that is the point of the
+    # re-sort.  Groups run top to bottom because 4.7 counts them and 4.11
+    # maps a cell index to a field offset; glyphs run left to right because
+    # 4.10 segments along x and its cell 0 has to be the leftmost character.
+    glyphs = glyphs_of(upright_mrz())
+    lines = mrz_region.group_lines(glyphs)
+
+    assert [line[0].top for line in lines] == sorted(line[0].top for line in lines)
+    for line in lines:
+        assert [c.left for c in line] == sorted(c.left for c in line)
+
+    # Not vacuous: 4.3's order is the raster-scan order of OpenCV's
+    # labelling, and this fixture's first line is where the two come apart.
+    first_line_as_43_ordered_it = glyphs[: len(lines[0])]
+    assert [c.left for c in first_line_as_43_ordered_it] != sorted(
+        c.left for c in first_line_as_43_ordered_it
+    )
+
+
+def test_the_groups_do_not_depend_on_the_order_the_blobs_arrive_in():
+    # 4.4 keeps 4.3's order rather than rebuilding it, so the order this is
+    # handed is not this step's to trust.  Three different arrivals of the
+    # same 51 records have to come back as the same two lines.
+    glyphs = glyphs_of(upright_mrz())
+    expected = mrz_region.group_lines(glyphs)
+
+    assert mrz_region.group_lines(tuple(reversed(glyphs))) == expected
+    assert mrz_region.group_lines(glyphs[27:] + glyphs[:27]) == expected
+    # And what comes back is made of the records that went in, not copies.
+    assert all(
+        any(c is kept for line in expected for kept in line) for c in glyphs
+    )
+
+
+def test_the_height_band_is_not_applied_a_second_time():
+    # The handover's standing instruction to this task, made checkable: 4.4
+    # wrote the band and re-applying it here would be one rule in two places.
+    # The record that shows it is the signature 4.4 refuses -- 150 by 20, an
+    # aspect ratio of 7.5 -- handed straight over instead of through the
+    # filter.  Grouping it is 4.5's whole remit: which blobs share rows.
+    signature = component_record(10, 40, width=150, height=20)
+
+    assert mrz_region.filter_glyphs((signature,)) == ()
+    assert mrz_region.group_lines((signature,)) == ((signature,),)
+
+
+def test_nothing_is_discarded_here_because_that_is_46s_call():
+    # "Is this line plausible" is 4.6's question -- height consistency and
+    # inter-line spacing -- and answering it here would be a threshold
+    # 4.4 did not write down.  So a group of one comes back as a group of one,
+    # and the handover's open exposure is measured rather than promised: the
+    # six specks of *paper* a greyscale frame leaves behind survive 4.4, and
+    # this groups them onto the same two baselines the print uses.
+    (stray,) = mrz_region.filter_glyphs(
+        mrz_region.extract_components(solid_frame((10, 10, 5, 8)))
+    )
+    specks = mrz_region.filter_glyphs(
+        mrz_region.extract_components(mrz_region.to_gray(upright_mrz()))
+    )
+    lines = mrz_region.group_lines(specks)
+
+    assert mrz_region.group_lines((stray,)) == ((stray,),)
+    assert len(specks) == 6
+    assert [len(line) for line in lines] == [2, 4]
+    for line, (first, last) in zip(lines, drawn_bands()):
+        assert first <= line_rows(line)[0] and line_rows(line)[1] <= last
+
+
+def test_a_frame_with_nothing_on_it_comes_back_with_no_lines():
+    # 4.13's empty result begins here, and the two ways a frame arrives
+    # empty are both ordinary rather than exceptional: a page whose cut went
+    # white is refused by 4.4's height ceiling, and a frame with no ink has
+    # no component to begin with.  Neither raises, because the package has
+    # exactly one error type and "there is no MRZ here" is not one of them.
+    blank = mrz_region.extract_components(
+        np.zeros((PAGE_HEIGHT, PAGE_WIDTH), np.uint8)
+    )
+    white = mrz_region.filter_glyphs(
+        mrz_region.extract_components(np.full((PAGE_HEIGHT, PAGE_WIDTH), 255, np.uint8))
+    )
+
+    assert blank == ()
+    assert mrz_region.group_lines(blank) == ()
+    assert white == ()
+    assert mrz_region.group_lines(white) == ()
+    assert mrz_region.group_lines(()) == ()
+
+
+def test_a_record_of_no_height_is_a_line_of_its_own_and_not_an_error():
+    # `extract_components` cannot produce one -- every blob has at least one
+    # pixel -- but a caller can hand a record over, and an empty vertical
+    # extent has no row to share.  Sorted by top it can only ever be a line
+    # of one: nothing that follows it starts higher.
+    flat = mrz_region.MrzComponent(
+        left=0, top=10, width=0, height=0, area=0, cx=0.0, cy=10.0
+    )
+
+    assert mrz_region.group_lines((flat,)) == ((flat,),)
+
+
+# --- 4.6: the line groups, scored on height and on spacing ---------------
+
+#: The stray line, and the number that places it.  A *name* in the
+#: fixture's own font, at the fixture's own size and thickness, above the
+#: MRZ: 4.4 cannot refuse it, its own glyphs are the MRZ's own glyphs, and
+#: the only thing wrong with it is where it sits.  Drawn smaller, or in
+#: another face, it would be discardable on height as well, and the task's
+#: test would then be showing that either score refuses it rather than that
+#: this one does.
+STRAY_TEXT = "ERIKSSON<<ANNA<MARIA"
+STRAY_BASELINE = 20
+
+
+def stray_line_page(baseline=STRAY_BASELINE, text=STRAY_TEXT, scale=0.7):
+    """The fixture with a line of ordinary type above the MRZ.
+
+    Written onto the page rather than drawn by a second generator, for 4.4's
+    reason: the blob has to be one 4.4 would otherwise have kept, and the
+    two MRZ lines underneath have to be untouched, so that what comes back
+    can be compared with the page that never had the stray on it.
+    """
+    page = upright_mrz()
+    cv2.putText(
+        page, text, (40, baseline),
+        cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 2, cv2.LINE_AA,
+    )
+    return page
+
+
+def line_top(line):
+    """A line's own first row, which is 4.5's reading order made a number."""
+    return min(component.top for component in line)
+
+
+def heights_spread(line):
+    """The height score, measured here rather than read off the function."""
+    heights = sorted(component.height for component in line)
+    return (heights[-1] - heights[0]) / statistics.median(heights)
+
+
+def pitches_of(lines):
+    """The spacing from each line down to the one below it."""
+    tops = [line_top(line) for line in lines]
+    return [below - above for above, below in zip(tops, tops[1:])]
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES) + ["grainy"])
+def test_the_two_printed_lines_of_every_capture_survive_the_scoring(name):
+    # The filter has to be a filter and not a sieve, and it is checked on all
+    # four captures for the reason 4.4 checks its band on all four: the
+    # grainy page is 313 blobs before 4.4 and 51 after it, so a score that
+    # needed a clean page would be 4.4's band written a second time.
+    frame = grainy_mrz() if name == "grainy" else FRAMES[name]()
+    glyphs = glyphs_of(frame)
+    lines = mrz_region.group_lines(glyphs)
+
+    scored = mrz_region.filter_lines(lines)
+
+    assert scored == lines
+    # Neither score is being handed nothing: this fixture's own lines do
+    # differ in height, so the height score has a real spread to judge, and
+    # the leading is the same on all four captures, so there is a real
+    # reading behind the spacing band rather than an accident.
+    assert max(heights_spread(line) for line in lines) > 0.0
+    assert max(heights_spread(line) for line in lines) <= (
+        mrz_region.LINE_MAX_HEIGHT_SPREAD
+    )
+    assert pitches_of(lines) == [LINE_PITCH]
+    # And what comes back is a partition of the records that went in, made of
+    # those records rather than of copies.
+    assert sum(len(line) for line in scored) == len(glyphs)
+    assert {id(c) for line in scored for c in line} == {id(c) for c in glyphs}
+
+
+def test_a_line_whose_glyphs_disagree_about_height_is_discarded():
+    # The first of the two scores, written longhand so both halves of the
+    # rule are visible at once: two marks on one baseline whose heights
+    # cannot both be the body size of the line, beside a line whose single
+    # mark is an ordinary glyph.  4.4 keeps all three -- a 10 by 10 and a
+    # 24 by 24 are both inside its band -- which is the whole reason this
+    # score exists at all.
+    short, tall, partner = (
+        component_record(0, 10, width=10, height=10),
+        component_record(30, 10, width=24, height=24),
+        component_record(0, 80, width=11, height=14),
+    )
+    lines = mrz_region.group_lines((tall, partner, short))
+
+    assert mrz_region.filter_glyphs((short, tall, partner)) == (
+        short, tall, partner,
+    )
+
+    scored = mrz_region.filter_lines(lines)
+
+    assert scored == ((partner,),)
+    # The height score is what refused it, measured rather than asserted: the
+    # discarded group's spacing is exactly the leading, so the other score
+    # has nothing to say about it.
+    assert heights_spread((short, tall)) > mrz_region.LINE_MAX_HEIGHT_SPREAD
+    assert pitches_of(lines) == [LINE_PITCH]
+    # And the line goes *with* the mark rather than instead of it -- 4.10
+    # would otherwise be handed a cell for a mark the cut invented.
+    assert not any(
+        member is kept for line in scored for kept in line for member in (short, tall)
+    )
+
+
+def test_a_line_that_is_not_on_the_leading_the_set_shows_is_discarded():
+    # The second score, and the one the task's own test needs.  Three groups
+    # of one mark each: two of them a leading apart, and a third 30 rows
+    # further off the second, which is 0.43 of the leading -- a departure a
+    # printed block does not make and a quarter of the leading refuses.
+    first, second, stray = (
+        component_record(0, 10, width=11, height=14),
+        component_record(0, 80, width=11, height=14),
+        component_record(0, 180, width=11, height=14),
+    )
+    lines = mrz_region.group_lines((stray, first, second))
+
+    assert mrz_region.filter_lines(lines) == ((first,), (second,))
+    # The other score would have kept it: one mark, one height, nothing to
+    # disagree with.
+    assert heights_spread((stray,)) == 0.0
+    # And the same two groups *without* the MRZ line above them both survive,
+    # which is the arithmetic behind the task's third line: two groups have
+    # one spacing between them, and one spacing cannot be inconsistent.
+    assert mrz_region.filter_lines(((second,), (stray,))) == ((second,), (stray,))
+
+
+def test_a_third_stray_line_printed_on_the_page_is_discarded():
+    # The test 4.6 asks for, and both halves of it.  A line of ordinary type
+    # is drawn on the fixture page above the MRZ: it has to *arrive* as a
+    # third group -- 4.5 reports the grouping it is handed and refuses to
+    # pre-judge it -- and this step has to throw it away while leaving the
+    # two printed lines exactly as they come back from the page that never
+    # had the stray on it.
+    glyphs = glyphs_of(stray_line_page())
+    lines = mrz_region.group_lines(glyphs)
+    plain = mrz_region.group_lines(glyphs_of(upright_mrz()))
+
+    # It arrives: above both printed lines and clear of the first band the
+    # fixture drew, and glyph-plausible all the way through 4.4 -- which is
+    # what makes this a test of 4.6's scores and not of 4.4's band.
+    assert len(lines) == 3
+    assert [line_top(line) for line in lines] == sorted(line_top(l) for l in lines)
+    assert lines[0][-1].bbox[3] <= drawn_bands()[0][0]
+    assert lines[1:] == plain
+
+    # It is the spacing that refuses it, and the test is that one score
+    # rather than two: measured, the stray's own glyphs are the MRZ's own
+    # glyphs and its spread is inside the height band, while its spacing is
+    # 30 rows further out than a quarter of the leading allows.
+    assert heights_spread(lines[0]) <= mrz_region.LINE_MAX_HEIGHT_SPREAD
+    lead = min(pitches_of(lines))
+    stray_pitch = line_top(lines[1]) - line_top(lines[0])
+    assert lead == LINE_PITCH
+    assert (stray_pitch - lead) / lead > mrz_region.LINE_MAX_SPACING_SPREAD
+
+    scored = mrz_region.filter_lines(lines)
+
+    assert scored == plain
+    assert sum(len(line) for line in scored) == sum(len(line) for line in plain)
+    # The two lines that survive are the very groups 4.5 produced, in order.
+    assert scored[0] is lines[1]
+    assert scored[1] is lines[2]
+
+
+def test_a_stray_line_printed_near_the_leading_is_not_what_these_scores_catch():
+    # The limit, measured rather than promised.  The same line of type drawn
+    # 20 rows lower lands 0.14 of the leading from the MRZ -- the same
+    # proportion as the height spread the two printed lines have between
+    # them, and comfortably inside the band -- so it is consistent with the
+    # set and survives.  What catches a page with three lines on it is 4.7's
+    # line count and 4.10's cell count: a consistency score is not a
+    # document reader, and this is where that stops being a caveat.
+    lines = mrz_region.group_lines(glyphs_of(stray_line_page(baseline=40)))
+    lead = min(pitches_of(lines))
+    stray_pitch = line_top(lines[1]) - line_top(lines[0])
+
+    assert len(lines) == 3
+    assert 0.0 < (stray_pitch - lead) / lead <= mrz_region.LINE_MAX_SPACING_SPREAD
+    assert mrz_region.filter_lines(lines) == lines
+
+
+def test_the_height_score_is_measured_against_the_lines_own_median():
+    # Which statistic the reference is, is a decision like any other, and it
+    # is the median and not the middle of the sorted heights: two marks of 19
+    # and 28 rows give a true median of 23.5 and a spread of 0.38, where the
+    # upper of the two would say 0.32 and keep the line.  A caller may hand
+    # over marks 4.4 would have refused -- 4.5's own signature case is the
+    # precedent -- so the reference cannot be a size 4.4 chose.
+    low, high, partner = (
+        component_record(0, 10, width=19, height=19),
+        component_record(40, 10, width=28, height=28),
+        component_record(0, 80, width=11, height=14),
+    )
+    lines = mrz_region.group_lines((low, high, partner))
+
+    assert (28 - 19) / ((19 + 28) / 2) > mrz_region.LINE_MAX_HEIGHT_SPREAD
+    assert (28 - 19) / 28 <= mrz_region.LINE_MAX_HEIGHT_SPREAD
+    assert mrz_region.filter_lines(lines) == ((partner,),)
+
+    # And the median rather than the mean, which can only be told apart at the
+    # edge: four marks of 8, 12, 12 and 12 rows give a median of 12 -- a
+    # spread of exactly a third, kept because the edge is inside the band --
+    # and a mean of 11, which is 0.36 and discarded.  A rule with either of
+    # those two numbers in it is a different rule, and this is the only case
+    # here that sees which one is in force.
+    edge = tuple(
+        component_record(index * 20, 10, width=10, height=height)
+        for index, height in enumerate((8, 12, 12, 12))
+    )
+    assert heights_spread(edge) == mrz_region.LINE_MAX_HEIGHT_SPREAD
+    assert 4 / statistics.mean([8, 12, 12, 12]) > mrz_region.LINE_MAX_HEIGHT_SPREAD
+    assert mrz_region.filter_lines((edge,)) == (edge,)
+
+
+def test_a_line_with_no_height_is_discarded_rather_than_divided_by():
+    # `extract_components` cannot produce a record of zero height, but a
+    # caller can hand one over, and 4.4 refused that record for exactly this
+    # reason: the aspect ratio divides by it.  Here the median does, and a
+    # group of nothing but zero-height records has no body size to be
+    # consistent with, so it goes rather than raising.
+    flat = mrz_region.MrzComponent(
+        left=0, top=10, width=0, height=0, area=0, cx=0.0, cy=10.0
+    )
+    partner = component_record(0, 80, width=11, height=14)
+    lines = (
+        (partner,),
+        (flat, component_record(40, 10, width=11, height=14)),
+    )
+
+    assert mrz_region.filter_lines(((flat,),)) == ()
+    assert mrz_region.filter_lines(lines) == ((partner,),)
+
+
+@pytest.mark.parametrize("heights,kept", [
+    ((5, 7), True),        # exactly a third: the edge is *inside* the band
+    ((5, 5, 7), False),    # two fifths, and the case above plus one short mark
+    ((13, 15), True),      # the spread this fixture's own lines have
+    ((10, 24), False),     # a factor 4.4's own band keeps, both of them
+])
+def test_each_edge_of_the_height_band_is_inside_it(heights, kept):
+    # The comparison has to be decidable at the edge, and which way it goes is
+    # a decision rather than an accident: a mark exactly a third off the
+    # line's median is still a glyph of that line, and the band is written
+    # to say so.  The last case is the one 4.4 cannot refuse -- a 10 by 10
+    # and a 24 by 24 are both inside its band -- so it is the only row here
+    # that says anything about 4.6 existing.
+    line = tuple(
+        component_record(index * 20, 10, width=10, height=height)
+        for index, height in enumerate(heights)
+    )
+
+    assert (mrz_region.filter_lines((line,)) == (line,)) is kept
+
+
+@pytest.mark.parametrize("pitch,kept", [
+    (89, True),   # a quarter of 72 is exactly 18, so these three straddle it
+    (90, True),   # and the middle one *is* the edge, which is inside
+    (91, False),  # and this is the first row outside it
+])
+def test_each_edge_of_the_spacing_band_is_inside_it(pitch, kept):
+    # The same decidability on the second score, and it is measured against
+    # the leading rather than written down, so nothing here depends on the
+    # stray line's own placement staying where it is.  The leading is 72 and
+    # not the fixture's 70 for one reason: rows are whole numbers, a quarter
+    # of 70 is 17.5, and a comparison whose two sides cannot land on the same
+    # row is not a comparison this test could pin.
+    lead = 72
+    first = component_record(0, 10, width=11, height=14)
+    second = component_record(0, 10 + lead, width=11, height=14)
+    stray = component_record(0, 10 + lead + pitch, width=11, height=14)
+    lines = mrz_region.group_lines((first, second, stray))
+
+    scored = mrz_region.filter_lines(lines)
+
+    # Whether the *stray* survives is what the band decides; the two lines
+    # on the leading come through either way, by identity and in order.
+    assert any(stray is member for line in scored for member in line) is kept
+    assert scored[0] is lines[0]
+    assert scored[1] is lines[1]
+
+
+def test_the_greyscale_specks_are_not_what_these_two_scores_discard():
+    # 4.5's own note said 4.6 is what throws the specks a greyscale frame
+    # leaves behind away.  Measured, it is not: the two groups of 2 and 4 are
+    # all ten rows tall like each other and a leading apart like each other,
+    # which is all a consistency score can see -- it cannot tell a line of
+    # two blobs from a line of forty.  Correcting that sentence is the point
+    # of this test.  What a two-blob line is caught by is 4.7's cell count,
+    # and what a caller that produced it has to fix is 4.2's cut.
+    specks = mrz_region.filter_glyphs(
+        mrz_region.extract_components(mrz_region.to_gray(upright_mrz()))
+    )
+    lines = mrz_region.group_lines(specks)
+
+    assert [len(line) for line in lines] == [2, 4]
+    assert all(heights_spread(line) == 0.0 for line in lines)
+    assert pitches_of(lines) == [LINE_PITCH]
+    assert mrz_region.filter_lines(lines) == lines
+
+
+def test_the_two_bands_are_held_to_the_rules_they_are_pinned_on():
+    lines = mrz_region.group_lines(glyphs_of(upright_mrz()))
+    spreads = [heights_spread(line) for line in lines]
+    glyphs = [c for line in lines for c in line]
+
+    # Height: at least twice the worst spread this fixture shows, so a line
+    # printed with a little more variation than its neighbour is not a line
+    # that loses them.  4.14's generator has to keep that true.
+    assert mrz_region.LINE_MAX_HEIGHT_SPREAD >= 2 * max(spreads)
+    # And narrower than the spread 4.4's own band admits for a line of these
+    # glyphs, which is the whole reason this score exists: 4.4 judges each
+    # blob on its own, this judges the line they share a baseline with.
+    assert mrz_region.LINE_MAX_HEIGHT_SPREAD < (
+        mrz_region.GLYPH_MAX_HEIGHT_PX - mrz_region.GLYPH_MIN_HEIGHT_PX
+    ) / statistics.median([c.height for c in glyphs])
+
+    # Spacing: the band sits above a whole glyph, because a departure
+    # smaller than a glyph cannot be told from a printing or a scanning
+    # artefact; and it is a fraction and not a pixel count, or a page at
+    # another scale would be a different answer.
+    assert mrz_region.LINE_MAX_SPACING_SPREAD * LINE_PITCH > max(
+        c.height for c in glyphs
+    )
+    assert 0.0 < mrz_region.LINE_MAX_SPACING_SPREAD < 1.0
+    # And the honest limit of that rule: this fixture has one spacing to
+    # measure, so the band is held to its rule and to the one reading there
+    # is -- the same leading on all three of 4.2's clean captures.
+    for name in sorted(FRAMES):
+        tops = [
+            line_top(line)
+            for line in mrz_region.group_lines(glyphs_of(FRAMES[name]()))
+        ]
+        assert [below - above for above, below in zip(tops, tops[1:])] == [LINE_PITCH]
+
+
+def test_the_groups_that_survive_are_the_ones_that_went_in():
+    # A filter that rebuilt its groups would be a second measurement of the
+    # same blobs, for 4.4's reason, and 4.9 fits lines through their
+    # centroids.  The order the groups arrive in is 4.5's to have chosen, so
+    # the spacing is read between them sorted by their own tops: the same
+    # groups handed over backwards give the same answer rather than a set of
+    # negative spacings.
+    glyphs = glyphs_of(upright_mrz())
+    lines = mrz_region.group_lines(glyphs)
+    scored = mrz_region.filter_lines(lines)
+
+    assert scored == lines
+    assert {id(c) for line in scored for c in line} == {id(c) for c in glyphs}
+    assert mrz_region.filter_lines(tuple(reversed(lines))) == tuple(reversed(scored))
+    # And nothing at all is still nothing at all, as everywhere else here.
+    assert mrz_region.filter_lines(()) == ()
+
+
+# --- the boundary this module must not move -------------------------------
+
+
+def test_the_character_readers_still_import_without_opencv():
+    # Parts 1-3 are pure arithmetic over characters and load neither cv2 nor
+    # numpy, so a caller can parse a stored zone with no OpenCV in the process.
+    # This module is the first file in the package to import cv2, which makes
+    # that property one careless `from .mrz_region import deskew` away from
+    # being untrue -- and nothing else in the suite would notice.
+    backend_root = pathlib.Path(mrz.__file__).parents[3]
+    probe = (
+        "import sys;"
+        "import app.pipeline.tier0.document, app.pipeline.tier0.td1,"
+        " app.pipeline.tier0.td2, app.pipeline.tier0.td3;"
+        "print('cv2' in sys.modules, 'numpy' in sys.modules)"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=backend_root, capture_output=True, text=True, check=True,
+    )
+
+    assert result.stdout.strip() == "False False"
+
+
+def test_the_module_raises_nothing_of_its_own():
+    # 1.9's rule, from this module's side: MrzValueError is the package's one
+    # error type, and a detector that raised a second one would put an
+    # OpenCV failure and a "no MRZ here" into different except clauses at every
+    # call site in 4.13.
+    #
+    # Walked rather than grepped, and that is 3.14's move applied here.  The
+    # two substrings this replaces would have banned the *sentences* in the
+    # module docstring that explain the rule -- 4.3's own prose says what a
+    # raise would cost -- and a class statement is not an error type, which
+    # is what the rule is about.  4.3 adds the first record in this module, so
+    # the check now says what it meant: no `raise` anywhere, and no class that
+    # is an exception.
+    tree = ast.parse(
+        pathlib.Path(mrz_region.__file__).read_text(encoding="utf-8")
+    )
+
+    assert not [node for node in ast.walk(tree) if isinstance(node, ast.Raise)]
+    assert not [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and any(
+            isinstance(base, ast.Name) and base.id.endswith("Error")
+            or isinstance(base, ast.Attribute) and base.attr.endswith("Error")
+            or isinstance(base, ast.Name) and base.id in {"Exception", "BaseException"}
+            for base in node.bases
+        )
+    ]
+    assert not issubclass(mrz_region.MrzComponent, BaseException)
+
+    assert mrz_region.__all__ == [
+        "MAX_DESKEW_DEG",
+        "MrzComponent",
+        "binarize_inverted",
+        "deskew",
+        "extract_components",
+        "filter_glyphs",
+        "filter_lines",
+        "group_lines",
+        "skew_deg",
+        "to_gray",
+    ]
+
+
+def test_the_record_is_data_and_nothing_else():
+    # The other half of what "no class" used to mean here.  MrzComponent
+    # carries seven numbers and two derived views of them; a method on it
+    # would be behaviour, and behaviour is where a second judgement about
+    # what a glyph is would grow -- 4.4's band, not this record's.
+    fields = [field.name for field in dataclasses.fields(mrz_region.MrzComponent)]
+    public = {
+        name
+        for name in vars(mrz_region.MrzComponent)
+        if not name.startswith("_")
+    } - set(fields)
+
+    assert fields == ["left", "top", "width", "height", "area", "cx", "cy"]
+    assert public == {"bbox", "centroid"}

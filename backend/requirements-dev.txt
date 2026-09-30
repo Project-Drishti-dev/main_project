@@ -1,3 +1,8 @@
 -r requirements.txt
+alembic>=1.13,<2
+# cryptography versions as 4X.Y.Z, so <50 caps the 4x line
+cryptography>=42,<50
 httpx>=0.27,<1
+pyyaml>=6,<7
 pytest>=8,<10
+sqlalchemy>=2.0,<3
