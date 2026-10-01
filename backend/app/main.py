@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .analysis import analyze_uploaded_image
+from .api.routes_screenings import router as screenings_router
 from .config import MAX_UPLOAD_BYTES, get_cors_origins
 from .errors import APIError
 from .schemas import AnalysisResponse, ErrorResponse
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+app.include_router(screenings_router)
 
 
 @app.exception_handler(APIError)
@@ -48,6 +50,26 @@ async def handle_request_validation_error(
             "error": {
                 "code": "INVALID_REQUEST",
                 "message": "The request payload is invalid.",
+            }
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_error(_request, exc: Exception) -> JSONResponse:
+    """Answer a fault no route caught in the same envelope as every refusal.
+
+    The route-level handlers above are the ones that can say what went
+    wrong; this one says only that it did, so the body stays the shape a
+    client already parses rather than the server's plain-text 500.
+    """
+    logger.error("Unhandled request error", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "The request could not be completed.",
             }
         },
     )

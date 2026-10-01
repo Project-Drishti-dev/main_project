@@ -23,6 +23,29 @@ def analyze_uploaded_image(
     content_type: str | None,
     requested_mode: str = "auto",
 ) -> dict[str, Any]:
+    return analyze_image(
+        read_uploaded_image(contents, content_type, requested_mode),
+        requested_mode=requested_mode,
+    )
+
+
+def read_uploaded_image(
+    contents: bytes,
+    content_type: str | None,
+    requested_mode: str = "auto",
+) -> np.ndarray:
+    """The frame an upload is, once the checks both endpoints share have run.
+
+    :param contents: the uploaded bytes.
+    :param content_type: what the client declared, checked against what the
+        bytes turn out to be.
+    :param requested_mode: the caller's ``auto``/``photo``/``scan`` claim.
+    :returns: the decoded BGR frame.
+    :raises APIError: for every upload this service refuses, with the same
+        status and code ``/api/analyze`` answers with -- the caps, the media
+        types and the mode vocabulary are spelled once, here, so 11.1's
+        endpoint cannot answer differently from 11.9's.
+    """
     if len(contents) > MAX_UPLOAD_BYTES:
         raise APIError(413, "IMAGE_TOO_LARGE", "Choose an image that is 10 MB or smaller.")
     if not contents:
@@ -86,5 +109,4 @@ def analyze_uploaded_image(
             "INVALID_IMAGE",
             "The uploaded file is empty or is not a supported image.",
         )
-
-    return analyze_image(image, requested_mode=requested_mode)
+    return image

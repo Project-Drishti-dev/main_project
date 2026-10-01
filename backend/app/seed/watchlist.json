@@ -1,0 +1,32 @@
+{
+  "schema": "watchlist-seed-v1",
+  "note": "Synthetic rows for the mock connector of 5.11. Every value is invented: no document number, name or date of birth here belongs to a real document or a real person. kind and matched_on are app.risk.watchlist's own vocabulary, so a row found by document_number carries document_number and nothing else, and an identity_seen row carries no document number. An identity_seen row carries both shapes a caller may look a name up in -- the printed MRZ form and the tidied one -- because they are not the same string. These values are matched against and never returned: a hit names the entry_id only.",
+  "entries": [
+    {
+      "entry_id": "STOLEN-0001",
+      "kind": "stolen_document",
+      "matched_on": "document_number",
+      "document_number": "X00000001"
+    },
+    {
+      "entry_id": "STOLEN-0002",
+      "kind": "stolen_document",
+      "matched_on": "document_number",
+      "document_number": "X00000002"
+    },
+    {
+      "entry_id": "BLACKLIST-0001",
+      "kind": "blacklist",
+      "matched_on": "document_number",
+      "document_number": "X00000009"
+    },
+    {
+      "entry_id": "IDENTITY-0001",
+      "kind": "identity_seen",
+      "matched_on": "identity",
+      "name": "FICTITIOUS<<JANE",
+      "name_tidied": "FICTITIOUS, JANE",
+      "dob": "1990-01-01"
+    }
+  ]
+}

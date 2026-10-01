@@ -1,0 +1,153 @@
+# The v1 weightset: what every flag id this project can emit is worth.
+#
+# The abstract's engine is R = sum(w_i * F_i) + hard rules, where F_i is a
+# flag's own value in [0, 1].  A weight here is points on the 0-100 score
+# rather than a share of a budget, so one flag contributes at most its own
+# weight and corroborating flags may exceed 100 (7.7 clamps).  D21 records why
+# no single weight here is large enough to reach High on its own.
+#
+# The band is the severity class the weight sits in, spelled with the three
+# names EvidenceFlag.weight_band already allows.  Every number in this file is
+# an expert-rule figure and none of them is calibrated: the abstract refines
+# the initial weights on labelled validation data, and Part 27 owns that.
+#
+# Which rules override is not written here.  That is 6.5's _HARD_FAIL_IDS, a
+# union of each family's own table held beside its labels, and a second list
+# here could disagree with those without either one noticing.  Likewise
+# TAMPER_FUSION_ANOMALY supersedes the three forensic modules 15.6 fuses into
+# it, so a run must not count it beside them.
+#
+# The keys are app.risk.flag_ids.FLAG_IDS in ALL_FLAG_IDS order, which is the
+# cascade's own order: tier 0 first, then tier 1, tier 2, cross-document.
+
+ruleset_version: "0.1.0"
+
+flags:
+  # --- MRZ: a failed printed check digit, all five of them hard fails (6.5) ---
+  MRZ_DOCUMENT_NUMBER_CHECK_DIGIT_MISMATCH:
+    weight: 65
+    band: high
+  MRZ_DOB_CHECK_DIGIT_MISMATCH:
+    weight: 60
+    band: high
+  MRZ_EXPIRY_CHECK_DIGIT_MISMATCH:
+    weight: 60
+    band: high
+  MRZ_OPTIONAL_DATA_CHECK_DIGIT_MISMATCH:
+    weight: 55
+    band: high
+  MRZ_COMPOSITE_CHECK_DIGIT_MISMATCH:
+    weight: 65
+    band: high
+
+  # --- DATE: 5.4 to 5.7 plus the date that cannot exist ---
+  # An expired document is not admissible and a date of birth that survived a
+  # correct check digit yet reads impossibly was edited coherently.  The three
+  # below are weaker, and 5.7's is the weakest of them: it inherits both
+  # horizon gaps, so it can be composed from a century misread rather than
+  # observed on the page.
+  DATE_EXPIRED:
+    weight: 55
+    band: high
+  DATE_NOT_YET_VALID:
+    weight: 30
+    band: review
+  DATE_IMPLAUSIBLE_DOB:
+    weight: 55
+    band: high
+  DATE_ISSUE_AFTER_EXPIRY:
+    weight: 40
+    band: review
+  DATE_IMPOSSIBLE:
+    weight: 40
+    band: review
+
+  # --- WATCHLIST: the three kinds 5.10's seed can hold ---
+  # A blacklist hit is 6.4's hard fail; a stolen document is heavy and is not
+  # one, because it is a fact about a document rather than about the person
+  # holding it; an identity_seen hit is a lookup and not a verdict, which is
+  # what 7.13's decay is for.
+  WATCHLIST_HIT:
+    weight: 65
+    band: high
+  WATCHLIST_STOLEN_DOCUMENT:
+    weight: 55
+    band: high
+  WATCHLIST_IDENTITY_SEEN:
+    weight: 35
+    band: review
+
+  # --- OCR, layout and face: what tier 1 reads off the printed page ---
+  # A visible field disagreeing with the machine-readable zone beside it is
+  # the crude alteration worked example A belongs to.  The barcode reads are
+  # both fallible, so their disagreement is weaker evidence than the first.
+  # The last two of this tier are `low` on purpose: a field still unreadable
+  # after the re-read is a statement about our reading and not about the
+  # document, and template deviation is the classic false alarm on a genuine
+  # one -- both are shown to the officer and neither may move the band.
+  OCR_MRZ_MISMATCH:
+    weight: 55
+    band: high
+  OCR_LOW_CONFIDENCE:
+    weight: 15
+    band: low
+  OCR_BARCODE_MISMATCH:
+    weight: 40
+    band: review
+  LAYOUT_DEVIATION:
+    weight: 15
+    band: low
+  # 0.41 against a 0.55 threshold is worked example B, and the abstract puts
+  # exactly that case in the ambiguous band that routes to tier 2 rather than
+  # calling it a mismatch.
+  FACE_LOW_SIMILARITY:
+    weight: 40
+    band: review
+  FACE_MISMATCH:
+    weight: 60
+    band: high
+
+  # --- TAMPER: one id per tier 2 module, every one of them a labelled stub ---
+  # The three modules 15.6 fuses carry their own ids for a run that reports
+  # them separately; on the fused run, TAMPER_FUSION_ANOMALY replaces them.
+  TAMPER_ELA_ANOMALY:
+    weight: 40
+    band: review
+  TAMPER_NOISE_RESIDUAL_ANOMALY:
+    weight: 40
+    band: review
+  TAMPER_COPY_MOVE_ANOMALY:
+    weight: 40
+    band: review
+  TAMPER_FUSION_ANOMALY:
+    weight: 60
+    band: high
+  TAMPER_STAMP_ANOMALY:
+    weight: 30
+    band: review
+  TAMPER_MORPH_SUSPECTED:
+    weight: 65
+    band: high
+  TAMPER_DEEPFAKE_SUSPECTED:
+    weight: 65
+    band: high
+  TAMPER_OUT_OF_DISTRIBUTION:
+    weight: 55
+    band: high
+
+  # --- CROSSDOC: one id per rule comparing two documents in one case ---
+  # The same face across two documents is the strongest of the four; a name
+  # beyond 16.4's tolerance is the weakest, because transliteration, name
+  # order and compound surnames produce most of these on honest documents.
+  CROSSDOC_NAME_MISMATCH:
+    weight: 30
+    band: review
+  CROSSDOC_UNKNOWN_PASSPORT_REFERENCE:
+    weight: 40
+    band: review
+  CROSSDOC_VALIDITY_WINDOW_MISMATCH:
+    weight: 40
+    band: review
+  CROSSDOC_FACE_MISMATCH:
+    weight: 65
+    band: high

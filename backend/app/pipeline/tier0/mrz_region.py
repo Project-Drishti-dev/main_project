@@ -401,27 +401,299 @@ line that failed 4.6 are not arguments here.  The median rather than the mean
 is what makes a half-read line survivable: a TD1 whose third line came back
 as four blobs has a median of 30 and a mean of 21, and 4.10's cell count is
 the check that the four blobs are not a line.
+
+**4.8 is the first step whose answer leaves the pipeline, so its
+coordinates are the frame 4.1 declined to move.**  4.1 through 4.7 each
+produce something only the next step reads; a region is what 23.2 draws over
+the document and what 4.12 cuts its field boxes the same way, and neither can
+carry an offset.  **The four corners come from the boxes 4.3 already
+measured** -- the smallest axis-aligned rectangle holding every blob in the
+line -- rather than from a fit of their own, so the polygon is tight to the
+ink by construction and nothing here re-measures anything.  **The far corner
+is exclusive**, which is the corner ``binary[top:bottom, left:right]`` is cut
+from: a highlight drawn from this polygon covers the ink it is highlighting
+instead of stopping a pixel short of it, and the same four numbers are what
+4.12's field boxes are made of.  **Four points, and the point order is fixed
+here -- clockwise from the top left -- because 4.9's tilt is four
+coordinates changing rather than a new shape and a new type.**  What 4.9
+actually did was turn a *separate* copy of each group for 4.10 to segment,
+and this polygon is still cut from the group 4.6 handed over, so it stays
+the axis-aligned box the module docstring above describes.  Whether a
+detected line should be *drawn* tilted is 4.12's question and not this
+one's: 23.2 can map four points of any shape, and a quad that followed the
+tilt would cover less of the ink than the one here for the same line.
+
+**4.9's question is "is *this* line level", and that is not 4.1's question.**
+4.1 asks how far round the whole page is and answers it from
+``m7_skew``'s reading of every text row in the frame; 4.9 asks whether one
+group of glyphs is sitting on a straight baseline and answers it by fitting
+a line through that group's own :attr:`MrzComponent.cx` and
+:attr:`~MrzComponent.cy`.  Two estimators for one question is the failure
+this module's first section describes, so the scope has to be what separates
+them -- and it does, measurably.  **On a page whose two MRZ lines are turned
+by different amounts (+2.0 and -1.5) the page answer is +1.40 and the two
+line answers are -1.86 and +1.54**: the page's own answer is **3.26 degrees
+out** for the upper line, so no single rotation of the frame could level
+both, and 4.10 has nothing to work with unless the correction is made per
+line.  A document bowed along its binding, or photographed round a curve, is
+the ordinary case of that rather than a contrivance.
+
+**The fit is through the centroids, and a hand-made pair of blobs is what
+holds it there.**  A glyph is a set of strokes, so its centroid sits where
+its ink is and the middle of its box sits where its extent is; measured on
+one blob of ink in the top-left corner of a 10-by-10 box beside one in the
+bottom-right corner of another, the centroid fit reads **4.24 degrees** and
+the box-centre fit reads **0.0** -- a tilted line and a level one from the
+same two records, so a test written on the wrong one of the two would pass
+on this fixture and mean nothing.
+
+**The reading is applied as it comes, exactly as 4.1 applies it, and through
+OpenCV's own matrix rather than a hand-rolled one.**  A page turned **+2.0**
+degrees reads **-1.85** on its first line and **-1.96** on its second: the
+same sign ``m7_skew`` gives, and the sign 4.1's own note records.  Both
+helpers therefore build their rotation with ``cv2.getRotationMatrix2D``, so
+the two steps are two calls to one function rather than two conventions that
+have to be kept in step by hand, and the identity case pins the matrix: a
+line reading exactly **0.0** comes back as the records it was handed, which
+is the one reading where a negated sign and a correct implementation look
+the same from the outside.
+
+**A line is turned about its own centre of mass, and the frame does not
+move.**  4.1's promise that a region means the same pixel before and after
+the correction holds here too, and the least-squares line passes through the
+mean of the centroids it was fitted to, so rotating about that mean is what
+leaves the group exactly where it was: measured, the mean centroid of a line
+turned by 1.85 degrees is unchanged to every digit printed.  **The rotation
+is a correction and not a gate.**  There is no bound on a residual here the
+way there is one at ``MAX_DESKEW_DEG``, because the answer to a tilted line
+is to level it, not to refuse it; a hand-made line of two blobs at 45 degrees
+reads 45 and comes back level, and a test holds that so a future bound here
+would be a deliberate decision rather than an accident.
+
+**The records are rebuilt, and the ink is carried across rather than read
+again.**  :attr:`MrzComponent.area` is a count of pixels and a rotation does
+not add any, so it is the one number that passes through untouched; every
+other number moves.  The box is the **rounded** bounds of the rotated box,
+not the exact ones, and it grows rather than shrinks: measured on a page
+turned 2.0 degrees, a box's width never changed and its height grew by one
+pixel on the boxes that moved at all.  **A turned box is no longer a slice of
+the cut** -- ``binary[top:top + height, left:left + width]`` was exactly the
+blob and now is the axis-aligned bounds of where that blob was, which is the
+same thing the class docstring means by a box and one pixel away from what a
+reader would get by cutting.  Nothing downstream in Part 4 cuts a slice out
+of a turned group: 4.10 reads positions, 4.12 cuts from the unturned line.
+
+**4.10 segments along x, and a cell is a run of ink rather than a slot on a
+pitch.**  The profile this step builds is the union of the line's own boxes,
+column by column, and **it is the cut's own projection of the ink rather than
+an approximation of it**: measured on this fixture's two lines, the profile
+built from the records and the projection read off the frame
+``binary[top:bottom, left:right] > 0`` agree on every column.  That is
+arithmetic rather than luck -- a connected component's box is the exact
+projection of its pixels on each axis, so the boxes' union *is* the ink's
+columns -- and it is why this step reads positions rather than slicing a
+frame, which is what the note above requires of everything downstream of
+4.9.  **It is exact on a tilted page too**, which is the measurement that
+matters below: the same comparison holds on captures turned 0.5, 1, 2, 3, 4
+and 5 degrees, with *zero* columns where the records claim ink and the frame
+does not.  A cell is then one maximal run of occupied columns and the records
+inside it, and nothing else.  **There is no gap threshold here and no
+character pitch either**: a column is ink or it is not, so the cells are
+exactly the ink rather than a drawing of where the cells "should" be.  A
+monospaced MRZ face would let a pitch be measured and every slot recovered,
+and this repository holds no copy of Doc 9303 and prints its specimen in
+OpenCV's *proportional* Hershey face, where the advances come out 12.4 pixels
+on the first line and 13.0 on the second -- so a pitch read off this fixture
+is the fixture's font and not the standard.
+
+**The cells are counted rather than supplied, and that is what makes them a
+check.**  4.7 answers how many characters a zone *should* have from its shape
+and 4.10 answers how many cells a line *has* from its ink, and nothing here
+takes a count from the caller, so the comparison between the two is a test
+rather than a restatement.  It is the check 4.7's own docstring reaches for --
+a line that came back as four blobs is four cells rather than thirty -- and
+it is why this answer is a **lower bound** on the characters printed.  Nothing
+is padded, filtered or merged: a cell is what the ink is, a character the cut
+lost entirely is a hole in the profile rather than a blank cell, and a short
+line reads short rather than misaligned.
+
+**A pair of characters the cut merged is one cell, and no gap profile can
+split it.**  :data:`CONNECTIVITY` is 8, which joins two glyphs whose corners
+touch, and this cut does that twice per line here -- the same merge 4.7's
+line-length tolerance is sized from.  Measured on this fixture's own page the
+two lines come back as **23 and 27** cells against **25 and 28** printed
+characters, and both missing cells are a merged pair: one blob holding two
+characters is one run of ink with no gap in it to find.  **So cell *k* is
+character *k* only up to the first merge**, 4.11's index-to-field mapping is
+exact on a line the cut did not merge and one short per merge after it, and
+that is the cut's answer rather than this step's.  4.14's generator is what
+re-measures it; a caller that needs the format's own count reads it from
+:data:`app.pipeline.tier0.document.MRZ_SHAPES` as 4.7 does.
+
+**The line segmented here is the one 4.6 kept, and 4.9's turned copy is
+measurably worse input rather than better.**  The paragraph above settles the
+first half: a blob's box is its own ink's projection at *any* tilt, so a line
+that is leaning is not smeared along x and this step needs no turn.  What does
+add a smear is :func:`deskew_line`'s own output, and it is arithmetic:
+rotating a box's four corners and taking the rounded bounds of the result is
+the bounds of a *rotated rectangle*, which is wider than the ink inside it by
+``height * sin(angle)`` -- **0.6 pixels at 2 degrees and 1.3 at 5** on this
+fixture's 15-row glyphs, against inter-glyph gaps of 1 and 2 pixels.  Measured
+on the cells themselves, a page turned **2 degrees** segments into the same 22
+and 26 cells either way; **3 degrees** gives 16 and 26 cells before the turn
+and **10 and 20** after; **5 degrees** gives 12 and 25 before and **1 and 4**
+after, which is one cell for the whole line.  So the turned copy loses cells
+exactly where the gap is narrower than the inflation, and this is the same
+decision 4.8's note records one step later when it says 4.12 cuts its field
+boxes from the unturned line.
+
+**That is 4.9's premise measured false rather than an arithmetic mistake in
+4.9.**  The turn is applied the way 4.9 says, and the line does come back
+level -- the smear is in the box, not in the angle and not in the page.  The
+sentence in :func:`deskew_line`'s own docstring is right that the turn can cost
+cells and wrong about how much: it is ``height * sin(angle)`` and not "the
+whole width of a glyph", which at the 2 degrees it names is under three
+pixels.  **Nothing in Part 4 consumes :func:`deskew_line` after this**, so
+4.12's boxes and 4.13's empty result are where that gets settled; this step
+does not need it and is measurably harmed by it.
+
+**4.11 reads the layout Parts 2 and 3 already wrote rather than stating one.**
+Parts 2 and 3 are the only place in this project where a position is stated:
+``td1.TD1``, ``td2.TD2`` and ``td3.TD3`` hold every field's inclusive
+1-indexed span, and :data:`app.pipeline.tier0.document.MRZ_SHAPES` holds the
+three shapes those modules' own constants give.  :data:`MRZ_LAYOUTS` resolves
+both from those names, so a position corrected in one format module reaches
+4.11 and 4.12 without being typed again here -- **a second table of positions
+here is a table that can disagree with the standard, and there is no copy of
+the standard in this repository to check a disagreement against.**
+
+**The two numbers this step is given count differently, and neither choice is
+free.**  A line is numbered from **1**, because the layouts key themselves
+``line_1``/``line_2``/``line_3`` and the standard numbers an MRZ's lines that
+way; a cell is indexed from **0**, because 4.10's cells are a tuple and its
+own docstring calls the leftmost one cell 0.  **A line therefore carries cells
+0 to ``width - 1``, while the layout talks about positions 1 to ``width``**,
+and the one addition in the code is where that gap is closed.  4.12 cuts field
+boxes from these cell indices, so the other direction -- a field back to the
+cells it printed on -- reads the same table.
+
+**The mapping is a lookup and nothing is decided here.**  Which cells belong
+to which field is the layout's claim, so this step states no span of its own,
+judges no character and filters nothing: a cell outside the line, a line the
+format does not have, and a format name this project does not parse are all
+``None`` rather than an error, which is the "no MRZ here" answer 4.13 needs and
+the one this module's own boundary test forbids raising.
+
+**The mapping is only as good as the cells, and the shortfall is 4.10's.**  A
+line the cut merged is one cell short per merge from the first merge onward,
+so every answer here is **conditional on the line the cells came from being
+the line the standard prints** -- which is what the cell count against 4.7's
+shape is for.  Note also that the printed check digits are fields in the
+layouts in their own right, so a cell inside one maps to that digit and to
+nothing else.
+
+**4.12 is the first step to answer the question a screenshot asks.**  4.3 to
+4.11 found a line, then its cells, then what each cell prints, and every one
+of them answers in terms of the next: "where on the page is the date of
+birth" is the one question none of them can answer, and it is the one the
+interface draws.  A field's box is **the union of the boxes of the cells
+4.11 named it**, so the positions are read rather than typed: the table is
+consulted once inside :func:`cell_field`, which names each cell, and this
+step reads the names that comes back with.
+
+**A field box is 4.8's own four points, from one helper both steps call.**
+That is what makes a field box sit inside its line's polygon rather than
+near it: the corners, the corner order and the half-open far edge are one
+function's, so the two answers are the same kind of thing in the same frame
+and a caller draws both with one routine.  And **the only thing read off the
+document is its ``format``**: a region is a report about ink, what a field's
+characters say is Parts 1-3's business, and 6.2 joins the two by name rather
+than by asking this step what was printed.  So a parse that read a field
+differently cannot move its box -- there is no character here to disagree
+about.
+
+**The boxes are ink, and ink is a lower bound.**  A field no cell names is
+**absent from the answer rather than present with a ``None`` in it**: there
+is no ink to point at, which is a different statement from "looked and found
+nothing", and it is 4.10's caveat carried one step on -- a line the cut
+merged is short from the first merge onward, so its tail fields are missing
+and Gate 4's "every field has a region" is a claim about 4.14's monospaced
+generator rather than about this cut.  The cells come from the line 4.6 kept,
+**unturned**, for the reason above: :func:`deskew_line`'s boxes are wider
+than their ink by ``height * sin(angle)``, and at 8 degrees on glyphs 10
+wide with a one-pixel gap that is enough to close every gap on the line.
+
+**4.13 is the first function in Part 4 that takes a page rather than a
+zone, and "no MRZ here" is one of the answers it gives.**  :func:`detect_mrz`
+runs 4.1 to 4.8 in the order above and hands back a :class:`MrzDetection`:
+the name 4.7 inferred, the line groups 4.6 kept, and 4.8's polygon for each
+of them.  **The record is the answer and the refusal is a field of it rather
+than an exception**, which is what this module's own boundary test demands:
+4.1's angle bound, 4.4's two bands, 4.6's two scores and 4.7's line count
+are all values already, and the only thing the chain was missing was one
+caller to collect them.
+
+**"No MRZ" is the absence of a format name, and it is not the absence of
+ink.**  A blank page arrives as the empty record -- every field defaulted,
+so ``MrzDetection()`` is that one value and a caller compares against it --
+while a page carrying two lines of print that are not a zone comes back with
+no name *and* with both lines and both regions, because 4.8's answer is a
+measurement and dropping it because 4.7 refused the shape would throw away
+the one thing a caller can draw to say there was something here.  Measured on
+this repository's own fixture: a blank page and an all-ink page both reach
+the end of the chain as no lines at all, and ``upright_mrz`` -- two
+44-character lines the cut merges to 24 and 27 blobs -- reaches it as two
+lines and no name.
+
+**The regions are in the frame :func:`deskew` handed over.**  The rotation is
+4.1's, and the corrected frame is the working image from here on: 4.1 keeps
+the size, so nothing is offset by a resized canvas, and a caller drawing
+4.8's points draws them on the page it corrected rather than the one it was
+sent.  Nothing here undoes the turn, and a step that did would be a third
+opinion about the angle 4.1 already accepted.
+
+**The line groups are on the record because 4.10 and 4.12 take a zone, and
+this is the only thing in Part 4 that turns a page into one.**  Before this
+step both were reachable only by a caller running the chain itself, and a
+second run is a second answer to "which glyphs are on this page" whose
+coordinates are not the ones this record already carries.
+
+**A frame that is not a three-channel BGR image is still the caller's
+mistake, and it still answers loudly.**  :func:`deskew` documents the
+``cv2.error`` it lets escape, deliberately: this module may not ``raise``,
+and a frame that never went through the quality gate is a different problem
+from a page that has no MRZ on it.
 """
 
 import dataclasses
+import math
 import statistics
 
 import cv2
 import numpy as np
 
 from ...quality_checker import m7_skew
-from . import document
+from . import document, td1, td2, td3
 
 __all__ = [
     "MAX_DESKEW_DEG",
+    "MRZ_LAYOUTS",
     "MrzComponent",
+    "MrzDetection",
     "binarize_inverted",
+    "cell_field",
+    "detect_mrz",
     "deskew",
+    "deskew_line",
     "extract_components",
+    "field_regions",
     "filter_glyphs",
     "filter_lines",
     "group_lines",
     "infer_format",
+    "line_polygons",
+    "residual_skew_deg",
+    "segment_cells",
     "skew_deg",
     "to_gray",
 ]
@@ -508,6 +780,21 @@ LINE_MAX_SPACING_SPREAD = 0.25
 #: symmetric, since a split glyph pushes the other way.  A constant rather
 #: than an argument for ``ADAPTIVE_C``'s reason: one detector, one number.
 LINE_LENGTH_TOLERANCE = 2
+
+
+#: The layout table each format's name reaches, so :func:`cell_field` can be
+#: asked about a format rather than about a module.  **These are the very
+#: dicts Parts 2 and 3 built** -- ``td1.TD1``, ``td2.TD2`` and ``td3.TD3``,
+#: resolved at import rather than copied, so a position corrected in a format
+#: module is corrected here and there is no second table to drift.  The keys
+#: are the same three names :data:`app.pipeline.tier0.document.MRZ_SHAPES`
+#: values, and a test asserts the two sets are equal, so a fourth format added
+#: to that table is a row here rather than a silent absence.
+MRZ_LAYOUTS = {
+    "TD1": td1.TD1,
+    "TD2": td2.TD2,
+    "TD3": td3.TD3,
+}
 
 
 def _border_fill(image):
@@ -965,3 +1252,562 @@ def infer_format(lines):
         if abs(median - line_length) <= LINE_LENGTH_TOLERANCE:
             return name
     return None
+
+
+def line_polygons(lines):
+    """One four-point polygon per line group, in the frame 4.3 measured.
+
+    In practice the argument is :func:`filter_lines`'s output, and this is the
+    first step in Part 4 to answer a question the *interface* asks rather
+    than the next step: 23.2 draws these points over the document the officer
+    is looking at, and 4.12 cuts its field boxes out of the same boxes.
+
+    **The polygon is the line's own box, and the box is half-open.**  The four
+    corners are ``(left, top)``, ``(right, top)``, ``(right, bottom)`` and
+    ``(left, bottom)`` -- clockwise from the top left on screen -- and
+    ``right`` and ``bottom`` are :attr:`MrzComponent.bbox`'s exclusive far
+    corner, not the last column and row of ink.  That is the corner which
+    makes ``binary[top:bottom, left:right]`` exactly the line's own slice, so
+    a highlight drawn from the polygon covers the ink it is highlighting
+    rather than stopping a pixel short of it.
+
+    **Four points, and not a fitted quadrilateral.**  The point order is
+    fixed here rather than left to be chosen: a tilt would be four
+    coordinates changing, not a new shape and not a new type.  4.9 measures
+    the skew *inside* a line, and what it did with that reading was turn a
+    separate copy of the group for 4.10 to segment -- **the polygon is cut
+    from the group as it was handed over**, so the four corners are the
+    smallest axis-aligned rectangle holding every blob in the line, which is
+    tight to the ink because :func:`extract_components` measured the ink and
+    this step adds nothing to it.  A *tilted* quad is 4.12's question, since
+    4.12 is what cuts the field boxes out of the same blobs.
+
+    **Nothing is filtered, merged or padded here.**  A line 4.6 discarded is
+    not here to be re-judged, two groups that overlap on the page are two
+    polygons because 4.5's groups are what "a detected MRZ line" means, and
+    the corners are the blobs' own extremes rather than a margin a UI would
+    like to see.  The lines that come back are the lines that went in, in the
+    order they arrived, and no record is rebuilt.
+
+    A line of no glyphs gets no polygon, and that is arithmetic rather than a
+    judgement: there is no corner to report for a line with no members, and
+    the alternative is a rectangle at the origin, which is a place on the
+    page no MRZ is.  A line whose members are all of zero height *does* get
+    one, because a rectangle with no height is an honest report about a
+    record :func:`extract_components` cannot produce and a caller can.  An
+    empty input is ``()``, as everywhere else in this module.
+    """
+    polygons = []
+    for line in lines:
+        if not line:
+            continue
+        left = min(component.bbox[0] for component in line)
+        top = min(component.bbox[1] for component in line)
+        right = max(component.bbox[2] for component in line)
+        bottom = max(component.bbox[3] for component in line)
+        polygons.append(_box_polygon(left, top, right, bottom))
+    return tuple(polygons)
+
+
+def _box_polygon(left, top, right, bottom):
+    """The four corners of one half-open box, clockwise from the top left.
+
+    **One function for 4.8's line polygons and 4.12's field boxes**, and that
+    is the whole of it: a caller drawing a highlight over the MRZ and a
+    caller drawing one over a single field are drawing the same kind of thing,
+    so the corner order, the clockwise reading and the exclusive far corner
+    are stated once here rather than twice in two functions that would
+    otherwise drift into two conventions nobody wrote down.
+
+    The corners are returned as plain integers, so a caller reading them
+    cannot pick up a numpy scalar from a polygon and discover it at the JSON
+    boundary in Part 11.
+    """
+    return (
+        (int(left), int(top)),
+        (int(right), int(top)),
+        (int(right), int(bottom)),
+        (int(left), int(bottom)),
+    )
+
+def residual_skew_deg(line):
+    """The tilt of one line group's own glyph centroids, in degrees.
+
+    In practice the argument is one group of :func:`filter_lines`' output --
+    **a single line**, not the whole zone -- and 4.10 calls this once per
+    line.  The answer is 4.1's answer for a *group* rather than for a page,
+    in the same units and in the same sign, which is what lets the two steps
+    be compared instead of believed.
+
+    **A least-squares line through the centroids, and nothing else.**  Each
+    glyph's :attr:`MrzComponent.cx` and :attr:`~MrzComponent.cy` is a point;
+    the line is the one that minimises the vertical distance to all of them,
+    and its slope is reported as an angle so it can be handed straight to
+    OpenCV.  The fit is *of y on x* rather than orthogonal, and the reason is
+    the shape 4.5 groups: a line spans **344 pixels** of this fixture across
+    and **16 rows** down, so x is the axis carrying the spread and the
+    distinction would not change the answer.  A group of glyphs stacked
+    rather than strung out is not a line 4.5 can produce, and if one arrived
+    it would read an angle about a near-vertical line, which is why the fit
+    is a measurement and not a gate.
+
+    **The centroids and not the middle of the boxes, which is 4.3's own
+    argument applied.**  A glyph is strokes rather than a solid, so the two
+    differ on every blob: measured on a pair of records whose centroids are
+    in opposite corners of their own boxes, the centroid fit reads 4.24
+    degrees and the box-centre fit reads 0.0 -- so a box-centre
+    implementation would call a tilted line level, and would do it on this
+    fixture too, where the glyph shapes happen not to lean.
+
+    **Every glyph counts the same, because 4.4 already decided which blobs
+    are glyphs.**  A weight here would be a second opinion about which marks
+    matter, expressed as a number nobody wrote down, and a merged pair of
+    neighbours -- which this cut produces, twice per line -- would then
+    count twice against the characters around it.
+
+    **A line that cannot be fitted reads 0.0 and is not an error.**  Fewer
+    than two glyphs is the ordinary way to get here: :func:`group_lines` does
+    not discard a group of one, so a stray mark 4.6 kept arrives alone.  Two
+    glyphs at the *same* ``cx`` are the other way, and both are decided by
+    arithmetic rather than by a rule: every ``cx - mean`` in such a group is
+    zero, so the lean is zero with them, and a line with no spread in ``cx``
+    has no direction to lean in.  The check is written out where the reading
+    is made because that is where the reason belongs, and the answer would
+    be ``0.0`` without it -- ``math.atan2(0.0, 0.0)`` is ``0.0`` -- so the
+    test holds the answer rather than a guard.
+
+    An empty line reads ``0.0``, as everywhere else in this module, so
+    :func:`deskew_line` can be handed a group of no glyphs and hand it back.
+    """
+    glyphs = tuple(line)
+    if len(glyphs) < 2:
+        return 0.0
+    mean_x = statistics.fmean(component.cx for component in glyphs)
+    mean_y = statistics.fmean(component.cy for component in glyphs)
+    spread = sum((component.cx - mean_x) ** 2 for component in glyphs)
+    if spread == 0:
+        return 0.0
+    lean = sum(
+        (component.cx - mean_x) * (component.cy - mean_y) for component in glyphs
+    )
+    return math.degrees(math.atan2(lean, spread))
+
+
+def _turned_point(matrix, x, y):
+    """Where OpenCV's own matrix puts the point ``(x, y)``, as two floats."""
+    return (
+        matrix[0][0] * x + matrix[0][1] * y + matrix[0][2],
+        matrix[1][0] * x + matrix[1][1] * y + matrix[1][2],
+    )
+
+
+def _turned_box(matrix, component):
+    """The rounded bounds of a rotated box, as the four fields a record takes.
+
+    **The four corners are rotated, not the centre and not the extent.**  A
+    box turned by an angle is not the same box with a different top-left, and
+    the corners are the only reading of it that can grow: measured on a page
+    turned 2.0 degrees, a box's width never changed and its height grew by a
+    pixel, which is the ``h * sin(angle)`` an axis-aligned box cannot avoid
+    once it is no longer axis-aligned to the ink.
+
+    **Rounded, and rounded to the nearest whole pixel**, for 4.3's reason:
+    these are pixel counts and 4.4's band is a pixel count.  The far corner
+    stays the *exclusive* one it has always been -- the box is ``max - min``
+    over the same four corners -- so the half-open convention survives the
+    rotation, along with the fact that the result is no longer a slice of
+    the cut.
+    """
+    left, top, right, bottom = component.bbox
+    corners = [
+        _turned_point(matrix, x, y)
+        for x, y in (
+            (left, top),
+            (right, top),
+            (right, bottom),
+            (left, bottom),
+        )
+    ]
+    xs = [x for x, _ in corners]
+    ys = [y for _, y in corners]
+    near_x, far_x = round(min(xs)), round(max(xs))
+    near_y, far_y = round(min(ys)), round(max(ys))
+    return {
+        "left": near_x,
+        "top": near_y,
+        "width": far_x - near_x,
+        "height": far_y - near_y,
+    }
+
+
+def deskew_line(line):
+    """One line group turned level by its own :func:`residual_skew_deg`.
+
+    In practice the argument is one group of :func:`filter_lines`' output, and
+    **4.10 segments the group this returns**, never the one it was handed --
+    a column is a column of a level line, and on a line leaning 2 degrees the
+    x-projection smear is the whole width of a glyph.
+
+    **The reading is applied as it comes and through OpenCV's own matrix, so
+    this is 4.1's rotation at one line's scale rather than a second
+    convention.**  A page turned +2.0 degrees reads -1.85 here, the same sign
+    ``m7_skew`` gives it, and negating that reading doubles the lean to
+    -3.69 rather than removing it.  ``cv2.getRotationMatrix2D`` is the call
+    :func:`deskew` makes on the frame, used here on coordinates: a reader who
+    compares the two is comparing one function called twice, and the one
+    reading where a sign mistake is invisible from outside -- exactly
+    **0.0** -- is the one that comes back as the records that went in.
+
+    **The group turns about its own centre of mass, and the frame does not
+    move.**  The mean centroid is the one point the fitted line passes
+    through, so rotating about it is what leaves the line where the officer's
+    frame says it is: measured, a line turned by 1.85 degrees comes back with
+    the same mean ``cx`` and ``cy`` to every digit printed.  A rotation about
+    the page centre instead would carry every coordinate with it, and nothing
+    downstream carries an offset.
+
+    **A line with no lean is handed straight back, records and all.**  The
+    identity would come out the same by arithmetic -- a 0.0 matrix is exactly
+    the identity, so the rounded boxes are the boxes that went in -- and the
+    short circuit is here anyway for :func:`filter_glyphs`'s reason: a page
+    already level is the common case, and a rebuilt record is a second
+    measurement of a blob nobody moved.  The tuple that comes back is the one
+    that went in, which is also what makes the empty line and the group of
+    one legal inputs.
+
+    **The records are rebuilt and the ink is carried across.**
+    :attr:`MrzComponent.area` is a count of pixels, so it is the one number
+    a rotation cannot change, and it passes through untouched.  The box is
+    the **rounded** bounds of the rotated box and it grows rather than
+    shrinks: measured on a page turned 2.0 degrees, a box's width never
+    changed and its height grew by a single pixel on the boxes that moved at
+    all.  **A turned box is therefore no longer a slice of the cut** --
+    ``binary[top:top + height, left:left + width]`` was exactly the blob and
+    is now the bounds of where the blob was -- so nothing downstream may cut
+    one out, and 4.10 reads positions rather than slicing.  The centroid is
+    the *rotated* centroid and not the middle of the new box, which is
+    4.3's own distinction carried across the rotation: on all 24 glyphs of
+    a line turned 1.85 degrees, the new centroid is off the middle of its own
+    box.
+    """
+    glyphs = tuple(line)
+    reading = residual_skew_deg(glyphs)
+    if not glyphs or reading == 0.0:
+        return glyphs
+
+    origin_x = statistics.fmean(component.cx for component in glyphs)
+    origin_y = statistics.fmean(component.cy for component in glyphs)
+    matrix = cv2.getRotationMatrix2D((origin_x, origin_y), reading, 1.0)
+    turned = []
+    for component in glyphs:
+        cx, cy = _turned_point(matrix, *component.centroid)
+        turned.append(
+            dataclasses.replace(
+                component,
+                **_turned_box(matrix, component),
+                cx=float(cx),
+                cy=float(cy),
+            )
+        )
+    return tuple(turned)
+
+
+def segment_cells(line):
+    """The line's ink as one tuple of character cells, read left to right.
+
+    In practice the argument is one group of :func:`filter_lines`' output **as
+    it was handed over** -- not the copy :func:`deskew_line` returns, which the
+    module docstring measures as losing cells.  The result is a tuple of cells,
+    a cell is a tuple of the :class:`MrzComponent` records whose ink the
+    profile found together, and **cell 0 is the leftmost character in the
+    line**, so ``len(cells)`` is how many cells the line has.
+
+    **The profile is built from the records' own boxes, and that makes it the
+    cut's own projection of the ink.**  A connected component's box is the
+    exact projection of its pixels on each axis, so the union of the line's
+    boxes is exactly the set of columns its ink occupies -- measured equal to
+    ``binary[top:bottom, left:right] > 0`` on every column of this fixture's
+    two lines **and on captures turned up to 5 degrees**, with no column where
+    the records claim ink the frame does not have.  So this step reads
+    positions and cuts nothing, which is what the note in
+    :func:`deskew_line` about a turned box leaves for everything downstream of
+    4.9, and the profile is a measurement rather than a threshold: a column is
+    ink or it is not.
+
+    **A cell is one maximal run of occupied columns, and no count is handed
+    in.**  4.7 answers how many characters a zone *should* have from its shape
+    and this answers how many cells a line *has* from its ink, independently,
+    which is what makes the comparison between the two a check rather than a
+    restatement -- and what lets a line the cut merged come back short
+    (measured: 23 and 27 cells against 25 and 28 printed characters on this
+    fixture) instead of being padded to a length it was not measured at.
+
+    **Nothing is filtered, padded or merged here.**  Every cell is a run of
+    ink, so there is no empty cell: a character the cut lost entirely is a
+    hole in the profile and the line reads short rather than misaligned, and a
+    mark 4.4 refused is not in the line to be segmented.  The records that come
+    back are the ones that went in, in the order they arrived, as
+    :func:`filter_glyphs` and :func:`group_lines` hand them over; the cells
+    read left to right because the profile is read left to right, not because
+    anything was sorted.
+
+    An empty line is ``()``, as everywhere else in this module, and a line of
+    one glyph is one cell holding it, which is arithmetic rather than a
+    judgement: a single run of ink is a single cell.  A record of no width --
+    which :func:`extract_components` cannot produce, though a caller can --
+    occupies the one column it stands on rather than none, so it is not
+    silently lost and lands in the cell that column belongs to rather than in
+    a cell of its own.
+    """
+    glyphs = tuple(line)
+    if not glyphs:
+        return ()
+    # A record of no width still stands on a column, so it is given one.
+    spans = [
+        (component.left, max(component.bbox[2], component.left + 1))
+        for component in glyphs
+    ]
+    near_x = min(start for start, _ in spans)
+    far_x = max(stop for _, stop in spans)
+
+    profile = np.zeros(far_x - near_x, dtype=bool)
+    for start, stop in spans:
+        profile[start - near_x: stop - near_x] = True
+
+    runs = []
+    opening = None
+    for offset, occupied in enumerate(profile):
+        if occupied and opening is None:
+            opening = offset
+        elif not occupied and opening is not None:
+            runs.append((near_x + opening, near_x + offset))
+            opening = None
+    if opening is not None:
+        runs.append((near_x + opening, far_x))
+
+    return tuple(
+        tuple(
+            component
+            for component, (start, stop) in zip(glyphs, spans)
+            if start < last and stop > first
+        )
+        for first, last in runs
+    )
+
+
+def cell_field(format_name, line_number, cell_index):
+    """The field a character cell prints, and how far into it the cell sits.
+
+    In practice the arguments are 4.7's format name, the number of the line
+    within the document, and a cell index straight out of
+    :func:`segment_cells`.  The answer is a ``(field name, offset)`` pair --
+    the offset is **0-based within the field**, so the first cell of a field
+    is offset 0 -- or ``None`` when there is no field there.
+
+    **The layout is read, never restated.**  The spans come from
+    :data:`MRZ_LAYOUTS`, which *is* ``td1.TD1``, ``td2.TD2`` and ``td3.TD3``,
+    so this function states no position and a position corrected in a format
+    module is corrected here.
+
+    **A line is numbered from 1 and a cell from 0, and the two conventions are
+    different numbers about different things.**  A line is what the standard
+    numbers, and the layouts key themselves ``line_1``/``line_2``/``line_3``;
+    a cell is a member of a tuple, which 4.10 calls cell 0 at the leftmost
+    character.  So cell ``k`` is printed at position ``k + 1``, the single
+    addition below is where that gap is closed, and the line is **walked in the
+    layout's own order** rather than named by a key assembled from the number,
+    so the table's keys are read rather than guessed.
+
+    **A cell outside the line is ``None``, and so is a line the format does
+    not have or a format this project does not parse.**  The third case is not
+    hypothetical: 4.10's cells are a *lower* bound on the characters printed,
+    while a broken stroke can push the count past the line length, so a caller
+    indexing what 4.10 gave it can hold an index no position prints.  Refusing
+    it is the "no MRZ here" answer 4.13 is built on, and this module raises
+    nothing of its own.
+
+    **Nothing about the characters is judged.**  Which cells belong to which
+    field is the layout's claim, and reading it is the whole of this step; the
+    printed check digits are fields in their own right, so the cell holding
+    one names that digit and nothing else.  A negative index is not special
+    cased either: it names no position, so it is refused by the same lookup
+    that refuses one past the end.
+    """
+    layout = MRZ_LAYOUTS.get(format_name)
+    if layout is None:
+        return None
+    position = cell_index + 1
+    for number, spans in enumerate(layout.values(), start=1):
+        if number != line_number:
+            continue
+        for name, (first, last) in spans.items():
+            if first <= position <= last:
+                return name, position - first
+    return None
+
+
+def field_regions(document, lines):
+    """One four-point polygon per extracted field, in the frame 4.3 measured.
+
+    In practice the arguments are a parsed
+    :class:`~app.pipeline.tier0.td3.MrzDocument` and :func:`filter_lines`'
+    output, and they are two halves of one answer: **the document says which
+    fields its zone prints and the line groups say where their ink is.**  A
+    parsed document holds no pixels and a line group holds no field names, so
+    both arrive -- and the format arrives with the document rather than as a
+    step of its own, which is why :attr:`~app.pipeline.tier0.td3.MrzDocument.
+    format` is all this function needs and why 4.7 is not called here.
+
+    **Only ``document.format`` is read off the document**, and that is the
+    whole of it.  A region is a report about where ink is, what a field's
+    characters say is Parts 1-3's business, and 6.2 joins the two by name --
+    so a parse that read a field differently cannot move its box, because
+    there is no character here for it to disagree about.
+
+    **A field is the union of the boxes of the cells 4.11 named it**, so no
+    position is typed in this function: the table is read once inside
+    :func:`cell_field`, which names each cell, and this step reads the names
+    that come back with it.  The offset within the field that
+    :func:`cell_field` also answers is not used: a box measures ink, so it
+    wants the cells' boxes rather than where each cell sits inside a field.
+
+    **The polygon is 4.8's own four points, from the one helper both steps
+    call**: the same corner order, clockwise from the top left, and the same
+    half-open far corner, so a field box is inside its line's polygon by
+    construction and a caller draws a line and a field with one routine.
+
+    **The lines are numbered from 1 in the order they arrive**, because
+    :func:`group_lines` returns them top to bottom and the layouts key
+    themselves ``line_1``/``line_2``/``line_3``.  No key is built here, and no
+    line is matched by counting characters.
+
+    **The cells come from the line 4.6 kept, unturned**, for the reason 4.8's
+    note gives: :func:`deskew_line`'s boxes are wider than their ink by
+    ``height * sin(angle)``, which is a gap-closing margin rather than a
+    correction, and 4.10 measured what it costs in cells.
+
+    **A field no cell names is absent from the answer rather than present
+    with a ``None`` in it.**  A box is a report about ink, and a field whose
+    characters the cut lost has none to report -- so this is 4.10's caveat
+    carried one step on: a line the cut merged is short from the first merge
+    onward and its tail fields are simply missing.  ``None`` would be a
+    different statement, "looked at it and found nothing there", which is not
+    what a short line says.
+
+    **A document this project does not parse is an empty answer, and so is an
+    empty zone.**  :func:`cell_field`'s three refusals -- a cell the layout
+    does not name, a line the format does not have, and a format name outside
+    :data:`MRZ_LAYOUTS` -- all arrive here as fields that are not in the
+    answer, and nothing in this module raises.
+
+    The keys are the layout's own field names, which are the names
+    :attr:`~app.pipeline.tier0.td3.MrzDocument.sources` carries and the names
+    Part 5's ``EvidenceFlag.region`` will be labelled with, so nothing in
+    between translates them.  **Within a format each field name is printed on
+    one line**, so a field's cells are all on that line and the union above is
+    that field's own span.
+    """
+    format_name = document.format
+    if format_name not in MRZ_LAYOUTS:
+        return {}
+
+    boxes = {}
+    for line_number, line in enumerate(lines, start=1):
+        for cell_index, cell in enumerate(segment_cells(line)):
+            named = cell_field(format_name, line_number, cell_index)
+            if named is None:
+                continue
+            for component in cell:
+                left, top, right, bottom = component.bbox
+                held = boxes.get(named[0])
+                boxes[named[0]] = (
+                    (left, top, right, bottom)
+                    if held is None
+                    else (
+                        min(held[0], left),
+                        min(held[1], top),
+                        max(held[2], right),
+                        max(held[3], bottom),
+                    )
+                )
+
+    return {
+        name: _box_polygon(*held) for name, held in boxes.items()
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class MrzDetection:
+    """What one page was found to hold: a format, its lines, and their boxes.
+
+    What :func:`detect_mrz` returns, and the first record in this package
+    that answers about a whole image rather than about a zone.
+
+    **Every field is defaulted, so ``MrzDetection()`` is the empty result**:
+    one value for a caller to compare against, rather than three containers
+    whose emptiness it has to know the shape of.
+
+    :attr:`format` is 4.7's answer -- the name a set of lines has the shape
+    of -- or ``None``, and **``None`` is "no MRZ here" rather than an
+    error**.  It is what a blank page gives, and it is what a page of print
+    whose shape is not one of the three gives while its :attr:`lines` and
+    :attr:`regions` are still reported.  A name is one of
+    :data:`app.pipeline.tier0.document.MRZ_SHAPES`' own values, and the field
+    is spelled ``format`` because
+    :attr:`~app.pipeline.tier0.td3.MrzDocument.format` already is.
+
+    :attr:`lines` is 4.6's own output, carried because 4.10 and 4.12 take a
+    zone and this is what turns a page into one.  :attr:`regions` is 4.8's
+    polygons of those same lines, in the frame :func:`deskew` handed over.
+
+    **Frozen, for the reason :class:`~app.pipeline.tier0.td3.MrzDocument`
+    and :class:`MrzComponent` are.**  A record that could be edited would let
+    a detection be corrected into a document, which is the same failure as a
+    parse that repaired a check digit to make its own verdict pass.
+    """
+
+    format: str | None = None
+    lines: tuple[tuple[MrzComponent, ...], ...] = ()
+    regions: tuple[tuple[tuple[int, int], ...], ...] = ()
+
+
+def detect_mrz(image):
+    """What this page holds: a format, the lines, and a polygon per line.
+
+    **The one function in Part 4 that takes an image**, and the first place
+    the chain runs end to end.  In practice ``image`` is the working frame
+    :func:`deskew` takes -- three-channel BGR, which is what ``m7_skew``
+    measured the quality gate with -- and the steps below run in the order
+    the module docstring gives, each of them the step it already was:
+    ``deskew``, ``to_gray``, ``binarize_inverted``, ``extract_components``,
+    ``filter_glyphs``, ``group_lines``, ``filter_lines``, ``infer_format``,
+    ``line_polygons``.
+
+    **Nothing here is judged that is not already written down.**  This
+    function holds no threshold of its own and re-opens nothing: a page it
+    answers "no MRZ" for is one 4.4's bands, 4.6's scores or 4.7's line count
+    already refused, and a second opinion about what a page holds is the
+    failure this module has spent four parts avoiding.
+
+    **A page with no MRZ on it is a value and not an exception**, for the
+    reason every refusal in this chain already is one: the record's
+    :attr:`~MrzDetection.format` is ``None``, the rest of it reports what was
+    measured, and there is nothing for a caller to catch.  The one argument
+    this function cannot absorb is a frame that is not a three-channel BGR
+    image, and :func:`deskew`'s own docstring says why that one answers
+    loudly.
+
+    **Nothing is measured and then dropped**: 4.10's cells and 4.12's field
+    boxes are cut from :attr:`~MrzDetection.lines` by whoever holds the
+    characters to cut them from, and running the chain again to get the same
+    zone would be a second measurement of the same blobs.
+    """
+    upright = deskew(image)
+    lines = filter_lines(
+        group_lines(
+            filter_glyphs(extract_components(binarize_inverted(to_gray(upright))))
+        )
+    )
+    return MrzDetection(
+        format=infer_format(lines), lines=lines, regions=line_polygons(lines)
+    )

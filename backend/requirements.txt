@@ -4,3 +4,8 @@ python-multipart>=0.0.9,<1
 numpy>=1.24,<3
 opencv-python-headless>=4.8,<5
 Pillow>=10,<13
+# the risk engine reads its weightsets from YAML (app.risk.weightsets.loader)
+pyyaml>=6,<7
+# persistence: the ORM and its migration tool (app.storage, Part 8)
+sqlalchemy>=2.0,<3
+alembic>=1.13,<2

@@ -15,6 +15,7 @@ because everything from 4.3 onwards reads ink as "the thing to look at".
 
 import ast
 import dataclasses
+import math
 import pathlib
 import statistics
 import subprocess
@@ -24,8 +25,9 @@ import cv2
 import numpy as np
 import pytest
 
-from app.pipeline.tier0 import mrz, mrz_region
+from app.pipeline.tier0 import document, mrz, mrz_region, td1, td2, td3
 from app.quality_checker import m7_skew
+from tests.fixtures import mrz_images
 
 
 # --- the fixture ---------------------------------------------------------
@@ -1925,6 +1927,1363 @@ def test_the_groups_that_survive_are_the_ones_that_went_in():
     assert mrz_region.filter_lines(()) == ()
 
 
+# --- 4.8: each surviving line, as four points on the page ----------------
+
+
+def band_drawn_extent(band):
+    """The ink the fixture drew for one of its own line bands.
+
+    Measured off ``glyph_mask`` and restricted to ``band`` -- one of
+    ``drawn_bands``' own pairs -- rather than off a literal, for 4.2's
+    reason: the fixture is *drawn*, which is the one thing about it that
+    makes a ground truth available at all.  4.8's polygon is measured against
+    one band per line rather than against the whole page, because a polygon
+    that enclosed the page would pass a test written the other way.
+    """
+    first, last = band
+    rows = np.flatnonzero((glyph_mask()[first:last + 1] > 0).any(axis=1))
+    cols = np.flatnonzero((glyph_mask()[first:last + 1] > 0).any(axis=0))
+    return (
+        int(cols.min()),
+        first + int(rows.min()),
+        int(cols.max()),
+        first + int(rows.max()),
+    )
+
+
+def polygons_of(frame):
+    """The whole chain, located.  A test names the pipeline it is testing."""
+    return mrz_region.line_polygons(
+        mrz_region.filter_lines(lines_of(frame))
+    )
+
+
+def holds(polygon, extent):
+    """Whether the four corners, read in 4.8's order, hold a half-open box.
+
+    The corners are read *by position* -- top left, top right, bottom right,
+    bottom left -- and not by their own minimum and maximum, because a quad
+    whose corners were in the wrong order has the same minimum and maximum as
+    one in the right order and would satisfy a test written the other way.
+    The level and plumb assertions are the same claim: this is a rectangle,
+    and 4.8's four points are the four corners of one.
+    """
+    top_left, top_right, bottom_right, bottom_left = polygon
+    left, top, right, bottom = extent
+    return (
+        top_left[1] == top_right[1]
+        and bottom_left[1] == bottom_right[1]
+        and top_left[0] == bottom_left[0]
+        and top_right[0] == bottom_right[0]
+        and top_left[0] <= left
+        and top_right[0] >= right
+        and top_left[1] <= top
+        and bottom_left[1] >= bottom
+    )
+
+
+def test_the_four_points_are_the_lines_own_box_read_clockwise_from_the_top_left():
+    # The test 4.8 asks for, written longhand so the point order is a
+    # statement rather than something a reader has to infer: two records with
+    # written-in boxes, and the polygon they must come back as.  The far edge
+    # is 36 and 34 rather than 35 and 33 -- `bbox` is half-open, and that is
+    # the corner `binary[top:bottom, left:right]` is cut from.
+    line = (
+        component_record(10, 20, width=8, height=12),
+        component_record(30, 24, width=6, height=10),
+    )
+
+    assert mrz_region.line_polygons((line,)) == (
+        ((10, 20), (36, 20), (36, 34), (10, 34)),
+    )
+
+
+@pytest.mark.parametrize("name", sorted(FRAMES) + ["grainy"])
+def test_the_polygon_encloses_the_glyphs_that_were_drawn(name):
+    # The other half of the test 4.8 asks for.  Each polygon is checked
+    # against the ink the fixture drew for that line's own baseline, and
+    # "encloses" is bounded in both directions, because on its own it is
+    # satisfied by the page: the polygon must reach every blob the cut found
+    # and must stay inside the drawn ink.
+    #
+    # **The polygon sits inside the drawn extent rather than round it, and by
+    # exactly one pixel on every edge of both lines.**  That is a difference
+    # between two renderings of one character, not slack in the polygon:
+    # `upright_mrz` draws with LINE_AA and the cut keeps the solid core of
+    # that fringe, where `glyph_mask` draws the same text with LINE_8 and
+    # dilates it by a pixel, so the ground truth is a pixel fatter than the
+    # ink the cut can honestly claim.  `inside_drawn_glyphs` reads the same
+    # difference from the other end.  So the lower bound is zero -- a
+    # polygon reaching outside the drawn ink would be padding, and this is
+    # where 4.12's field boxes would inherit it -- and the upper bound is
+    # that one pixel, which a polygon cut from anything coarser than this
+    # cut would fail.
+    frame = grainy_mrz() if name == "grainy" else FRAMES[name]()
+    lines = mrz_region.filter_lines(lines_of(frame))
+    bands = drawn_bands()
+
+    polygons = mrz_region.line_polygons(lines)
+
+    assert len(polygons) == len(lines) == len(bands) == 2
+    for polygon, line, band in zip(polygons, lines, bands):
+        left, top, right, bottom = band_drawn_extent(band)
+        top_left, top_right, bottom_right, bottom_left = polygon
+
+        # The exact claim, with no pixel of slack in it: every blob the cut
+        # found for this line is inside the polygon it is handed, corner for
+        # corner, on the half-open convention the two of them already share.
+        assert all(holds(polygon, component.bbox) for component in line)
+        assert (
+            0 <= top_left[0] - left <= 1
+            and 0 <= top_left[1] - top <= 1
+            and 0 <= right - bottom_right[0] <= 1
+            and 0 <= bottom - bottom_left[1] <= 1
+        ), "the polygon is not inside the drawn extent, or is more than a pixel inside it"
+
+
+def test_every_line_gets_one_polygon_and_they_read_down_the_page():
+    # One in, one out, in the order the lines arrived -- 4.5 owns that order
+    # and 4.8 has no opinion about it.  And the two are told apart by which
+    # band of the fixture they land in, so a function that answered with the
+    # page's own box twice, or with both lines merged into one, is caught.
+    polygons = polygons_of(upright_mrz())
+
+    assert len(polygons) == 2
+    for polygon, band in zip(polygons, drawn_bands()):
+        first, last = band
+        top_left, _, _, bottom_left = polygon
+        assert first <= top_left[1] <= bottom_left[1] <= last
+
+
+def test_each_edge_of_the_polygon_is_touched_by_a_glyph_of_that_line():
+    # "Encloses" on its own is satisfied by the page.  Every edge is the
+    # extreme of some blob, so the rectangle is the smallest one holding the
+    # line -- a margin added here for a highlight to be visible would be a
+    # number 4.12's field boxes would then have to carry as well.
+    line = mrz_region.filter_lines(lines_of(upright_mrz()))[0]
+
+    polygon = mrz_region.line_polygons((line,))[0]
+
+    lefts = {component.bbox[0] for component in line}
+    tops = {component.bbox[1] for component in line}
+    rights = {component.bbox[2] for component in line}
+    bottoms = {component.bbox[3] for component in line}
+    assert polygon[0][0] in lefts and polygon[0][1] in tops
+    assert polygon[1][0] in rights
+    assert polygon[2][1] in bottoms
+    assert polygon[2][0] == max(rights) and polygon[3][1] == max(bottoms)
+
+
+def test_the_coordinates_are_plain_python_ints():
+    # 4.3's rule, carried: 4.13's empty result becomes a JSON body, and a
+    # numpy integer in a polygon is an object no response encoder will take.
+    polygons = polygons_of(upright_mrz())
+
+    for polygon in polygons:
+        for point in polygon:
+            assert type(point) is tuple and len(point) == 2
+            assert all(type(value) is int for value in point)
+
+
+def test_a_line_of_no_glyphs_is_not_a_rectangle_at_the_origin():
+    # There is no corner to report for a line with no members, and a
+    # rectangle at (0, 0) would be a place on the page no MRZ is.  A line of
+    # zero-height records *is* reportable, and comes back as a rectangle with
+    # no height rather than being dropped: that record is one 4.3 cannot
+    # produce and a caller can, and a degenerate answer about a real record
+    # beats no answer.
+    flat = component_record(5, 7, width=0, height=0)
+
+    assert mrz_region.line_polygons(((flat,),)) == (
+        ((5, 7), (5, 7), (5, 7), (5, 7)),
+    )
+    assert mrz_region.line_polygons(((),)) == ()
+    assert mrz_region.line_polygons(()) == ()
+
+
+def test_two_lines_that_touch_stay_two_polygons():
+    # Nothing is merged and nothing is re-judged here: 4.5 decided what a line
+    # is and 4.6 decided which are worth reading, so a caller handing over two
+    # groups on overlapping rows gets two rectangles, one per group, however
+    # much of each other they cover.
+    above = (component_record(10, 20, width=8, height=12),)
+    below = (component_record(40, 26, width=8, height=12),)
+
+    polygons = mrz_region.line_polygons((above, below))
+
+    assert len(polygons) == 2
+    assert polygons[0][0][1] == 20 and polygons[1][0][1] == 26
+    assert polygons[0][2][1] == 32 and polygons[1][2][1] == 38
+
+
+# --- 4.9: the lean inside one line, read off its own glyph centroids -----
+
+
+def tilted_pair_mrz(angles, scale=0.7, thickness=2):
+    """The fixture, with each line turned by its own amount.
+
+    The one capture in this file 4.1's page reading cannot answer for.  Each
+    line is drawn on its own layer and turned about its own baseline, so the
+    two lines disagree -- which is the ordinary case of a document bowed
+    along its binding, and the reason 4.9 measures a line rather than a page.
+    Written here rather than imported, like every other fixture in this file:
+    4.14 is the task that replaces them.
+    """
+    page = np.full((PAGE_HEIGHT, PAGE_WIDTH, 3), 255, np.uint8)
+    for row, (text, angle) in enumerate(zip(LINES, angles)):
+        baseline = 120 + 70 * row
+        layer = np.full((PAGE_HEIGHT, PAGE_WIDTH, 3), 255, np.uint8)
+        cv2.putText(
+            layer, text, (40, baseline),
+            cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), thickness, cv2.LINE_AA,
+        )
+        if angle:
+            matrix = cv2.getRotationMatrix2D(
+                (PAGE_WIDTH / 2.0, baseline), angle, 1.0
+            )
+            layer = cv2.warpAffine(
+                layer, matrix, (PAGE_WIDTH, PAGE_HEIGHT),
+                borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255),
+            )
+        page = cv2.bitwise_and(page, layer)
+    return page
+
+
+def readings_of(frame):
+    """One residual reading per surviving line, in the lines' own order."""
+    return tuple(
+        mrz_region.residual_skew_deg(line)
+        for line in mrz_region.filter_lines(lines_of(frame))
+    )
+
+
+def turned_of(frame):
+    """Every surviving line turned level, in the lines' own order."""
+    return tuple(
+        mrz_region.deskew_line(line)
+        for line in mrz_region.filter_lines(lines_of(frame))
+    )
+
+
+def spread(line, attr):
+    """A line's own extent along one axis, in that axis' own pixels."""
+    return (
+        max(getattr(c, attr) for c in line)
+        - min(getattr(c, attr) for c in line)
+    )
+
+
+def test_a_slightly_rotated_page_reads_its_own_tilt_off_its_glyph_centroids():
+    # The test 4.9 asks for, and both halves of it are load-bearing.  A page
+    # turned a *couple* of degrees is the case: 4.1 has already run, and what
+    # is left is the part it left -- or, on a page handed straight to 4.9, the
+    # part a page-level reading cannot see line by line.  The flat half is
+    # what stops a function returning 0.0 from passing, which is the one wrong
+    # answer that satisfies the first half on its own.
+    tilted = rotated_mrz(2.0)
+
+    readings = readings_of(tilted)
+
+    assert len(readings) == 2
+    assert all(abs(reading + 2.0) < 0.25 for reading in readings), readings
+    # The same two lines on the page that was not turned at all, measured the
+    # same way: under a fifth of a degree on every clean capture, which is
+    # the glyphs' own shapes and not a lean.
+    assert all(abs(reading) < 0.3 for reading in readings_of(upright_mrz()))
+
+
+@pytest.mark.parametrize("turned", [1.0, 2.0, 3.0, -2.0])
+def test_the_reading_is_the_pages_own_lean_and_not_a_second_opinion_on_it(turned):
+    # 4.1 answers for the whole page and 4.9 for one line, so the two have to
+    # agree in sign and in size or 4.9 is a second estimator for a question
+    # 4.1 already settled.  The sign is the half that is easy to get wrong and
+    # the half that would leave a page rotated twice the wrong way: a page
+    # turned +2.0 reads -2.0 here, exactly as `skew_deg` reads it, and the
+    # correction is applied as the reading comes.
+    page = rotated_mrz(turned)
+
+    page_reading = mrz_region.skew_deg(page)
+    readings = readings_of(page)
+
+    assert all(
+        abs(reading - page_reading) < 0.25 for reading in readings
+    ), f"page {page_reading:+.3f} against lines {readings}"
+    # Applied as it comes levels the line; applied the other way round doubles
+    # the lean, so the sign is settled from both ends rather than from one.
+    line = mrz_region.filter_lines(lines_of(page))[0]
+    assert abs(mrz_region.residual_skew_deg(mrz_region.deskew_line(line))) < 0.01
+    assert abs(
+        mrz_region.residual_skew_deg(
+            mrz_region.deskew_line(line)
+        )
+    ) < abs(mrz_region.residual_skew_deg(line))
+
+
+def test_the_two_lines_of_one_page_are_measured_separately():
+    # The claim the module docstring makes about 4.9 not being 4.1 a second
+    # time, measured rather than argued.  A page whose two lines are turned
+    # by different amounts has one page reading and two line readings.  On
+    # this capture the page answers **+1.40** and the lines answer **-1.86**
+    # and **+1.54**: the page's own answer is **3.26 degrees out** for the
+    # upper line, so no single rotation of the frame could level both, which
+    # is the whole reason 4.10 is handed one group at a time.
+    page = tilted_pair_mrz((2.0, -1.5))
+    lines = mrz_region.filter_lines(lines_of(page))
+
+    assert len(lines) == 2
+    above, below = (mrz_region.residual_skew_deg(line) for line in lines)
+    page_reading = mrz_region.skew_deg(page)
+
+    assert abs(above + 2.0) < 0.25 and abs(below - 1.5) < 0.25
+    assert (above < 0) != (below < 0), "the two lines do not disagree"
+    assert abs(above - below) > 3.0
+    assert abs(page_reading - above) > 1.0
+    # And each is levelled by its own reading rather than by the page's.
+    assert abs(mrz_region.residual_skew_deg(mrz_region.deskew_line(lines[0]))) < 0.01
+    assert abs(mrz_region.residual_skew_deg(mrz_region.deskew_line(lines[1]))) < 0.01
+
+
+def test_a_group_is_turned_level_rather_than_left_tilted():
+    # What "rotate the group" has to mean, measured in the pixels rather than
+    # in the number that came out of the estimator.  A line leaning 2 degrees
+    # has its glyphs' centroids scattered over **10 to 14 rows**; turned, they
+    # are over **2 to 3**, which is the scatter a *flat* page's own line shows
+    # (2.35 and 2.54) and is therefore the glyphs' shapes rather than a lean.
+    # An implementation that reported the angle and left the group alone would
+    # satisfy the residual assertion below and fail this one.
+    tilted, level = turned_of(rotated_mrz(2.0))
+    before = mrz_region.filter_lines(lines_of(rotated_mrz(2.0)))
+
+    for line, turned in zip(before, (tilted, level)):
+        assert abs(mrz_region.residual_skew_deg(turned)) < 0.01
+        assert spread(line, "cy") > 9.0
+        assert spread(turned, "cy") < 3.5
+
+
+def test_the_turn_is_about_the_lines_own_centre_of_mass_and_moves_nothing():
+    # 4.1's promise, at one line's scale: a region means the same pixel before
+    # and after the correction, or every polygon 4.8 emits and every field box
+    # 4.12 returns is offset from the frame the officer is looking at.  The
+    # least-squares line passes through the mean centroid, so rotating about
+    # that mean is what holds the group still -- and the residual drift is
+    # float error, measured at the eighth decimal.
+    page = rotated_mrz(2.0)
+    for line, turned in zip(
+        mrz_region.filter_lines(lines_of(page)), turned_of(page)
+    ):
+        for attr in ("cx", "cy"):
+            before = statistics.fmean(getattr(c, attr) for c in line)
+            after = statistics.fmean(getattr(c, attr) for c in turned)
+            assert abs(after - before) < 1e-6, attr
+        assert spread(turned, "cx") > 0.9 * spread(line, "cx")
+        assert max(c.bbox[2] for c in turned) <= PAGE_WIDTH
+        assert max(c.bbox[3] for c in turned) <= PAGE_HEIGHT
+
+
+def test_a_line_with_no_lean_is_handed_straight_back_records_and_all():
+    # The identity case, and the one reading where a negated sign and a
+    # correct implementation are indistinguishable from the outside -- so it is
+    # the case that has to be asserted rather than assumed.  A rebuilt record
+    # would be a second measurement of blobs nobody moved, which is
+    # `filter_glyphs`' own reason for handing back the records it was given.
+    level = tuple(
+        component_record(left=10 + 20 * i, top=50, width=8, height=12)
+        for i in range(6)
+    )
+    # `component_record` puts the centroid at the middle of the box, and this
+    # line is level, so the fit is exactly zero and not merely small.
+    assert mrz_region.residual_skew_deg(level) == 0.0
+
+    turned = mrz_region.deskew_line(level)
+
+    assert turned == level
+    assert all(was is now for was, now in zip(level, turned))
+
+
+@pytest.mark.parametrize(
+    "name,group",
+    [
+        ("no glyphs", ()),
+        (
+            "one glyph",
+            (component_record(left=3, top=4, width=8, height=10),),
+        ),
+        (
+            "two glyphs at the same cx",
+            (
+                component_record(left=3, top=4, width=8, height=10),
+                component_record(left=3, top=20, width=8, height=10),
+            ),
+        ),
+        (
+            "one glyph with no box",
+            (component_record(left=4, top=6, width=0, height=0),),
+        ),
+    ],
+)
+def test_a_line_that_cannot_be_fitted_reads_zero_rather_than_dividing(name, group):
+    # A group of one is not a contrivance: 4.5 does not discard it, so a stray
+    # mark 4.6 kept arrives on its own.  Two glyphs at the same `cx` are the
+    # other way in, and both are decided by arithmetic rather than by a rule:
+    # a group whose `cx` are all the same has every `(cx - mean)` at zero, so
+    # the lean is zero with them and there is no direction to lean in.  The
+    # zero-spread check says so where the reading is made, and the reading
+    # stays 0.0 either way -- `math.atan2(0.0, 0.0)` is 0.0 -- so what the
+    # test holds is the *answer*, not a guard against a `ZeroDivisionError`
+    # this implementation never had.
+    assert mrz_region.residual_skew_deg(group) == 0.0, name
+
+    turned = mrz_region.deskew_line(group)
+
+    assert turned == group
+    assert all(was is now for was, now in zip(group, turned))
+
+
+def test_the_fit_is_through_the_centroids_and_not_the_middle_of_the_boxes():
+    # 4.3's own distinction, applied.  A glyph is strokes rather than a solid,
+    # so its centroid sits where its ink is and the middle of its box sits
+    # where its extent is.  These two records lean because their *ink* leans:
+    # one blob in the top-left corner of its box, one in the bottom-right
+    # corner of another.  **The centroid fit reads 4.24 degrees and the
+    # box-centre fit reads 0.0** -- so a box-centre implementation would call
+    # this tilted line level, and would go on calling this fixture's level
+    # lines level as well, which is what makes the discrimination necessary
+    # rather than decorative.
+    leaning = (
+        mrz_region.MrzComponent(
+            left=0, top=0, width=10, height=10, area=40, cx=1.0, cy=1.0
+        ),
+        mrz_region.MrzComponent(
+            left=100, top=0, width=10, height=10, area=40, cx=109.0, cy=9.0
+        ),
+    )
+    middles = tuple(
+        dataclasses.replace(
+            component, cx=component.left + component.width / 2,
+            cy=component.top + component.height / 2,
+        )
+        for component in leaning
+    )
+
+    assert abs(mrz_region.residual_skew_deg(leaning) - 4.24) < 0.01
+    assert mrz_region.residual_skew_deg(middles) == 0.0
+
+
+def test_the_ink_is_carried_across_rather_than_counted_again():
+    # Three claims in one place because they are three readings of the same
+    # rule -- a rotation moves a record's numbers, it does not re-measure the
+    # blob.  `area` is a pixel count and passes through untouched; the
+    # **centroid is the rotated centroid and not the middle of the new box**,
+    # so 4.3's distinction survives the rotation (measured: all 24 glyphs of
+    # the line are off the middle, where before the turn they were not); and
+    # no centroid is left outside the box it is reported with, which is the
+    # invariant a rounded box could have broken and does not.
+    page = rotated_mrz(2.0)
+    for line, turned in zip(
+        mrz_region.filter_lines(lines_of(page)), turned_of(page)
+    ):
+        assert len(turned) == len(line)
+        for was, now in zip(line, turned):
+            assert now.area == was.area
+            assert now.left <= now.cx <= now.bbox[2]
+            assert now.top <= now.cy <= now.bbox[3]
+            assert (
+                abs((now.cx - now.left) - now.width / 2) > 0.001
+                or abs((now.cy - now.top) - now.height / 2) > 0.001
+            )
+
+
+def test_a_turned_box_is_the_turned_corners_and_not_a_moved_one():
+    # A box turned by an angle is not the same box with a different top-left,
+    # and this is where the difference shows.  **On a 2-degree page a box's
+    # width never changes and its height grows by one pixel** -- the
+    # `height * sin(angle)` an axis-aligned box cannot avoid once it is no
+    # longer square to the ink -- and the far corners are the exact diagonal,
+    # so a 45-degree turn of a 10-by-10 box is 14 by 14.  The consequence is
+    # written down rather than discovered later: **a turned box is no longer
+    # a slice of the cut**, so nothing downstream may cut one out.
+    page = rotated_mrz(2.0)
+    for line, turned in zip(
+        mrz_region.filter_lines(lines_of(page)), turned_of(page)
+    ):
+        for was, now in zip(line, turned):
+            assert 0 <= now.height - was.height <= 1
+            assert now.width == was.width
+
+    steep = (
+        mrz_region.MrzComponent(
+            left=0, top=0, width=10, height=10, area=40, cx=5.0, cy=5.0
+        ),
+        mrz_region.MrzComponent(
+            left=90, top=90, width=10, height=10, area=40, cx=95.0, cy=95.0
+        ),
+    )
+    diagonal = round(10 * 2 ** 0.5)
+
+    assert mrz_region.residual_skew_deg(steep) == 45.0
+    for turned in mrz_region.deskew_line(steep):
+        assert turned.width == turned.height == diagonal
+    # And the two boxes land on one level, which is the 45 degrees gone.
+    turned = mrz_region.deskew_line(steep)
+    assert {c.top for c in turned} == {43} and {c.bbox[3] for c in turned} == {57}
+
+
+def test_a_steep_line_is_leveled_rather_than_refused():
+    # There is no bound on a residual here, the way there is one at
+    # `MAX_DESKEW_DEG`, and that is a decision rather than an omission: the
+    # answer to a tilted line is to level it.  A future bound would be a
+    # deliberate decision, so the test is here to make it fail on the day it
+    # is written -- which is the same argument 4.1's own bound carries.
+    steep = tuple(
+        component_record(left=10 * i, top=9 * i, width=6, height=6)
+        for i in range(5)
+    )
+
+    assert mrz_region.residual_skew_deg(steep) > 40.0
+    assert abs(mrz_region.residual_skew_deg(mrz_region.deskew_line(steep))) < 0.01
+
+
+def test_the_group_is_still_one_group_reading_left_to_right_after_the_turn():
+    # 4.10's requirements, held on the group this hands over rather than on
+    # the one it was given: 4.5 owns "a line" and 4.10 segments along x, so a
+    # turn that split the group or reversed it would break the cell order
+    # that 4.11 maps to field offsets.
+    for turned in turned_of(rotated_mrz(2.0)):
+        assert [c.cx for c in turned] == sorted(c.cx for c in turned)
+        assert [len(group) for group in mrz_region.group_lines(turned)] == [
+            len(turned)
+        ]
+
+
+def test_the_numbers_are_plain_python_and_not_numpy_scalars():
+    # 4.3's rule, carried through the rotation.  OpenCV's matrix is a numpy
+    # array and every number below came out of it, so this is where a
+    # `numpy.float64` would enter the record -- and 4.13's empty result
+    # becomes a JSON body, which no encoder will take one of.
+    for turned in turned_of(rotated_mrz(2.0)):
+        for component in turned:
+            assert type(component.left) is int
+            assert type(component.top) is int
+            assert type(component.width) is int
+            assert type(component.height) is int
+            assert type(component.area) is int
+            assert type(component.cx) is float
+            assert type(component.cy) is float
+    assert type(readings_of(upright_mrz())[0]) is float
+
+
+def test_four_one_corrected_the_page_already_and_this_does_not_correct_it_twice():
+    # The word in the task is *residual*, and this is what pins it.  After
+    # 4.1 has run, the two lines read **+0.17 and +0.02** -- the same as a
+    # page that was never turned at all, and nothing like the 2 degrees the
+    # page was handed.  A 4.9 that re-measured the page instead of the line
+    # would answer 2.0 here and turn the line twice.
+    for turned in (2.0, 5.0):
+        page = mrz_region.deskew(rotated_mrz(turned))
+        readings = readings_of(page)
+
+        assert all(abs(reading) < 0.3 for reading in readings), readings
+        assert all(
+            abs(mrz_region.residual_skew_deg(line)) < 0.3
+            for line in turned_of(page)
+        )
+
+
+# --- 4.10: the line's ink, as one cell per run of columns -----------------
+
+
+#: What the fixture *drew*, one entry per line, as opposed to
+#: PRINTED_CHARACTERS' total.  4.10's shortfall is a per-line claim and needs
+#: the per-line number to be made against.
+DRAWN_PER_LINE = tuple(len(text) for text in LINES)
+
+
+def cells_of(frame, turn=False):
+    """One tuple of cells per surviving line, in the lines' own order.
+
+    A cell is read off the line 4.6 kept, which is the module docstring's
+    claim; the ``turn`` switch exists only for the one test that measures what
+    4.9's turn costs, and is off by default because it is worse input.
+    """
+    return tuple(
+        mrz_region.segment_cells(mrz_region.deskew_line(line) if turn else line)
+        for line in mrz_region.filter_lines(lines_of(frame))
+    )
+
+
+def zone_of(line_count, line_length, pitch=12, left=10, top=20, leading=40):
+    """One longhand zone: `line_count` lines of `line_length` glyph records.
+
+    Written here rather than drawn, for the reason 4.14 is the task that draws
+    it: the point of this test is the *count*, and a drawn line whose glyphs
+    merge cannot answer a count question at all.
+    """
+    return tuple(
+        tuple(
+            component_record(left=left + pitch * i, top=top + leading * row)
+            for i in range(line_length)
+        )
+        for row in range(line_count)
+    )
+
+
+def line_length_of(name):
+    """The characters `name` prints per line, out of Part 3's own table."""
+    return next(
+        length for (_, length), shape in document.MRZ_SHAPES.items() if shape == name
+    )
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_the_cell_count_is_the_length_of_the_format_the_zone_was_inferred_to_be(
+    shape, name
+):
+    # The test 4.10 asks for, and both of its halves are the point: a line that
+    # segments into some number of cells says nothing unless that number is
+    # the one its *format* prints, and a format inferred from the zone says
+    # nothing unless the cells come back at that length.  Asserting either
+    # alone would pass on a function returning one cell per record.
+    #
+    # The length is read out of MRZ_SHAPES -- the same table `infer_format`
+    # reads, and Part 3's own statement of the three shapes -- rather than
+    # written into this test, so a fourth format is one row and not a fourth
+    # thing to type here.  The zone is longhand for the reason the handover
+    # gives 4.7: a hand-made zone can carry a format's exact width, and this
+    # fixture cannot (see the shortfall test below).
+    line_count, line_length = shape
+    zone = zone_of(line_count, line_length)
+
+    inferred = mrz_region.infer_format(zone)
+    cells = tuple(mrz_region.segment_cells(line) for line in zone)
+
+    assert inferred == name
+    assert line_length_of(inferred) == line_length
+    assert len(zone) == line_count
+    assert {len(line) for line in cells} == {line_length}
+    # And the two halves stay independent: the count is read off the ink, not
+    # off the table, which is what would make the assertion above a
+    # restatement.  A line one character short of its format still comes back
+    # one cell short of it, with nothing padding it to the shape.
+    short = zone_of(line_count, line_length - 1)
+    assert len(mrz_region.segment_cells(short[0])) == line_length - 1
+
+
+@pytest.mark.parametrize("turned", [0.0, 2.0, 5.0])
+def test_the_profile_is_the_cuts_own_projection_and_no_frame_is_cut(turned):
+    # 4.9's promise, held at the step it was made for: everything downstream
+    # of a turned group reads positions, because a turned box is no longer a
+    # slice of the cut.  So the profile this step segments along must be the
+    # same projection the *frame* gives -- not an approximation of it, and not
+    # a slice of anything.  Measured over this fixture's two lines at each
+    # angle, the columns the records claim and the columns `binary` holds agree
+    # one for one, and that is arithmetic rather than luck: a connected
+    # component's box is the exact projection of its pixels on each axis.
+    #
+    # The tilted captures are the half that matters: a page bowed along its
+    # binding is the ordinary case, so a box that is "a rectangle around
+    # slanted ink" would be expected to claim columns the frame does not have.
+    # It does not, and that is why 4.10 segments the line 4.6 kept.
+    frame = upright_mrz() if not turned else rotated_mrz(turned)
+    binary = binary_of(frame)
+    for line, cells in zip(mrz_region.filter_lines(lines_of(frame)), cells_of(frame)):
+        left = min(component.bbox[0] for component in line)
+        top = min(component.bbox[1] for component in line)
+        right = max(component.bbox[2] for component in line)
+        bottom = max(component.bbox[3] for component in line)
+        from_the_frame = (binary[top:bottom, left:right] > 0).any(axis=0)
+        from_the_records = np.zeros(right - left, bool)
+        for component in line:
+            from_the_records[
+                component.bbox[0] - left: component.bbox[2] - left
+            ] = True
+
+        assert from_the_records.shape == from_the_frame.shape
+        assert (from_the_records == from_the_frame).all()
+        assert not (from_the_records & ~from_the_frame).any()
+        # The cells are the runs of that profile and nothing is sliced to get
+        # them: one per stretch of occupied columns, which is one plus the
+        # number of times a stretch ends.  Counted off the *frame*, so the
+        # frame decides the number and the function is only asked to agree.
+        run_ends = from_the_records[:-1] & ~from_the_records[1:]
+        assert len(cells) == 1 + int(run_ends.sum())
+
+
+@pytest.mark.parametrize("gap,cells", [(0, 1), (1, 2), (2, 2)])
+def test_a_cell_is_a_run_of_ink_and_sharing_a_column_is_what_makes_one(gap, cells):
+    # What a gap *is*, held at the edges rather than described: a column either
+    # holds ink or it does not, so two records whose boxes abut share a
+    # column and are one cell, and one blank column between them is already
+    # two.  There is no threshold here to be off by one -- a gap of zero and a
+    # gap of one are the whole of the decision.
+    line = (
+        component_record(left=10, top=40, width=10, height=12),
+        component_record(left=20 + gap, top=40, width=10, height=12),
+    )
+
+    segmented = mrz_region.segment_cells(line)
+
+    assert len(segmented) == cells
+    assert sum(len(cell) for cell in segmented) == 2
+
+
+def test_every_record_handed_in_lands_in_exactly_one_cell_and_is_that_record():
+    # The records come back rather than copies of them, for
+    # `filter_glyphs`'s reason: 4.9 fits lines through these centroids and
+    # 4.12 cuts its boxes out of these boxes, so a rebuilt record would be a
+    # second measurement of a blob nobody moved.  And every one of them lands
+    # exactly once -- a cell index that skipped a record would put 4.11's
+    # field offsets out by one with nothing to show for it.
+    line = tuple(
+        component_record(left=10 + 12 * i, top=40, width=8, height=12)
+        for i in range(6)
+    ) + (component_record(left=82, top=40, width=8, height=12),)
+
+    segmented = mrz_region.segment_cells(line)
+    returned = [component for cell in segmented for component in cell]
+
+    assert len(returned) == len(line)
+    assert {id(component) for component in returned} == {
+        id(component) for component in line
+    }
+    # One cell per record here, and the touching pair is the seventh.
+    assert [len(cell) for cell in segmented] == [1, 1, 1, 1, 1, 1, 1]
+
+
+def test_the_cells_read_left_to_right_whatever_order_the_line_arrives_in():
+    # 4.5 sorts a line left to right and 4.11 indexes the cells, so cell 0
+    # being the leftmost character is the claim 4.10 exists to hold -- and it
+    # is held by *reading the profile*, not by trusting the order the records
+    # arrived in, which is why handing the same line over backwards has to
+    # give the same cells.
+    line = tuple(
+        component_record(left=10 + 20 * i, top=40, width=8, height=12)
+        for i in range(4)
+    )
+
+    assert mrz_region.segment_cells(line[::-1]) == mrz_region.segment_cells(line)
+    assert [
+        cell[0].left for cell in mrz_region.segment_cells(line[::-1])
+    ] == sorted(component.left for component in line)
+
+
+def test_a_line_of_no_glyphs_has_no_cells_and_a_line_of_one_glyph_has_one():
+    # Both are arithmetic rather than judgements.  4.13 has to be able to say
+    # "no MRZ here" without an exception, so the empty line cannot raise and
+    # cannot come back with a cell at the origin -- which is the same reason
+    # 4.8 declines to give an empty line a polygon.
+    assert mrz_region.segment_cells(()) == ()
+
+    one = (component_record(left=7, top=40, width=8, height=12),)
+
+    assert mrz_region.segment_cells(one) == (one,)
+
+
+def test_a_record_of_no_width_is_not_lost_and_is_a_column_of_its_own():
+    # `extract_components` cannot produce one, though a caller can hand one
+    # over, and 4.4, 4.5 and 4.8 each decided what to do with a degenerate
+    # record rather than let it disappear.  A box of no width still stands on
+    # the column its own `left` names, so it is given that column: two of them
+    # on their own are two cells, and one between two records joins the run
+    # beside it -- never a cell counted from nothing.
+    two_empty = (
+        component_record(left=10, top=40, width=0, height=12),
+        component_record(left=40, top=40, width=0, height=12),
+    )
+    assert len(mrz_region.segment_cells(two_empty)) == 2
+    assert all(
+        len(cell) == 1 for cell in mrz_region.segment_cells(two_empty)
+    )
+
+    between = (
+        component_record(left=10, top=40, width=10, height=12),
+        component_record(left=20, top=40, width=0, height=12),
+        component_record(left=30, top=40, width=10, height=12),
+    )
+    segmented = mrz_region.segment_cells(between)
+
+    assert [len(cell) for cell in segmented] == [2, 1]
+    assert sum(len(cell) for cell in segmented) == 3
+
+
+@pytest.mark.parametrize(
+    "turned,expected", [(2.0, (22, 26)), (3.0, (10, 20)), (5.0, (1, 4))]
+)
+def test_the_turns_own_boxes_are_what_would_close_the_gaps_and_this_does_not(
+    turned, expected
+):
+    # 4.9 was written on the premise that a leaning line has to be levelled
+    # before it can be segmented along x, and **that premise is measured false
+    # here**: a blob's box is its ink's own projection at any tilt, so the
+    # leaning line segments into exactly the ink's runs (the test above holds
+    # it against the frame's own pixels).  What does cost cells is 4.9's
+    # *output*, because rotating a box's four corners and taking the rounded
+    # bounds is the bounds of a rotated rectangle rather than of the ink in it
+    # -- wider by `height * sin(angle)`, which is 0.6 pixels at 2 degrees and
+    # 1.3 at 5 on this fixture's 15-row glyphs, against gaps of 1 and 2.
+    #
+    # So the turned copy never gains a cell and, from 3 degrees on, loses
+    # several; at 5 degrees it hands over *one* cell for the whole line, which
+    # is the number a future bound on 4.9 would have to beat.  4.9's own
+    # sentence is right that a turn can cost cells and wrong about the size:
+    # it is `height * sin(angle)`, not the width of a glyph.
+    page = rotated_mrz(turned)
+
+    level_cells = cells_of(page, turn=False)
+    turned_cells = cells_of(page, turn=True)
+
+    assert all(
+        len(after) <= len(before)
+        for before, after in zip(level_cells, turned_cells)
+    )
+    assert tuple(len(line) for line in turned_cells) == expected
+    if turned > 2.0:
+        assert all(
+            len(after) < len(before)
+            for before, after in zip(level_cells, turned_cells)
+        )
+    else:
+        assert [len(line) for line in level_cells] == list(expected)
+    # And the residual is the page's own lean, so the collapse is attributable
+    # to the rotation rather than to the page having cut differently.
+    readings = readings_of(page)
+    assert all(abs(reading + turned) < 0.25 for reading in readings), readings
+
+
+def test_the_count_is_a_lower_bound_because_a_merged_pair_is_one_cell():
+    # The honest limit of the step, measured on this fixture's own page rather
+    # than left to be discovered by 4.11.  The two lines print **25 and 28**
+    # characters and segment into **23 and 27** cells, and every missing cell
+    # is accounted for: this cut merges a pair of characters into one blob
+    # (8-connectivity joins corners that touch), and one line also has two
+    # records whose boxes share a column.  A merged pair is one run of ink with
+    # no gap in it, so no gap profile can split it -- which is why a cell count
+    # is a *lower* bound and 4.11's index-to-field mapping is exact only up to
+    # the first merge.  4.14's generator, in a monospaced face, is what
+    # re-measures this.
+    lines = mrz_region.filter_lines(lines_of(upright_mrz()))
+
+    assert len(lines) == len(DRAWN_PER_LINE)
+    for line, printed in zip(lines, DRAWN_PER_LINE):
+        # Segmented from the line as it was handed over, so `is` below is the
+        # identity of the record `filter_lines` passed on rather than a value
+        # match against 4.9's rebuilt copy.
+        cells = mrz_region.segment_cells(line)
+        median = statistics.median(component.width for component in line)
+        merged = [
+            component for component in line if component.width > 1.5 * median
+        ]
+        shared = [cell for cell in cells if len(cell) > 1]
+
+        assert len(merged) == 1, "one pair merged on this line"
+        assert printed == len(line) + len(merged)
+        assert len(cells) == len(line) - len(shared)
+        assert len(cells) < printed
+        # And the merged blob is one cell holding one record: a cell is a run
+        # of ink, not a count of characters the run cannot be shown to hold.
+        widest = max(line, key=lambda component: component.width)
+        assert widest in merged
+        assert [
+            len(cell) for cell in cells if any(c is widest for c in cell)
+        ] == [1]
+    assert tuple(len(cells) for cells in cells_of(upright_mrz())) == (23, 27)
+
+
+# --- 4.11: a cell index to a field, read out of the layout ---------------
+
+
+def cells_named(name, line_count, line_length):
+    """The field each cell of a longhand zone names, cell by cell."""
+    return [
+        mrz_region.cell_field(name, number, index)
+        for number, line in enumerate(zone_of(line_count, line_length), start=1)
+        for index in range(len(mrz_region.segment_cells(line)))
+    ]
+
+
+def printed_fields(name):
+    """The layout's field names, one per position they print, in order."""
+    return [
+        field
+        for spans in mrz_region.MRZ_LAYOUTS[name].values()
+        for field, (start, stop) in spans.items()
+        for _ in range(stop - start + 1)
+    ]
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_every_cell_of_every_line_names_the_field_that_prints_it(shape, name):
+    # The task 4.11 asks for, and the whole of it: a cell index in, the field
+    # printed at that position out.  Three claims in one test because any one
+    # of them alone passes on a function returning something plausible.
+    #
+    # No position is typed here -- the span each answer is checked against
+    # comes out of the same table the module reads, so a layout corrected in
+    # one place can neither fail this test nor pass it on a stale number.  The
+    # zone is longhand, `zone_of`, for 4.10's reason: a drawn line whose
+    # glyphs merge cannot answer a cell question, and this fixture's own
+    # lines infer as `None`.
+    line_count, line_length = shape
+    named = cells_named(name, line_count, line_length)
+
+    # Every cell is inside the line's own width, so every cell is named.
+    assert len(named) == line_count * line_length
+    assert all(answer is not None for answer in named)
+    # Each answer is the span holding this cell, and the offset counts from
+    # that field's own first position -- so right names with wrong offsets
+    # fail here rather than passing.
+    for line_number, spans in enumerate(
+        mrz_region.MRZ_LAYOUTS[name].values(), start=1
+    ):
+        start = (line_number - 1) * line_length
+        for index, (field, offset) in enumerate(named[start:start + line_length]):
+            first, last = spans[field]
+            assert first <= index + 1 <= last
+            assert offset == index + 1 - first
+    # And the cells tile the line: the fields come back in the layout's own
+    # order, each one once, with nothing between them and nothing after the
+    # last.  This is the property 4.12 cuts its field boxes out of.
+    assert [field for field, _ in named] == printed_fields(name)
+
+
+def test_the_cell_holding_the_passport_number_check_digit_names_that_digit():
+    # The task 4.11 names as its test: the passport-number check digit on a
+    # TD3 line 2 is a field of `td3.TD3_LINE_2` in its own right, so the cell
+    # printed at its position names it -- and nothing else, because a printed
+    # digit is one position wide.
+    #
+    # The index comes out of the layout and the cells out of 4.10 over the
+    # longhand zone, so this asserts the two halves agree rather than restating
+    # either.  A mapping off by one in either direction puts the digit on a
+    # neighbouring cell and fails the neighbour assertions below.
+    named = [field for field, _ in cells_named("TD3", 2, 44)][44:]
+    first, last = mrz_region.MRZ_LAYOUTS["TD3"]["line_2"][
+        "document_number_check_digit"
+    ]
+
+    assert first == last
+    assert named.count("document_number_check_digit") == 1
+    assert named.index("document_number_check_digit") == first - 1
+    assert mrz_region.cell_field("TD3", 2, first - 1) == (
+        "document_number_check_digit",
+        0,
+    )
+    # The neighbours are the document number's last character and the
+    # nationality, so a shift of one cell either way is caught rather than
+    # absorbed by a field that happens to be wide.
+    assert named[first - 2] == "document_number"
+    assert named[first] == "nationality"
+
+
+def test_cell_thirteen_is_the_date_of_birth_and_not_a_check_digit():
+    # tasks.md 4.11 asks for "a test asserting cell 13 on TD3 line 2 maps to
+    # the passport-number check digit".  It does not, and cannot: the layout
+    # prints that check digit at position 10, so it is **cell 9**, while cell
+    # 13 is printed at position 14 -- the first position of the date of birth.
+    # This test says which of the task's two clauses this step implements.
+    #
+    # The first clause is the one implemented: the mapping reuses the Part 2/3
+    # layout constants so there is exactly one source of truth.  Satisfying the
+    # example would need a span this repository's own table does not contain,
+    # and a second table of positions is the drift that clause exists to
+    # prevent -- with nothing to check it against, since there is no copy of
+    # Doc 9303 here.  The same shape as 2.4's `IND`: the rule the sentence
+    # states, not the example it illustrates.
+    assert mrz_region.cell_field("TD3", 2, 9) == (
+        "document_number_check_digit",
+        0,
+    )
+    assert mrz_region.cell_field("TD3", 2, 13) == ("date_of_birth", 0)
+    assert mrz_region.cell_field("TD3", 2, 13) != mrz_region.cell_field("TD3", 2, 9)
+
+
+def test_a_line_is_numbered_from_one_and_a_cell_from_zero():
+    # The two conventions, pinned separately, because they are two different
+    # numbers about two different things and only one of them is an index.  A
+    # line is what the standard numbers and what the layouts key themselves
+    # (`line_1`, `line_2`, `line_3`); a cell is a member of the tuple 4.10
+    # returns, whose first element is cell 0.  So cell 0 is position 1, and
+    # line 0 is not a line at all.
+    assert mrz_region.cell_field("TD3", 1, 0) == ("document_code", 0)
+    assert mrz_region.cell_field("TD3", 2, 0) == ("document_number", 0)
+    assert td3.TD3_LINE_1["document_code"] == (1, 2)
+    assert td3.TD3_LINE_2["document_number"] == (1, 9)
+    assert mrz_region.cell_field("TD3", 0, 0) is None
+
+
+def test_a_format_line_or_cell_that_is_not_there_maps_to_nothing():
+    # Three refusals, all reachable rather than decorative.  An unknown format
+    # name is what a caller holding something other than 4.7's answer would
+    # pass; line 3 is a TD1 line a TD3 does not print; and a cell past the end
+    # of the line is a real reading of a real cut, because a broken stroke
+    # splits a glyph -- 4.10's count is a lower bound in one direction and
+    # nothing at all in the other.
+    assert mrz_region.cell_field("TD4", 1, 0) is None
+    assert mrz_region.cell_field("", 1, 0) is None
+    assert mrz_region.cell_field(None, 1, 0) is None
+    assert mrz_region.cell_field("TD1", 4, 0) is None
+    assert mrz_region.cell_field("TD3", 3, 0) is None
+    assert mrz_region.cell_field("TD3", 2, -1) is None
+    assert mrz_region.cell_field("TD3", 2, 44) is None
+    assert mrz_region.cell_field("TD3", 2, 10_000) is None
+
+
+def test_the_layout_table_is_the_formats_own_and_not_a_second_copy():
+    # The "exactly one source of truth" half of the task, held by identity
+    # rather than by equality: `MRZ_LAYOUTS` must *be* the dicts Parts 2 and 3
+    # built, so a position corrected in `td3` reaches 4.11 and 4.12 without
+    # being typed again.  A copy that compared equal would pass an equality
+    # assertion and drift the moment either table was edited.
+    assert mrz_region.MRZ_LAYOUTS["TD1"] is td1.TD1
+    assert mrz_region.MRZ_LAYOUTS["TD2"] is td2.TD2
+    assert mrz_region.MRZ_LAYOUTS["TD3"] is td3.TD3
+    assert set(mrz_region.MRZ_LAYOUTS) == set(document.MRZ_SHAPES.values())
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_a_whole_zone_of_a_format_names_every_field_it_prints(shape, name):
+    # 4.11 end to end, and the shape 4.12 will consume: infer the format from
+    # the zone, segment each line, read the fields out of the cells.  Every
+    # field the format prints is named, in the layout's order, which is what
+    # makes a per-field box meaningful rather than a box per line.
+    line_count, line_length = shape
+    zone = zone_of(line_count, line_length)
+    named = [field for field, _ in cells_named(name, line_count, line_length)]
+
+    assert mrz_region.infer_format(zone) == name
+    assert named == printed_fields(name)
+    # And the printed composite digit sits where the layout puts it, on the
+    # line the layout puts it: the last cell of TD3's and TD2's line 2, and
+    # of TD1's line 2 as well -- a TD1's line 3 is the name, which is what
+    # makes a TD1 three lines where a TD3 is two.
+    for number, spans in enumerate(
+        mrz_region.MRZ_LAYOUTS[name].values(), start=1
+    ):
+        if "composite_check_digit" not in spans:
+            continue
+        position = spans["composite_check_digit"][0]
+        assert named[(number - 1) * line_length + position - 1] == (
+            "composite_check_digit"
+        )
+        break
+
+
+# --- 4.12: one box per field, cut from the line 4.6 kept -----------------
+
+
+#: The three zones, one per format, each parsed rather than constructed --
+#: `field_regions` reads `.format` off a document and nothing else, so what
+#: matters is that the record is a real one a real parser built.  The
+#: characters are the generator's own specimens, which are the characters
+#: test_document.py prints, so the repository holds one specimen per format
+#: and not one per test file: 4.14's generator draws these and this file
+#: parses them, and a correction to either would have to be made twice if the
+#: text were written out again here.
+ZONES = {name: list(lines) for name, lines in mrz_images.SPECIMENS.items()}
+
+
+def parsed_of(name, zone=None):
+    """A real `MrzDocument` of ``name``, parsed rather than constructed."""
+    return document.parse_mrz(ZONES[name] if zone is None else zone)
+
+
+def edited(zone, line_number, first, text):
+    """The same zone with ``text`` printed at position ``first`` of a line."""
+    rows = list(zone)
+    row = rows[line_number - 1]
+    rows[line_number - 1] = row[: first - 1] + text + row[first - 1 + len(text):]
+    return rows
+
+
+def box_of(polygon):
+    """The half-open box 4.8's four corners name, read *by position*.
+
+    The two corners used are the top left and the bottom right, which is only
+    a box if the polygon is one -- 4.8's `holds` is what says it is, reading
+    all four corners by position so a quad in the wrong order fails there
+    rather than passing here.
+    """
+    (top_left, _, bottom_right, _) = polygon
+    return (top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+
+
+def extent_of(records):
+    """The half-open box a run of records' own boxes occupies."""
+    return (
+        min(component.bbox[0] for component in records),
+        min(component.bbox[1] for component in records),
+        max(component.bbox[2] for component in records),
+        max(component.bbox[3] for component in records),
+    )
+
+
+def enclosing(outer, inner):
+    """Whether ``inner``'s half-open box sits inside ``outer``'s."""
+    return (
+        outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and inner[2] <= outer[2]
+        and inner[3] <= outer[3]
+    )
+
+
+def printed_names(name):
+    """The layout's field names, one per field, in printed order."""
+    return [
+        field
+        for spans in mrz_region.MRZ_LAYOUTS[name].values()
+        for field in spans
+    ]
+
+
+def regions_of(name):
+    """The longhand zone of ``name`` and the regions cut out of it.
+
+    ``zone_of`` rather than a drawn page, for 4.10's reason: the point of
+    these tests is which *characters* a box covers, and a drawn line whose
+    glyphs merge cannot answer that.  The zone is what `filter_lines` would
+    hand over: uniform glyphs on a uniform pitch.
+    """
+    line_count, line_length = next(
+        shape for shape, value in document.MRZ_SHAPES.items() if value == name
+    )
+    zone = zone_of(line_count, line_length)
+    return zone, mrz_region.field_regions(parsed_of(name), zone)
+
+
+def test_the_date_of_birth_box_covers_the_date_of_birth_and_not_the_expiry():
+    # The test 4.12 asks for, and both of its halves are the point.  A box
+    # that covered the whole line would satisfy the first half and pass
+    # nothing, so the ground truth is what the *zone drew* at the positions
+    # the layout prints -- read out of the layout rather than typed, so a
+    # span corrected in a format module moves this test with it and a box
+    # cut from the wrong cells fails on a value rather than on a name.
+    zone, regions = regions_of("TD3")
+    spans = mrz_region.MRZ_LAYOUTS["TD3"]["line_2"]
+    first, last = spans["date_of_birth"]
+    expiry_first, expiry_last = spans["date_of_expiry"]
+    birth_characters = zone[1][first - 1:last]
+    expiry_characters = zone[1][expiry_first - 1:expiry_last]
+
+    assert "date_of_birth" in regions and "date_of_expiry" in regions
+    # Covers the six printed characters, and is level and plumb: 4.8's own
+    # `holds`, which reads all four corners by position.
+    assert holds(regions["date_of_birth"], extent_of(birth_characters))
+    # ... and covers *only* them: the box is the characters' own extent, so
+    # the equality is what makes the negative half below true rather than
+    # merely likely.
+    assert box_of(regions["date_of_birth"]) == extent_of(birth_characters)
+    assert not any(
+        enclosing(box_of(regions["date_of_birth"]), component.bbox)
+        for component in expiry_characters
+    )
+    # The two dates are neighbours in the layout with the sex marker and two
+    # check digits between them, so neither box can reach the other even by
+    # one cell of slack -- and a box cut a cell either way fails here.
+    assert box_of(regions["date_of_expiry"]) == extent_of(expiry_characters)
+    assert box_of(regions["date_of_birth"])[2] <= expiry_characters[0].bbox[0]
+    # Plain ints, so a caller can serialise the polygon without a numpy
+    # scalar turning up at the JSON boundary in Part 11.
+    assert all(
+        isinstance(value, int)
+        for point in regions["date_of_birth"]
+        for value in point
+    )
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_every_field_the_document_extracted_has_one_box_in_printed_order(
+    shape, name
+):
+    # The shape 6.2 needs -- a region per field, named as the document names
+    # its fields -- on all three formats rather than on the one 4.12's own
+    # example names, because a table read for a TD3 is a table that can be
+    # wrong for a TD1 and pass everything else here.
+    zone, regions = regions_of(name)
+    line_polygons = mrz_region.line_polygons(zone)
+
+    assert parsed_of(name).format == name
+    assert list(regions) == printed_names(name)
+    # The keys are the document's own field names, read rather than
+    # translated: `sources` is what a parse recorded, and a name here that is
+    # not in it would be a region nothing downstream could label.
+    assert set(regions) == set(parsed_of(name).sources)
+    # Every field prints on exactly one line of its format, so each box is
+    # cut from the line its layout puts the field on -- and is inside 4.8's
+    # polygon for that line, which is 4.8's own answer rather than a margin
+    # this step could have invented.
+    for number, spans in enumerate(
+        mrz_region.MRZ_LAYOUTS[name].values(), start=1
+    ):
+        line_box = box_of(line_polygons[number - 1])
+        for field in spans:
+            assert enclosing(line_box, box_of(regions[field]))
+    # A box per field is not a box per line: there is one box for every
+    # field the layout prints, and they are not the three (or two) line
+    # polygons with the same name twice.
+    assert len(regions) == len(printed_names(name)) > len(line_polygons)
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_every_field_box_is_the_box_of_the_characters_its_span_prints(
+    shape, name
+):
+    # What a union of cells must be and what a box cut from the wrong cells
+    # is not: the fields *partition* a line (2.1 gives every position to
+    # exactly one field), so each box is the extent of the characters its own
+    # span prints, their boxes are disjoint and read left to right in the
+    # layout's own order, and every character of the line sits inside exactly
+    # one of them.  A box cut from the whole line passes "covers its
+    # characters" and fails every line here.
+    zone, regions = regions_of(name)
+    line_polygons = mrz_region.line_polygons(zone)
+
+    for number, spans in enumerate(
+        mrz_region.MRZ_LAYOUTS[name].values(), start=1
+    ):
+        line_box = box_of(line_polygons[number - 1])
+        boxes = []
+        for field in spans:
+            first, last = spans[field]
+            drawn = extent_of(zone[number - 1][first - 1:last])
+            assert box_of(regions[field]) == drawn
+            assert enclosing(line_box, drawn)
+            boxes.append(drawn)
+
+        assert boxes[0][0] == line_box[0], "the first field starts the line"
+        assert boxes[-1][2] == line_box[2], "the last field ends the line"
+        assert all(
+            before[2] < after[0] for before, after in zip(boxes, boxes[1:])
+        ), "the fields are disjoint, and in the layout's own order"
+        assert all(
+            sum(
+                enclosing(box, component.bbox) for box in boxes
+            ) == 1
+            for component in zone[number - 1]
+        ), "every character of the line is in exactly one field's box"
+
+
+def test_a_field_no_cell_names_is_absent_rather_than_present_and_null():
+    # 4.10's lower bound carried one step on.  A line whose last few
+    # characters were never cut has no ink for those fields to be made of,
+    # and the answer says so by leaving them out rather than by reporting a
+    # `None`: "looked, found nothing" is a different statement, and one a
+    # caller could act on as though it had been measured.
+    zone = zone_of(2, 44)
+    short = zone[:1] + (zone[1][:30],)
+    regions = mrz_region.field_regions(parsed_of("TD3"), short)
+
+    assert len(mrz_region.segment_cells(short[1])) == 30
+    assert "nationality" in regions
+    # A field that *straddles* the shortfall keeps the half that was cut:
+    # positions 29-30 of 29-42 were printed and are reported, and only the
+    # fields entirely past the cut are missing.
+    assert "personal_number" in regions
+    assert "personal_number_check_digit" not in regions
+    assert "composite_check_digit" not in regions
+    assert None not in regions.values()
+    assert list(regions)[-1] == "personal_number"
+
+
+def test_a_document_this_project_does_not_parse_is_an_empty_answer():
+    # 4.13 is built on this: "no MRZ here" is a value this module returns
+    # rather than an exception it raises, and the three refusals
+    # `cell_field` makes all arrive here the same way -- a field that is not
+    # in the answer.
+    zone = zone_of(2, 44)
+    elsewhere = dataclasses.replace(parsed_of("TD3"), format="TD4")
+
+    assert mrz_region.field_regions(elsewhere, zone) == {}
+    assert mrz_region.field_regions(parsed_of("TD3"), ()) == {}
+    # A zone with a line the format does not have is the other direction:
+    # line 1's fields are cut and line 2's are simply not there.
+    assert set(mrz_region.field_regions(parsed_of("TD3"), zone[:1])) == set(
+        mrz_region.MRZ_LAYOUTS["TD3"]["line_1"]
+    )
+
+
+def test_the_boxes_are_cut_from_the_unturned_line_and_not_from_4_9_s_copy():
+    # 4.8's note and 4.9's measurement, held at the step that depends on
+    # them.  A line leaning 8 degrees still segments into its own cells
+    # without a turn -- a blob's box is its ink's projection at any tilt --
+    # while `deskew_line`'s copy inflates every box by `height * sin(angle)`,
+    # which at 8 degrees on glyphs 10 wide is 1.4 pixels against a one-pixel
+    # gap, closing every gap on the line.  So this pins both halves at once:
+    # the counterfactual is measured here rather than assumed, and the boxes
+    # still tile the line exactly as they do on a level one.
+    degree = 8
+    pitch, left, top, leading = 11, 10, 20, 200
+    rise = math.tan(math.radians(degree)) * pitch
+    zone = tuple(
+        tuple(
+            component_record(
+                left=left + pitch * index,
+                top=round(
+                    top + leading * row + rise * (index - (44 - 1) / 2)
+                ),
+            )
+            for index in range(44)
+        )
+        for row in range(2)
+    )
+    regions = mrz_region.field_regions(parsed_of("TD3"), zone)
+
+    assert all(
+        abs(reading - degree) < 1.0
+        for reading in (
+            mrz_region.residual_skew_deg(line) for line in zone
+        )
+    ), "the fixture leans, and leans by what it says"
+    # The turned copy is measurably worse input -- at this angle it hands
+    # over fewer cells than it was given, which is the whole of 4.9's cost.
+    assert all(
+        len(mrz_region.segment_cells(mrz_region.deskew_line(line)))
+        < len(mrz_region.segment_cells(line))
+        for line in zone
+    )
+    # And the unturned cut is still exact: every field of the layout has a
+    # box, and the boxes tile line 2 with nothing overlapped or missing.
+    assert list(regions) == printed_names("TD3")
+    spans = mrz_region.MRZ_LAYOUTS["TD3"]["line_2"]
+    placed = sorted(box_of(regions[field]) for field in spans)
+    line_box = box_of(mrz_region.line_polygons(zone)[1])
+    assert placed[0][0] == line_box[0] and placed[-1][2] == line_box[2]
+    assert all(
+        before[2] < after[0] for before, after in zip(placed, placed[1:])
+    )
+    assert all(
+        sum(enclosing(box, component.bbox) for box in placed) == 1
+        for component in zone[1]
+    ), "every character of line 2 is in exactly one field's box"
+
+
+def test_what_the_parse_read_cannot_move_a_box():
+    # The claim 4.12 makes about its document argument, held rather than
+    # asserted in prose: the same zone drawn the same way gives the same
+    # boxes whichever six characters its line 2 prints at the date of birth,
+    # because the format names the layout and the cells name the fields, and
+    # no character is read here.  A step that read `document.date_of_birth`,
+    # or one that cut its boxes out of the parsed text rather than the ink,
+    # would move them.
+    _, regions = regions_of("TD3")
+    elsewhere = edited(ZONES["TD3"], 2, 14, "121231")
+    printed = mrz_region.field_regions(
+        parsed_of("TD3", elsewhere), zone_of(2, 44)
+    )
+
+    assert parsed_of("TD3", elsewhere).date_of_birth == "121231"
+    assert printed == regions
+
+
 # --- the boundary this module must not move -------------------------------
 
 
@@ -1983,13 +3342,23 @@ def test_the_module_raises_nothing_of_its_own():
 
     assert mrz_region.__all__ == [
         "MAX_DESKEW_DEG",
+        "MRZ_LAYOUTS",
         "MrzComponent",
+        "MrzDetection",
         "binarize_inverted",
+        "cell_field",
+        "detect_mrz",
         "deskew",
+        "deskew_line",
         "extract_components",
+        "field_regions",
         "filter_glyphs",
         "filter_lines",
         "group_lines",
+        "infer_format",
+        "line_polygons",
+        "residual_skew_deg",
+        "segment_cells",
         "skew_deg",
         "to_gray",
     ]
@@ -2009,3 +3378,224 @@ def test_the_record_is_data_and_nothing_else():
 
     assert fields == ["left", "top", "width", "height", "area", "cx", "cy"]
     assert public == {"bbox", "centroid"}
+
+
+# --- 4.13: the detector, and the page with no MRZ on it -------------------
+
+#: The block a hand-made zone's character is drawn as, and the advance it is
+#: drawn at -- a two-pixel gap, so nothing here depends on 4.10's cells
+#: finding a break.  The same numbers `zone_of` uses, for 4.10's reason.
+ZONE_GLYPH_PX, ZONE_PITCH_PX = 10, 12
+ZONE_LEFT, ZONE_TOP, ZONE_LEADING_PX = 10, 20, 40
+
+
+def blank_page(level=255):
+    """A page with nothing on it, at the size every other fixture is drawn at."""
+    return np.full((PAGE_HEIGHT, PAGE_WIDTH, 3), level, np.uint8)
+
+
+def zone_page(
+    line_count, line_length, glyph=ZONE_GLYPH_PX, pitch=ZONE_PITCH_PX,
+    left=ZONE_LEFT, top=ZONE_TOP, leading=ZONE_LEADING_PX, margin=60,
+):
+    """A white page carrying a hand-made zone, *drawn* rather than longhand.
+
+    ``zone_of`` is longhand because a count is the question there; this is
+    drawn because 4.13's question is whether a page comes back *named*, and
+    only a page can answer that.  Blocks rather than letters, for the same
+    reason: the drawn text fixture merges its own glyphs -- measured, 24 and
+    27 blobs for two 44-character lines -- so it is a page of print rather
+    than a zone, and 4.14's generator is the task that draws one properly.
+    """
+    height = top + leading * (line_count - 1) + glyph + margin
+    width = left + pitch * (line_length - 1) + glyph + margin
+    page = np.full((height, width, 3), 255, np.uint8)
+    for row in range(line_count):
+        for index in range(line_length):
+            x, y = left + pitch * index, top + leading * row
+            page[y:y + glyph, x:x + glyph] = (0, 0, 0)
+    return page
+
+
+def zone_shape(name):
+    """The shape ``name`` prints, read out of Part 3's own table."""
+    return next(
+        shape for shape, value in document.MRZ_SHAPES.items() if value == name
+    )
+
+
+def zone_extent(
+    row, line_length, glyph=ZONE_GLYPH_PX, pitch=ZONE_PITCH_PX,
+    left=ZONE_LEFT, top=ZONE_TOP, leading=ZONE_LEADING_PX,
+):
+    """The half-open box ``zone_page`` drew line ``row`` into."""
+    y = top + leading * row
+    return (left, y, left + pitch * (line_length - 1) + glyph, y + glyph)
+
+
+def zone_page_turned(angle, line_count=2, line_length=44):
+    """The hand-made zone page, turned by ``angle`` degrees about its centre.
+
+    A per-channel white for the corners, for the reason ``_border_fill``'s
+    docstring gives and ``rotated_mrz`` repeats.
+    """
+    page = zone_page(line_count, line_length)
+    height, width = page.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), angle, 1.0)
+    return cv2.warpAffine(
+        page, matrix, (width, height),
+        borderMode=cv2.BORDER_CONSTANT, borderValue=(255, 255, 255),
+    )
+
+
+def detected(name):
+    """What the detector makes of a drawn page carrying a zone of ``name``."""
+    return mrz_region.detect_mrz(zone_page(*zone_shape(name)))
+
+
+def test_a_blank_page_answers_no_mrz_rather_than_raising():
+    # The test 4.13 asks for, and "rather than raising" is the claim the whole
+    # call is inside: a detector that refused a page it could not read would
+    # raise out of `m7_skew`, out of OpenCV, or out of this module's own code,
+    # and a caller would then need an `except` around every frame it is handed
+    # rather than around the one it cannot read.
+    found = mrz_region.detect_mrz(blank_page())
+
+    assert found == mrz_region.MrzDetection()
+    assert found.format is None
+    assert found.lines == ()
+    assert found.regions == ()
+
+
+@pytest.mark.parametrize(
+    "level",
+    [pytest.param(255, id="white-paper"), pytest.param(0, id="all-ink-page")],
+)
+def test_both_ways_a_blank_page_arrives_answer_the_same_empty_value(level):
+    # 4.3 pins the two ways an *empty* frame reads at its own step: a page
+    # whose cut went white is refused by 4.4's height ceiling, and a frame
+    # with no ink has no component to begin with.  A uniform page arrives at
+    # the detector in the second state whichever way round it is -- the local
+    # cut reads a page as one or as the other, never as print -- so both are
+    # held to the same empty value, and a detector that only understood the
+    # white one would still pass a blank-page test.
+    assert mrz_region.detect_mrz(blank_page(level)) == mrz_region.MrzDetection()
+
+
+def test_two_lines_of_print_that_are_not_a_zone_name_no_format():
+    # The page that looks like a TD3 and is not one, and the case that keeps
+    # 4.7's refusal load-bearing at the top of the chain: `upright_mrz` draws
+    # two 44-character lines, and the cut merges them to 24 and 27 blobs, so
+    # the median of 25.5 is outside every shape's band.  A detector that named
+    # the nearest of the three would name a format for a page this repository
+    # drew itself, and a visa read as a passport shifts every field after it.
+    found = mrz_region.detect_mrz(upright_mrz())
+    median = statistics.median(len(line) for line in found.lines)
+
+    assert found.format is None
+    assert all(
+        abs(median - length) > mrz_region.LINE_LENGTH_TOLERANCE
+        for _, length in document.MRZ_SHAPES
+    )
+    # The ink is still reported.  4.8's answer is a measurement, and dropping
+    # it because the *shape* was refused would throw away the one thing a
+    # caller can draw to say there was something here to find.
+    assert len(found.regions) == len(found.lines) == 2
+
+
+@pytest.mark.parametrize(
+    "angle",
+    [
+        pytest.param(2.0, id="two-degrees-clockwise"),
+        pytest.param(-3.0, id="three-degrees-anticlockwise"),
+        pytest.param(4.0, id="four-degrees-clockwise"),
+    ],
+)
+def test_a_zone_on_a_tilted_page_is_still_found(angle):
+    # 4.13's one claim about 4.1: the chain starts at the rotation, so a page
+    # that arrives leaning is still a page whose zone gets named.  The first
+    # assertion is the guard 4.1's own test uses -- without it this would be
+    # passed by a detector that ignored the tilt entirely, since a zone drawn
+    # upright is a zone found upright.  `measured_tilt` rather than
+    # `skew_deg`, for the reason its own docstring gives: it shares no code
+    # with the reading the detector follows, so a sign flip cannot make the
+    # two agree.
+    #
+    # The glyph counts are exact at these angles and are *not* exact at 6,
+    # where the turn costs one blob.  That is 4.10's "a cell count is a
+    # lower bound", and a median of 43.5 and 44 is a TD3 either way.
+    tilted = zone_page_turned(angle)
+    found = mrz_region.detect_mrz(tilted)
+
+    assert abs(measured_tilt(tilted)) > 1.5, "the fixture is not actually tilted"
+    assert found.format == "TD3"
+    assert [len(line) for line in found.lines] == [44, 44]
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_a_zone_drawn_on_a_page_is_named_and_located(shape, name):
+    # The other half of the blank-page test, without which it proves nothing:
+    # a detector that answered "no MRZ" to every page would pass it.  All
+    # three formats rather than one, because a chain that reads a TD3 can be
+    # a chain that was measured on a TD3.
+    found = detected(name)
+
+    assert found.format == name
+    assert found.format in document.MRZ_SHAPES.values()
+    assert len(found.lines) == len(found.regions) == shape[0]
+
+
+def test_the_regions_are_the_lines_own_polygons_and_the_lines_come_with_them():
+    # Two claims in one, because they are one answer split in two: the
+    # polygons are 4.8's own boxes of the lines 4.6 kept -- read off the
+    # blocks the page drew, not off a literal -- and the line groups are on the
+    # record beside them.  Without the second half 4.10 and 4.12 would have
+    # nothing to take, and a caller would have to run the whole chain a second
+    # time to get a zone it had already measured.
+    line_count, line_length = zone_shape("TD3")
+    found = detected("TD3")
+
+    assert found.regions == mrz_region.line_polygons(found.lines)
+    assert all(
+        holds(polygon, zone_extent(row, line_length))
+        for row, polygon in enumerate(found.regions)
+    )
+    assert all(
+        len(line) == line_length and line_count == len(found.lines)
+        for line in found.lines
+    )
+
+
+@pytest.mark.parametrize(
+    "shape,name", sorted(document.MRZ_SHAPES.items())
+)
+def test_the_field_boxes_are_still_cuttable_from_a_detected_page(shape, name):
+    # What makes the record a detector's answer rather than a summary: 4.12
+    # takes a parsed document and a zone, and until this task nothing turned a
+    # page into either.  One box per field the layout prints, on all three
+    # formats, from the lines the page was detected with.
+    found = detected(name)
+    regions = mrz_region.field_regions(parsed_of(name), found.lines)
+
+    assert list(regions) == printed_names(name)
+    assert set(regions) == set(parsed_of(name).sources)
+
+
+def test_the_detection_is_data_and_nothing_else():
+    # `MrzComponent`'s rule, applied to the record that answers for the whole
+    # chain.  A method on it would be behaviour, and behaviour is where a
+    # second judgement about what a page holds would grow: whether these
+    # lines are a zone is 4.7's answer, already read into `format`, and a
+    # method that re-derived it would be able to disagree with the field.
+    fields = [field.name for field in dataclasses.fields(mrz_region.MrzDetection)]
+    public = {
+        name
+        for name in vars(mrz_region.MrzDetection)
+        if not name.startswith("_")
+    } - set(fields)
+
+    assert fields == ["format", "lines", "regions"]
+    assert public == set()
+    assert not issubclass(mrz_region.MrzDetection, BaseException)
