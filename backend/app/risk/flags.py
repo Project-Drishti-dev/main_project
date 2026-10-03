@@ -158,9 +158,11 @@ class EvidenceFlag:
     short values: a digit, a date, a field name.  A flag never carries a line
     of printed text, so a flag cannot become a place identity data is stored.
 
-    :attr:`tier` is ``0``, ``1``, ``2`` or ``"crossdoc"``, and
-    :attr:`source_module`` is the module that produced the finding, so any
-    claim can be traced to the code that made it.  :attr:`weight_band` names
+    :attr:`tier` is ``0``, ``1``, ``2``, ``"quality"`` or ``"crossdoc"``,
+    and :attr:`source_module`` is the module that produced the finding, so any
+    claim can be traced to the code that made it.  ``"quality"`` is 14.3's
+    stage 0 -- the capture gate, which runs before tier 0 -- and it is the
+    one finding on record about the photograph rather than about the page.  :attr:`weight_band` names
     the band this flag's weight sits in; the number itself belongs to the
     weightset and is deliberately not held here.
 

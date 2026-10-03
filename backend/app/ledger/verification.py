@@ -13,9 +13,16 @@ The recomputation spells the record with
 :func:`~app.audit.record.event_record` -- the writer's own spelling, so two
 shapes cannot make ``verified`` a claim about a value nobody hashed
 (``D66``).
+
+Since 18.7 the same walk answers :class:`Verification`: the three answers
+beside the root it reached, the length of the path it walked and the names
+of the checks that completed, so 18.7's route can say what was checked
+without walking the log twice.  :func:`verify_event` is that record's
+``status``, and the walk itself is written once, here.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, Tuple
 
 from sqlalchemy import select
@@ -37,10 +44,16 @@ from app.storage.models import AuditEvent, LedgerEntry
 
 __all__ = [
     "ALTERED",
+    "CHECKS",
+    "CHECK_PROOF",
+    "CHECK_RECORD",
+    "CHECK_ROOT",
     "UNKNOWN",
     "VERIFICATION_STATUSES",
     "VERIFIED",
+    "Verification",
     "VerifyError",
+    "verification_of",
     "verify_event",
 ]
 
@@ -59,6 +72,44 @@ UNKNOWN = "unknown"
 #: The three answers, in the order a reader meets them.
 VERIFICATION_STATUSES = (VERIFIED, ALTERED, UNKNOWN)
 
+#: The anchored root was read out of the entry this event's batch
+#: committed to, so there is a commitment to compare against.
+CHECK_ROOT = "root"
+
+#: The stored record was hashed again out of the row's own columns and
+#: compared with the digest stored beside it.
+CHECK_RECORD = "record"
+
+#: The sibling path from this event's own leaf up to that root was
+#: walked.
+CHECK_PROOF = "proof"
+
+#: The steps one walk can complete, in the order it makes them, so
+#: "every check ran" is a claim held against the walk itself.
+CHECKS = (CHECK_ROOT, CHECK_RECORD, CHECK_PROOF)
+
+
+@dataclass(frozen=True)
+class Verification:
+    """What one walk of the log found, in more than the three answers.
+
+    :param status: ``VERIFIED``, ``ALTERED`` or ``UNKNOWN``.
+    :param batch_id: the batch the walk reached, or ``None`` while none
+        has claimed this event.
+    :param batch_root: the root as the log spells it (``D57``'s verbatim
+        column), or ``None`` while no root has been read.
+    :param proof_length: the steps the walked proof carried, or ``None``
+        while the walk has not built one.
+    :param checked: the steps that completed, in walk order -- a check
+        that could not run is absent rather than reported as passed.
+    """
+
+    status: str
+    batch_id: uuid.UUID | None = None
+    batch_root: str | None = None
+    proof_length: int | None = None
+    checked: tuple[str, ...] = ()
+
 
 class VerifyError(ValueError):
     """Raised when an event handed over is one no row can carry.
@@ -70,13 +121,13 @@ class VerifyError(ValueError):
     """
 
 
-def verify_event(
+def verification_of(
     event: AuditEvent,
     *,
     sessions: sessionmaker[Session],
     ledger: Ledger,
-) -> str:
-    """Verify one stored event against the root its batch was anchored under.
+) -> Verification:
+    """Walk one stored event to the root its batch was anchored under.
 
     :param event: the event to verify.  Only its ``id`` is read -- the
         record, the hash, the salt, the position and the batch id all come
@@ -84,16 +135,30 @@ def verify_event(
     :param sessions: the factory the rows are reloaded through, on
         ``D62``'s reasoning: a required one, never the module-level factory.
     :param ledger: the log the anchored root is read back from.
-    :returns: ``VERIFIED``, ``ALTERED`` or ``UNKNOWN``.
+    :returns: the three answers in :class:`Verification`, beside the root,
+        the length of the walked proof and the checks this walk reached.
     :raises TypeError: when ``event`` is not an
         :class:`~app.storage.models.AuditEvent`.
     :raises VerifyError: when an event handed over was never written, so no
         row carries it.
     """
     event_id = _id_of(event, "event")
+    batch_id: uuid.UUID | None = None
+    batch_root: str | None = None
+    checked: list[str] = []
+
+    def answer(status: str, proof_length: int | None = None) -> Verification:
+        return Verification(
+            status=status,
+            batch_id=batch_id,
+            batch_root=batch_root,
+            proof_length=proof_length,
+            checked=tuple(checked),
+        )
+
     stored = _reload(sessions, event_id)
     if stored is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
     (
         batch_id,
         record_hash,
@@ -104,36 +169,61 @@ def verify_event(
         payload,
     ) = stored
     if batch_id is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
     entry = ledger.read_batch(batch_id)
     if entry is None:
-        return UNKNOWN
-    root = _root_of(entry)
-    if root is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
+    anchored = _root_of(entry)
+    if anchored is None:
+        return answer(UNKNOWN)
+    batch_root = entry.merkle_root
+    checked.append(CHECK_ROOT)
     salt = _salt_of(record_salt)
     if salt is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
     recomputed = _recomputed(
         event_record(event_type, screening_id, actor, payload), salt
     )
     if recomputed is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
+    checked.append(CHECK_RECORD)
     if recomputed != record_hash:
-        return ALTERED
+        return answer(ALTERED)
     batch = _batch_of(sessions, batch_id)
     if batch is None:
-        return UNKNOWN
+        return answer(UNKNOWN)
     order, digests = batch
     if event_id not in order:
-        return UNKNOWN
+        return answer(UNKNOWN)
     position = order.index(event_id)
     proof = build_tree(digests).proof_for(position)
-    return (
+    checked.append(CHECK_PROOF)
+    return answer(
         VERIFIED
-        if verify_proof(leaf_hash(digests[position]), proof, root)
-        else ALTERED
+        if verify_proof(leaf_hash(digests[position]), proof, anchored)
+        else ALTERED,
+        len(proof),
     )
+
+
+def verify_event(
+    event: AuditEvent,
+    *,
+    sessions: sessionmaker[Session],
+    ledger: Ledger,
+) -> str:
+    """Verify one stored event against the root its batch was anchored under.
+
+    :param event: the event to verify.  Only its ``id`` is read.
+    :param sessions: the factory the rows are reloaded through.
+    :param ledger: the log the anchored root is read back from.
+    :returns: :func:`verification_of`'s ``status`` -- ``VERIFIED``,
+        ``ALTERED`` or ``UNKNOWN``.
+    :raises TypeError: when ``event`` is not an ``AuditEvent``.
+    :raises VerifyError: when an event handed over was never written, so no
+        row carries it.
+    """
+    return verification_of(event, sessions=sessions, ledger=ledger).status
 
 
 def _id_of(event: Any, what: str) -> uuid.UUID:

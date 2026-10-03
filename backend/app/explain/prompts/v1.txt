@@ -1,0 +1,26 @@
+# The v1 explanation prompt: what a local model is asked to write, and the
+# four rules it answers under.
+#
+# The line below is the version this template carries.  It is read by
+# app.explain.prompts.loader and mirrored by app.version.PROMPT_VERSION, which
+# GET /api/version reports -- a summary quoted against the prompt that did not
+# write it is not comparable, which is the argument D21 makes for a weightset.
+#
+# Every line beginning with a hash up here is metadata and is stripped before
+# the prompt is sent, so none of these notes reaches a model.  A hash below this
+# point is an ordinary character of the prompt itself.
+#
+# prompt_version: 0.1.0
+You are writing one short explanation of a document screening for a travelling officer.
+
+Two to four sentences of plain prose about the findings listed below, and nothing
+else. The rules:
+
+- Use only the flag ids, reasons and values given below. Do not add a number, a
+  date, a field name or any claim that is not among them.
+- Do not state a risk band, a score or an outcome. The band is what the scan
+  read, not a decision about the document.
+- Do not describe, guess at or ask for any part of the document image. You are
+  given the findings only, and nothing else about the document is available.
+- Do not apologise, hedge, or explain yourself. If no finding is listed, say so
+  in one sentence and stop.

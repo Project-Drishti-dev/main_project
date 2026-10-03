@@ -38,6 +38,7 @@ from app.storage.models import (
     LEDGER_ENTRY_TABLE_NAME,
     NAMING_CONVENTION,
     SCREENING_TABLE_NAME,
+    TRAVELER_CASE_TABLE_NAME,
     Base,
     Screening,
 )
@@ -176,16 +177,22 @@ def test_the_table_declares_no_third_index() -> None:
     A third index here would be a claim about scale nothing measures --
     ``id`` in particular is already covered by the primary key, and
     :attr:`Screening.filename` is deliberately never indexed because it
-    carries caller-supplied text.  Neither of the other two tables gets one
+    carries caller-supplied text.  Neither of the other three tables gets one
     either: ``audit_events`` is read by ``screening_id`` and
-    ``ledger_entries`` by ``sequence``, and both are primary keys.
+    ``ledger_entries`` by ``sequence``, and both are primary keys, while
+    16.1's ``traveler_cases`` is read by ``id`` alone and nothing yet filters
+    one.
     """
     assert {index.name for index in Screening.__table__.indexes} == {
         _name_the_convention_would_give(column) for column in THE_INDEXED_COLUMNS
     }
     assert all(
         not Base.metadata.tables[table_name].indexes
-        for table_name in (AUDIT_EVENT_TABLE_NAME, LEDGER_ENTRY_TABLE_NAME)
+        for table_name in (
+            AUDIT_EVENT_TABLE_NAME,
+            LEDGER_ENTRY_TABLE_NAME,
+            TRAVELER_CASE_TABLE_NAME,
+        )
     )
 
 

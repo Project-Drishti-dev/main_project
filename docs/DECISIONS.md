@@ -786,7 +786,7 @@ project can run against, and it reads `app/seed/watchlist.json` through
   being told the document is clear.
 - **A `None` argument matches nothing.**  An identity entry is a name *and* a
   date of birth; a lookup of one key alone is not a question about the
-  identity, so three `None`s answer `[]` and a number is never read against an
+  identity, so three `None`'s answer `[]` and a number is never read against an
   identity row that carries none.
 - **Every row becomes a `WatchlistHit` before it is matched**, so `D13`'s field
   set and its kind/key pairing are what a seed row has to satisfy rather than a
@@ -4850,7 +4850,7 @@ for and would have to migrate.  The last session's handover assumed the row
   there.
 - **A row nobody has scored is answered, not refused.**  11.1 hands back an id
   before the cascade runs, and 8.4 made the result columns nullable for
-  exactly that reason: the answer carries `null`s and empty lists, which is a
+  exactly that reason: the answer carries `null`'s and empty lists, which is a
   state the row can hold rather than an error.
 - **The route is a plain `def`.**  FastAPI runs a synchronous path operation
   in a threadpool, so the read needs no `run_in_threadpool` of its own; 11.1's
@@ -5053,3 +5053,5838 @@ to the same vocabulary; they do not add a second envelope.
   what replaced it and why. Never edit an entry in place.
 - New settled decisions go at the bottom in the same format, so this file
   stays a record rather than a summary that silently drifts.
+
+---
+
+## D75 -- One request id, stamped by one middleware, adopted from the caller and refused when it is not id-shaped
+
+**Date:** October 2, 2026. **Status:** settled, task 11.5.
+
+**Decision.**
+
+- **`app.api.request_id` owns the one header name, the one stamp and the one
+  rule for an offered id.**  `X-Request-ID` is spelled once, the middleware
+  in that module is the only thing that stamps a request, and
+  `resolve_request_id` is the only thing that decides what a request is
+  stamped with.  `app.main` imports the name and the middleware and nothing
+  else spells either.
+- **An id a caller offers is adopted, not replaced.**  11.6's JSON log line
+  and 26.8's correlation column both want the value a caller already holds,
+  which is the whole reason for reading the inbound header rather than always
+  minting.  Surrounding whitespace is the header's and is trimmed; anything
+  else is kept exactly as written.
+- **An offered id that is not id-shaped is refused, not sanitised.**  The
+  accepted shape is `[A-Za-z0-9._:-]{1,64}`.  A newline, a null, a control
+  character, a space or a separator in that value would be reflected into a
+  response header *and* into 11.6's log line, which is a header-injection and
+  a log-forging surface that a caller controls; a value over 64 characters is
+  an unbounded string in the same two places.  Such a request is stamped with
+  a fresh uuid4 hex instead, so nothing the caller sent is ever echoed back.
+  The colon is in the set because `traceparent` fragments and proxy-chained
+  ids are spelled with one.
+- **The middleware is added after the CORS middleware**, so it wraps it: a
+  preflight `OPTIONS` the CORS middleware answers by itself is stamped like
+  any other answer, rather than being the one answer with no id.  The header
+  is in both `allow_headers` and `expose_headers`, because a browser may only
+  offer an id the preflight permits and may only read one the origin is told
+  is exposed.
+- **The 500 for a fault no route caught is stamped by its own handler.**
+  This was measured rather than assumed: Starlette wraps the user middleware
+  in `ServerErrorMiddleware`, so an exception that reaches it is answered by
+  the registered `Exception` handler *outside* every user middleware, and that
+  response never passes back through the request-id middleware.  A throwaway
+  probe confirmed it -- the same middleware stamped a 404 and left the 500
+  with no header.  `handle_unexpected_error` therefore stamps its own
+  response from `request.state`, which the middleware has already filled.
+  This is the one place the header is set outside the middleware, and it is
+  the one place that would otherwise have no id.
+
+**What this forbids**
+
+- A second stamp: another middleware, a dependency that writes the header, or
+  a route that sets it by hand.
+- Echoing a caller's id back unsanitised, however convenient -- the value is
+  caller-controlled and reaches a log line.
+- Reading the inbound header anywhere but `app.api.request_id`.
+- A second spelling of the header name outside the module that owns it.
+
+**Measured, not asserted** -- 30 cases in
+`tests/api/test_request_id_api.py`: all four answers the app can give (a
+success, an envelope refusal, a router miss, and the unhandled-fault 500),
+each asserted to carry a minted id; two requests answered with two different
+ids; four offered ids adopted verbatim; thirteen offered ids that are not
+id-shaped each refused, with the injection-shaped ones checked to have
+introduced no second header; the same rule at the seam for values no HTTP
+client will put on the wire; the id read back off `request.state` by a route
+on a probe app; and both CORS directions.  Removing the middleware was
+checked to turn 23 of the 30 red, and removing only the 500 handler's stamp
+to turn exactly that one red -- the case the middleware cannot reach.
+
+**What this leaves.**  The id is on `request.state` and in the header, but
+nothing reads it yet: 11.6's log line and 26.8's stored correlation column
+are the two consumers, and until they land the id is carried and not used.
+Nothing writes it to a log or a row, and `check-all.ps1` still passes with no
+assertion anywhere that a log line carries one.  There is no inbound header
+allow-list beyond the character set -- a deployment behind a proxy that
+should not let a caller choose its own id has no setting that says so, and
+trusting the edge rather than the caller is a deployment decision, not one
+
+---
+
+## D76 -- One JSON object per log line; the message is the event name, the request id is ambient, and the line names a handler rather than a path
+
+**Date:** October 2, 2026. **Status:** settled, task 11.6.
+
+**Context.**  Nothing in the service configured logging at all.  Five call
+sites used `logger.exception` and `logger.error` with prose and `%s`
+interpolation -- `Unhandled request error`, `Screening %s could not be read
+back` -- and none of them named the request, because 11.5's id was stamped
+and never used.  11.6 asks for structured JSON carrying the request id and
+an elapsed time; 11.7 then has to assert that no line ever contains image
+bytes, OCR text or identity data, and 26.8 wants per-tier latency and a
+correlation column.  Those three tasks share one decision, so 11.6 takes
+it rather than leaving the format to be re-litigated twice.
+
+**Decision.**
+
+- **`app.logging_config` owns the format; `app.api.request_logging` owns the
+  one line per request.**  `JsonFormatter` renders one record as one object;
+  `RequestLoggingMiddleware` times every `http` request and writes that
+  line in a `finally`, so a fault a route did not catch still has one.
+- **The message *is* the event name -- `http_request`,
+  `unhandled_request_error` -- and nothing is interpolated into it.**  This
+  is the decision 11.7 rests on.  A payload reaches a log by being
+  formatted into a string, so removing the free-text slot removes the class
+  of leak rather than promising to police it.  Structured values ride
+  beside the message under a single `fields` key, and are named arguments
+  only: `log_event(logger, "screening_unreadable", screening_id=str(...))`
+  cannot be assembled from a caller's keys, and cannot shadow the event
+  name, which the formatter drops rather than merges.
+- **The request id is ambient, not passed.**  `bind_request_id` puts it in a
+  `ContextVar` the formatter reads, so a handler, a route and the timing
+  middleware all write the same value without any of them being handed it.
+  A `ContextVar` rather than a thread-local because the sync routes run in a
+  threadpool -- `run_in_threadpool` copies the context, so an exception
+  raised inside one carries the id with it.
+- **The line names the handler, never the path.**  A probe confirmed
+  Starlette sets `scope["endpoint"]` on a match and never sets a template
+  for the path.  A path is caller-controlled text: 11.5 refused to reflect
+  an offered request id for exactly that reason, and a URL would reintroduce
+  it through the back door, since `/api/screenings/<anything>` matches
+  before `uuid.UUID` ever refuses it.  So the field is the endpoint's dotted
+  name, and `null` says the request matched nothing.
+- **`propagate` is off for the `app` logger.**  Otherwise uvicorn's own root
+  handler renders the same record a second time, in whatever format it was
+  configured with -- and the whole point is that there is one format.
+  `configure_logging` is idempotent, because `app.main` is imported by every
+  test session.
+- **`LOG_LEVEL` is read by `app.config`,** like every other variable
+  (`get_log_level`).  An unknown level name is refused rather than applied:
+  `Logger.setLevel` answers an unrecognised string by doing nothing at all,
+  so a typo would leave the level wherever it was while looking as though
+  it had been set.
+
+**Measured, not asserted** -- 32 cases in
+`tests/api/test_json_logging_api.py`.  A line parses as JSON; it carries the
+five keys every line promises, and a UTC ISO timestamp that parses back; a
+success, a refusal, a router miss and a crash all produce the same shape;
+an id a caller offered is the id the line carries *and* the header carries;
+two requests log two ids; the elapsed time is a float that covers the
+handler and not just the response; a traceback stays on one line; a field
+that is not serialisable is stringified rather than raising out of a logging
+call; a field named `message` is dropped rather than merged; the level
+reader takes every level name, folds case, treats blank as the default and
+refuses an unknown name.  Four mutants were run: removing the middleware
+turned 11 red; dropping the id from the formatter turned 5 red; pinning
+`elapsed_ms` to zero turned 1 red.
+
+**What this forbids**
+
+- Interpolating a value into a message, or a second format, or a second
+  handler on the `app` logger.
+- Reading the inbound header to log an id, or minting one where none was
+  stamped: `bind_request_id(None)` logs `null`.
+- Logging a URL, a query string, or any other caller-supplied text.
+- Setting the level anywhere but `app.config`, or configuring logging from
+  a module that is not the one that owns the format.
+
+**What this leaves.**  11.7's content ban is unwritten -- the structure is
+here, the assertion is not.  26.8's per-tier latency and its stored
+correlation column are still owed, and a line naming a tier is the natural
+place for the first.  The level is read once at import, so changing
+`LOG_LEVEL` needs a restart, and there is no log *destination* setting --
+lines go to stdout, which is right for Cloud Run and wrong for a file a
+deployment wants to ship.  The formatter is not a structured-logging
+protocol implementation: it emits no `trace_id`, spans, or resource
+attributes, so a deployment adopting OpenTelemetry has nothing to map onto
+and would add a second formatter beside this one.
+
+---
+
+## D77 -- The ban on payload content is an allow-list of field names, read from the source; not a filter on the rendered line
+
+**Date:** October 2, 2026. **Status:** settled, task 11.7.
+
+**Context.**  D76 left no free-text slot in a line, so the only way an image,
+an OCR string or an embedding could reach one is as a *value* somebody passes
+to `log_event` -- or as a message somebody rebuilds, which D76 already
+forbids.  That narrows the problem to a finite and checkable one, and 11.7
+asks for an assertion rather than a convention.
+
+**Decision.**
+
+- **The assertion is a field-name allow-list, not a filter on the rendered
+  line.**  `ALLOWED_FIELDS` names the six values a call site may hand in:
+  `elapsed_ms`, `handler`, `method`, `module`, `screening_id`, `status`.
+  Each is vocabulary this repository chose; none is data a caller supplied
+  or a document carried.  Scrubbing the line instead would mean recognising
+  an embedding by its shape and an MRZ by its grammar, and would fail open
+  on anything it had not been taught.
+- **The allow-list is read from `backend/app` with `ast`, so it polices the
+  next call site and not only the seven that exist.**  The same walk refuses a
+  message that is not a string constant, and any `**fields` splat, whose
+  names nothing has seen.
+- **The runtime half drives the real flows; the mutation half proves it
+  bites.**  A payload is logged on purpose in a permanent test, because
+  without it every runtime assertion would pass against a checker that never
+  matched anything.  Four deliberate leaks were injected to confirm the guards
+  turn red, then reverted.
+- **The caller's own text is banned alongside the document's.**  The holder's
+  name sent as a filename or a document-type claim reaches the endpoint that
+  stores it on the row; the log is the third place it must not go.
+
+**This forbids.**
+
+- Passing a payload, a caller-supplied string, or any document-derived value
+  to `log_event` under any field name.
+- Adding a name to `ALLOWED_FIELDS` to make a failing test pass, rather than
+  renaming the call site's field to something the service owns.
+- Reintroducing a message that is built rather than named.
+
+**What this leaves.**  The ban covers values passed to `log_event`; a library
+raising `ValueError(f"...{contents}")` still reaches the log through
+`exc_info`, and nothing holds that today.  `ALLOWED_FIELDS` is hand-written,
+so adding a legitimate field is an edit to a test.  And
+`JsonFormatter._fields` drops any field whose name is a `LogRecord`
+attribute -- `module` is one, so `quality_check_module_failed` is written
+without the module it names.  11.7 found that and deliberately did not assert
+
+---
+
+## D78 -- One budget per address on the two endpoints that analyse an image, keyed on the peer address and never on a header
+
+**Date:** October 2, 2026. **Status:** settled, task 11.8.
+
+**Context.**  11.8 asks for per-IP rate limiting on the analysis endpoints
+with a configurable limit.  This is the first thing here keyed on something a
+caller controls: 11.5 and D76 refused to reflect caller-supplied text into an
+answer or a log, and a rejected request is exactly where a peer address would
+otherwise be echoed back.  The limit is also the first gate that has to answer
+before the work, so where it sits decides what a refused request costs.
+
+**Decision.**
+
+- **The key is the peer address the server reports, never a header.**  A
+  forwarded-for address is the caller's own text, so a bucket keyed on it is
+  one the caller resets by inventing an address per request.  A deployment
+  behind a proxy therefore sees one bucket for every address the proxy
+  forwards for, which is a known limit of this build rather than a bug: the
+  honest fix is a proxy that normalises the peer address, not a header this
+  service starts believing.
+- **One budget on analysis, not one per route.**  `POST /api/analyze` and
+  `POST /api/screenings` spend the same per-address count, so a caller who
+  alternates between them cannot buy twice the analysis for one limit.  The
+  reads spend nothing: 11.8 is about what an image costs, not what reading a
+  row costs.
+- **The refusal is a new reason code on the envelope D74 already built.**
+  `429` with `RATE_LIMITED`, raised as an `APIError` and therefore answered by
+  the one handler, stamped with a request id like every other answer and
+  written up by the one line per request that already exists.  No second
+  envelope, and no new log event: a line naming a refusal would repeat the
+  handler and status the `http_request` line already carries, and a field
+  holding the address would reopen the door D77 closed.
+- **The guard is a dependency declared ahead of the session factory.**  So
+  every request past the limit is refused before the route reads a byte, and
+  before a refused request opens a database session -- and a request that was
+  going to be refused anyway still spends the budget, so a bad upload is not a
+  free one.
+- **The counter is a fixed window, in memory, in one process, under a
+  ceiling.**  A fixed window is a bucket that empties rather than a list of
+  instants to expire; the price is its own, a caller spending the budget
+  either side of a roll gets two of it.  The counts are lost on restart and
+  are not shared between instances, so the limit is per instance.  The map is
+  capped because a caller picks its own source address, and past the cap the
+  window empties: memory is bounded and every caller pays one window.
+- **The limit is a configured whole number, and anything else is refused
+  while the configuration is read.**  `RATE_LIMIT_PER_MINUTE`, read by
+  `app/config.py` like every other tunable and at import like `LOG_LEVEL`.
+  `0` and a negative number are refused along with the rest: read as "no
+  limit" a zero would turn a typo into an endpoint with none, and read as a
+  limit it would answer every request with a refusal.  Neither is what the
+  operator wrote.
+- **The count is taken on the event loop, so it holds no lock.**  The guard
+  and both analysis routes are `async`, which is the invariant the class
+  states and a test holds; a route made synchronous would move the count into
+  a threadpool and the invariant with it.
+
+**This forbids.**
+
+- Keying the bucket on `X-Forwarded-For`, or on any other header the caller
+  sent.
+- Reading `RATE_LIMIT_PER_MINUTE` anywhere but `app/config.py`, or reading it
+  as a limit of zero or less.
+- Letting the address reach a refusal body or a log line, or adding a
+  `log_event` field to hold it.
+- A second envelope for 429, or a second event for the refusal.
+
+**What this leaves.**  The count is per process, so a deployment running
+several instances meets a per-instance limit and restarts clear it; a NAT in
+front of a station means every officer behind it shares one bucket, at the
+default sixty a minute.  There is no `Retry-After` header, because
+`APIError` carries no headers and widening D74 is not this task.  Only the
+analysis endpoints are limited, so the reads are not, and nothing here is
+shared with a CDN or a WAF in front of the service.
+
+---
+## How to use this file
+'@
+
+if (-not $text.Contains($anchor)) { throw "anchor not found" }
+
+---
+
+## D79 -- The version endpoint answers the three constants and the model set under the spellings a result and the trail already use
+
+**Date:** October 2, 2026. **Status:** settled, task 11.10.
+
+**Context.**  11.10 asks for `GET /api/version` returning the app, ruleset,
+model and prompt versions.  :mod:`app.version` exported three of them, and its
+docstring had been promising this endpoint since before it was declared.  There
+is no fourth constant, and `model_versions` is not one: it is a per-screening
+object of module name to version, written on the row by
+:func:`app.screening.run_screening`, handed to the trail by
+:func:`app.audit.emit.emit`, and answered under the same key by 11.2's result.
+So the one thing the task did not settle is whether a model version belongs on
+the endpoint at all, and in what shape.
+
+**Decision.**
+
+- **The model version is an object, not a fourth scalar.**  A `MODEL_VERSION`
+  string beside the other three would be a second, incompatible spelling of a
+  fact the row, the event payload and the result endpoint already spell as
+  ``model_versions``.  When a model is wired it is per module -- a deployment
+  may ship more than one -- so a single string could not answer the question
+  the endpoint is asked anyway.
+- **`MODEL_VERSIONS` lives in `app.version` beside the three constants, and is
+  empty while the cascade runs no model.**  Tier 0 answers from measurements,
+  so today the honest deployment-wide answer is the empty object rather than a
+  placeholder string that would claim a model exists.  Wiring a model means
+  editing this constant in the same commit that wires the model, which is the
+  same rule ``RULESET_VERSION`` already follows.
+- **The two version keys are spelled as the trail spells them.**
+  ``ruleset_version`` and ``model_versions`` are :data:`app.audit.emit`'s own
+  ``RULESET_VERSION_KEY`` and ``MODEL_VERSIONS_KEY``, so a client parses one
+  spelling wherever it reads a version.
+- **The route reads the module per request rather than binding names at
+  import.**  A constant bound into the route's globals is a second copy that
+  only a restart reconciles, and it is a copy tests cannot substitute.
+- **The read is free.**  No budget (``D78`` -- the reads spend nothing), no
+  session, no row: it is a read of four constants, so it answers even when the
+  database is unreachable and even once the analysis budget is spent.
+
+**Consequences.**  A client can cache the answer for the life of a deployment
+and show it as experimental, as the module's docstring promises.  Until a
+model is wired the object is empty, which is a claim to keep true rather than
+a gap: 11.2's result answers ``null`` for the same fact, because a stored row
+records what answered *that screening*, and ``null`` there means no model ran
+
+---
+
+## D80 -- Liveness and readiness are two endpoints, and the refusal wears the error envelope
+
+**Date:** October 2, 2026. **Status:** settled, task 11.11.
+
+**Context.**  11.11 asks for liveness to be split from readiness, with
+``/ready`` checking the database and the ledger and a test that it fails when
+the database is unreachable.  `/health` was declared inline in
+:mod:`app.main` beside the exception handlers, opened nothing, and answered
+``{"status": "ok"}`` -- and nothing in the deployment told it apart from a
+readiness answer, because there was not one.  Three things the task does not
+settle: where the two routes live, what "checks the ledger" means when the
+ledger is a table rather than a service, and what a not-ready answer is
+spelled in.
+
+**Decision.**
+
+- **Two routes, and liveness touches nothing.**  ``/health`` declares no
+  session dependency at all, so it cannot wait on a database however long that
+  database takes to answer.  This is the whole reason for the split: a
+  liveness probe that consulted the database would have a supervisor restart a
+  process that is alive and well, turning a dependency outage into a crash
+  loop, and the crash loop would keep the dependency down.
+- **The two live in ``app/api/routes_health.py``**, beside the other routers
+  and out of :mod:`app.main`, which keeps the app and the error envelope.  A
+  readiness probe with two checks and a readiness body is a route, and 11.12
+  will snapshot it there beside every other.
+- **Readiness reaches its database through :func:`app.api.get_sessions`**, the
+  same overridable seam the write routes use, on ``D42``'s reasoning: a
+  module-level factory bound at import cannot be pointed at a database a test
+  then makes unreachable.  So the test that matters -- an unopenable database
+  answers 503 -- is written by binding a factory, not by patching a global.
+- **Both checks are named, and the ledger is one of them.**  ``database`` runs
+  a statement that touches no table, so it measures reachability rather than
+  schema; ``ledger`` reads one row of the ledger table, so a database that
+  answers while its ledger is gone is reported as not ready.  A probe running
+  only the first check would have passed that deployment, which is the case
+  the second exists for.  The names come from one module-level list, so the
+  answer, the log line and the refusal cannot drift into three spellings.
+- **The 503 wears the one error envelope** (``D74``): ``NOT_READY`` under
+  ``{"error": {"code", "message"}}``, with the message naming the check that
+  failed.  A bespoke readiness body would be the one refusal on the service
+  that a client could not parse with the code it already has; the only thing
+  an operator needs from the refusal -- *which* check broke -- rides in the
+  message, where it is a phrase drawn from the module's own two names rather
+  than anything a caller supplied.
+- **Neither probe spends rate-limit budget** (``D78``).  A supervisor polls on
+  a schedule, through whatever load balancer sits in front, and must not be
+  refused with a 429 because a burst of screenings spent the budget meant for
+  them.
+
+**Consequences.**  A deployment can point a liveness probe at ``/health`` and
+a readiness probe at ``/ready``, and an outage now removes an instance from
+rotation without restarting it.  The cost is that ``/ready`` is a real query on
+every poll, so it is bounded by the database's own answer time rather than by
+a cached flag, and a database that is slow rather than down will show up as a
+
+---
+
+## D81 -- The response schema of every endpoint is held against one committed snapshot, with every `$ref` inlined
+
+**Date:** October 2, 2026. **Status:** settled, task 11.12.
+
+**Context.**  Every response on this service was held only by its own file's
+exact-key cases: eleven files, each knowing one shape, none able to notice a
+shape it was not written for.  A field dropped from `ScreeningResultResponse`
+would have failed `test_screening_result_api.py` and nothing else; a field
+added to it would have failed nothing at all, because every assertion in the
+suite asks for a key by name and never for the set of keys.  A rename would
+have been the same silence.  The endpoint keeps answering 200 either way,
+which is what makes it a break rather than an error.
+
+**Decision.**
+
+- **The snapshot is the documented responses, resolved.**  The contract is
+  `{path: {method: {status_code: response}}}` for all seven operations,
+  straight off `app.openapi()`, so it covers what a client is handed --
+  status code, media type, and schema -- rather than what the handlers
+  return.  Reading the generated document rather than the routes is what
+  makes one test cover all of them: the list is the app's, so a new endpoint
+  cannot be forgotten and an existing one cannot be answered with a shape
+  the document does not carry.
+- **Every `$ref` is inlined, because a ref is a hole in the comparison.**
+  The document names its models once under `components/schemas` and points at
+  them from seven places, so a snapshot of the pointers would record which
+  models exist and nothing about what is in them -- `dpi` could be added to
+  `ImageDimensions` and the file would still match.  A model that reaches
+  itself keeps its own pointer, so the walk terminates rather than recursing.
+  `test_no_response_is_left_holding_a_reference` asserts the property, since
+  it is the whole of what makes the rest of the file worth having.
+- **Prose is dropped; structure is kept.**  `description`, `example` and
+  `examples` are documentation, and a docstring edit is not a change a client
+  can break on.  `title`, `required`, `const`, `default` and the rest are
+  kept: a renamed model or a newly required field is a break.
+- **The snapshot is a committed file beside the test,**
+  `backend/tests/api/openapi_contract.json`, and the failure is a unified
+  diff of the two rather than a bare inequality, so the diff says which
+  field and which endpoint moved.  `DRISHTI_UPDATE_OPENAPI_SNAPSHOT=1`
+  rewrites it, and the test then asserts against the file it just wrote --
+  so a regeneration still cannot pass a shape nobody read.
+- **Two guards around the equality.**  `EXPECTED_PATHS` names the six paths
+  the task names, so an added or dropped route fails as itself instead of as
+  a wall of JSON, and a snapshot committed while the app served nothing
+  cannot pass.  The one test file needs neither a session nor a client: an
+  OpenAPI document is built without touching the database, which is the same
+  reason `test_version_api.py` takes a module-level client.
+
+**Consequences.**  A shape change now fails the suite whether it was planned
+or not, and fixing it is a deliberate act -- reading the diff and rewriting
+the file -- rather than something discovered by a client.  The cost is that
+adding a field is now two edits, a schema and a snapshot, and a route added
+in a hurry fails CI until someone reads why.  The snapshot also cannot see a
+shape the document does not declare: an `APIError` the route raises without
+a matching `responses=` entry is still an undocumented refusal, which is why
+
+---
+
+## D82 -- Tier 1's OCR seam is one abstract `read(image) -> OcrResult`, and nothing else
+
+**Date:** October 2, 2026. **Status:** settled, task 12.2.
+
+**Context.**  Part 12 needs two engines (`TesseractEngine` and
+`EasyOcrEngine`), a fallback chain, a confidence-gated re-read and a
+crop-to-region read, and each of those is a caller written once.  ROADMAP B4.1
+names the engines and B4.2 the re-read, so the risk is an interface that grows
+one argument per engine: a `dpi` for Tesseract, a `language` for EasyOCR, a
+`psm` for neither.  Every one of those compiles, and a caller is then left
+needing to know which engine it happens to hold.
+
+**Decision.**
+
+- **`OcrEngine` is an `abc.ABC`, on `Watchlist`'s reasoning (`D13`).**  A
+  subclass that omits `read` cannot be instantiated, so a wiring mistake is a
+  `TypeError` at construction rather than an `AttributeError` at the first
+  document.  `test_read_is_the_only_method_the_interface_requires` pins the
+  set to one name, so 12.3's availability check becomes a concrete method on
+  the engines rather than a second requirement on the interface.
+- **`read` takes one positional `image` and carries no option.**  A crop for
+  12.8's re-read is a frame of its own, so a re-read is `read(crop)` and not
+  `read(image, region)`, and no caller can reach an argument only one engine
+  understands.  **The signature is read with `inspect.signature` rather than
+  called**, because a method that happens to work proves less than a signature:
+  adding `dpi=300` leaves every behavioural test in the file passing and is
+  caught by two of the signature tests, proved by mutation.
+- **A read is words, and a word is text, a box and a confidence.**  The box is
+  `(left, top, right, bottom)` in the frame handed in, which is what makes
+  12.8's region crop and 12.14's "every field carries the region it came from"
+  addressable from a word rather than recomputed from the page.
+- **`OcrResult` keeps the words and no joined page string.**  ROADMAP B4.1's
+  "text + per-word confidence" is answered by the words themselves, and a
+  `text` field beside them would be a second copy of a page's identity data
+  with somewhere to be logged -- the thing `WatchlistHit`'s missing fields are
+  about.
+- **Both records are frozen and carry no public method**, as `WatchlistHit`,
+  `MrzDocument` and `EvidenceFlag` are: a method here would be a second answer
+  about what a page held, and it could disagree with the words the record was
+  built from.
+- **A page holding no words is an empty `OcrResult` and not a refusal.**  Tier
+  1 degrades (12.6), so "no engine could read this page" is a result a caller
+  can carry, not an exception it has to catch on a second path.
+
+**What this forbids**
+
+- A second argument on `read`, a default on `image`, `*args`, `**kwargs`, and
+  any engine-specific option on the interface.
+- `availability` as a second abstract method before 12.3 has two engines it
+  could differ between.
+- A `text` field or property on `OcrResult`, and any slot an engine could
+  write a whole page's characters into.
+
+**Consequences.**  Adding a third engine is a subclass and nothing else, and
+12.5's `select_engine` can hold a list of them without knowing which is which.
+
+---
+
+## D83 -- An engine reports its own absence through `is_available()`, and the binding is imported late
+
+**Date:** October 2, 2026. **Status:** settled, task 12.3.
+
+**Context.**  `pytesseract` is not a declared dependency of this project and
+the `tesseract` binary is an operating-system install rather than a Python
+package, so a Tesseract machine and a non-Tesseract machine are both ordinary.
+The task asks the engine to report itself unavailable rather than raise, which
+makes absence a *value*, and a value has to be answerable before any document
+is read -- otherwise 12.5's selector chooses between engines by catching
+exceptions, and 12.6's degrade is a second `except` clause instead of a
+branch. The risk in answering it is that the answer gets read off whichever
+machine runs the test, so the suite would pass on a station with Tesseract and
+fail on one without it.
+
+**Decision.**
+
+- **Availability is a concrete `is_available() -> bool` on the engine, not a
+  second abstract method.**  `D82` deliberately left it off the seam for want
+  of two engines to differ between; `TesseractEngine.__abstractmethods__` is
+  `frozenset()`, which is asserted by name.
+- **Two things must both be present, and either one missing means
+  unavailable.**  The `tesseract` binary alone is not availability --
+  `pytesseract` is what drives it -- and the binding alone is not availability
+  either, because it shells out to the binary. Both halves have their own test.
+- **`read` on an unavailable engine returns `ocr.NO_WORDS` and never raises.**
+  This is `D82`'s "an empty read is a result, not a refusal" read literally:
+  an engine that cannot read has nothing to report about the page, and 12.6's
+  degradation is the same value it returns rather than a second one.
+- **`NO_WORDS` is one shared value in `ocr.py`, not a literal per engine.**
+  12.3 and 12.4 both answer "nothing found", and two spellings of nothing read
+  as two findings later.
+- **`pytesseract` is imported on first use and the absence is cached.**
+  A module-scope import would make importing this module an `ImportError` on
+  every box that has not installed it, which is the exact failure the task
+  asks 12.3 not to have. `lru_cache` holds the absence as firmly as the
+  presence, so a box without it asks once per process rather than once per
+  document.
+- **Both probes are constructor-injected, and `binding=None` is a different
+  answer from the `binding=IMPORT` default.**  `IMPORT` means "import it when
+  asked"; `None` means "there is definitely not one". Without that distinction
+  a test could only assert the *real* machine's binding, so the availability
+  test would mean one thing here and another on a station with Tesseract --
+  exactly the failure the task's Verify line names.
+- **`lang` and the page segmentation mode are module constants, not
+  environment variables.**  This is a deliberate departure from `D82`'s "reads
+  it from the environment". The intent there was that no caller reaches an
+  engine-specific option, and a constant serves that without making one
+  document's read depend on ambient process state that no request owns or can
+  see; a test changes the constant rather than the environment.
+- **Tier 0's frame is BGR and pytesseract's PIL path reads the array as RGB,
+  so the frame is reversed and made contiguous before it is handed over.**
+  Handing a frame over as it stands swaps two channels and every box, text and
+  confidence still comes back plausible, so the test reads the channels out of
+  what the binding received rather than trusting the read.
+- **pytesseract's output holds more than words.**  Its dict form reports one
+  row per block, paragraph and line alongside the words, marks those rows at
+  `conf` of -1, and a confidence it could not parse is not a word's
+  confidence either. A score of `0` is a word Tesseract was unsure about and
+  is kept, because judging an unsure word is 12.9's confidence gate's job.
+- **The mean is over the words that were read**, so a dropped row cannot drag
+  a page's confidence down without contributing a word to it.
+- **`read` does not wrap a real pytesseract call in a handler.**  The probe
+  answers "can this engine read at all", and a failure part-way through one
+  read is a different event with its own evidence. Swallowing it would make a
+  broken install look like a blank page.
+
+**What this forbids**
+
+- `is_available` as an abstract method, or as a property on the seam.
+- `read` raising for a missing binary, a missing binding, or both.
+- A module-scope `import pytesseract`, and `pytesseract` in `requirements.txt`
+  on the strength of this engine alone.
+- Handing the frame over in Tier 0's order, or handing the caller's own array
+  over rather than a contiguous copy of it.
+- An environment variable for a language, a DPI, or a segmentation mode.
+- Keeping a block, paragraph or line row as if it were a word.
+
+**Consequences.**  12.4's `EasyOcrEngine` is this shape with a different probe
+and a different binding, and 12.5's `select_engine` can ask `is_available()`
+with no handler wrapped around asking it. The costs are honest ones: a
+Tesseract installed outside `PATH` reads as unavailable, a box that loses the
+binary between the probe and the read raises out of `read` rather than
+degrading, and `is_available()` asks the filesystem on every call rather than
+caching a verdict, because a cached "unavailable" on a machine that has since
+installed Tesseract would be worse than a cheap second `which`.
+
+---
+
+## D84 -- EasyOCR is probed by one question and read in Tier 0's own channel order
+
+**Date:** October 2, 2026. **Status:** settled, task 12.4.
+
+**Context.**  `D83` settled the shape of an absent OCR engine and predicted
+that 12.4 would be "this shape with a different probe and a different
+binding".  It is, with one finding that is not a matter of taste and that the
+prediction did not anticipate: the two engines disagree about channel order.
+pytesseract builds a PIL image, which reads the array as RGB, so 12.3 reverses
+Tier 0's BGR frame before handing it over.  EasyOCR does not.  Its
+`utils.reformat_input` takes a three-channel `numpy` array as `img = image`
+and greys it with `cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)` -- the array is
+BGR, in the order `cv2.imread` produces and the order the rest of EasyOCR's
+own pipeline is written in.  A second question is what "absent" means for a
+package that has no executable behind it.  EasyOCR builds a `Reader` on first
+use, and that construction downloads recognition models.
+
+**Decision.**
+
+- **EasyOCR's frame is handed over as it arrives.**  Tier 0 works in BGR and
+  EasyOCR reads BGR, so there is no reversal here, and the reversal 12.3
+  performs for pytesseract must not be copied across by symmetry.  Doing so
+  would swap the two channels EasyOCR greys and normalises while every box,
+  text and confidence still came back plausible.  The frame is still copied and
+  made C-contiguous, because "reading leaves the frame it was handed untouched"
+  is a property of a read rather than of an engine.
+- **Availability is one question, not two.**  Tesseract's engine takes a
+  `locate` probe beside its binding because it has two halves that can each be
+  missing.  EasyOCR is one Python package, so `EasyOcrEngine.__init__` takes
+  only `binding` and `is_available()` is `self._easyocr() is not None`.  The
+  absence of a second probe is asserted by the constructor's signature, since
+  a second probe added later would make the answer half-true rather than
+  wrong, which no behavioural test would notice.
+- **A `Reader` that cannot be built is a broken install and raises.**  The
+  probe answers "can this engine read at all", and on this engine the only
+  absence knowable without doing the work of a read is the package itself.  A
+  present EasyOCR whose models cannot be downloaded raises out of `read`, on
+  `D83`'s reasoning: swallowing it would report a blank page on a box whose
+  engine is installed and merely unreachable.  `is_available()` deliberately
+  does *not* try to build a reader, because 12.5's selector calls it in order
+  to choose, and choosing must not be the thing that downloads a model.
+- **`easyocr` is imported on first use and the absence is cached**, exactly as
+  `pytesseract` is, and it is not in `requirements.txt` on the strength of
+  this engine alone.
+- **A box is read as the extent of EasyOCR's four points.**  EasyOCR reports
+  the corners of a quadrilateral in no fixed order, not an origin and a size,
+  so `(left, top, right, bottom)` is the min/max of the points rather than
+  the first two of them.
+- **The reading options are module constants and are passed explicitly.**
+  `detail`, `paragraph` and `output_format` are EasyOCR's defaults today, and
+  spelling them out is `D83`'s rule rather than a change of behaviour: a
+  change to EasyOCR's own default must not be able to move our boxes.
+
+**What this forbids**
+
+- Reversing the frame for EasyOCR, or generalising 12.3's reversal into a
+  shared helper both engines call.
+- A `locate`, a `which`, or any second probe on `EasyOcrEngine`.
+- Catching a failed `Reader` construction and returning `NO_WORDS`.
+- A module-scope `import easyocr`, and `easyocr` in `requirements.txt` on the
+  strength of this engine alone.
+- Reading a quadrilateral as its first two points, or an out-of-range
+  confidence as given rather than clamped to `0.0..1.0`.
+
+**Consequences.**  12.5's `select_engine` can ask both engines the same
+question and hold either one, and 12.9's fallback engine is a different
+implementation behind the same `OcrResult` rather than a second shape.  The
+costs are honest ones: an EasyOCR installed but not yet able to load its
+models reports itself available and then raises, and asking whether this
+
+---
+
+## D85 -- A preference is a choice: the selector honours it, and answers `None` rather than substituting
+
+**Date:** October 2, 2026. **Status:** settled, task 12.5.
+
+**Context.**  `D83` settled that an engine reports its own absence as a bool
+precisely so that "12.5's selector chooses between engines by catching
+exceptions" would not happen, and `D84` settled that EasyOCR's probe must not
+build a reader because "12.5's selector calls it in order to choose, and
+choosing must not be the thing that downloads a model".  12.5 is therefore the
+first caller to hold an engine at all, and the first to hold two, and three
+questions the two decisions do not answer came with it.  How a preference is
+spelled: ROADMAP B4.1 names the two classes, not a preference, and a name a
+caller invents per call site is a second vocabulary.  What an *unavailable*
+preference answers: the task says `None` "when none is available" and does not
+say what a named engine that is not installed answers.  And what a name
+matching no engine does -- raise, degrade, or quietly mean "any".  The risk
+common to all three is a silent substitution: an operator who asked for one
+engine and got a read from another has a screening that completed and says
+nothing about having been read by something else.
+
+**Decision.**
+
+- **`select_engine` is its own module, `app.pipeline.tier1.selection`.**
+  `ocr.py` is what both engines import, so a selector holding them cannot live
+  there without a cycle; the seam stays a seam and the policy that chooses
+  between implementations sits beside it.  This is `D82`'s "adding a third
+  engine is a subclass and nothing else" -- and a subclass, which is what a
+  selector holding a list needs.
+- **A preference is one of two module constants, and `None` is the only
+  spelling of "no preference".**  `ENGINE_NAMES` is the whole vocabulary, so a
+  rename is one edit, and an empty or wrongly-cased name is refused rather than
+  read as an absent preference -- `config.py`'s rule for an unknown log level,
+  where the same argument applies: a shrug would make a typo mean "whichever".
+- **An unavailable preference answers `None` and is not substituted.**  A
+  caller names an engine for a reason -- a script it reads better, a language,
+  boxes 12.8 can crop -- and answering with a different engine would hand back a
+  read nobody asked for.  `None` is what 12.6 degrades on, so an unavailable
+  preference and an uninstalled engine are one state to the caller rather than
+  two.  **12.9 is where a second engine is tried on purpose**, and it is
+  written down there; a selector that quietly tried the other one would make
+  12.9's gate unreachable and would blur which engine produced a read.
+- **A name this call cannot hold raises `UnknownEngineError`, a `ValueError`.**
+  Every name in `ENGINE_NAMES` has an engine behind it, so a name that matches
+  none is a wiring mistake rather than an absence, and answering `None` for a
+  misspelling would degrade every screening on the box with nothing to say
+  which engine was asked for.  It is loud on purpose: `main.py`'s catch-all
+  answers it as a 500 `INTERNAL_ERROR` envelope (`D74`), and one refused
+  document is cheaper than a box silently reading with an engine nobody chose.
+- **The default order is Tesseract, then EasyOCR.**  It is neither
+  alphabetical nor fastest-first, and the reason is `D84`: EasyOCR builds a
+  `Reader` whose models are downloaded the first time one is built, so leading
+  with it would make the selector's default choice the one that costs a
+  download.  `ENGINE_NAMES` is that order written down, and a test holds the
+  default registry to it, so an engine added out of order is caught rather than
+  quietly changing which engine reads.
+- **A preference is asked about alone, and the walk stops at the first answer.**
+  Naming an available engine returns it whatever the order says, and asking the
+  others as well would ask questions whose answers cannot change the one
+  returned; the walk asks each engine once and stops, so an engine after the one
+  chosen is never probed.
+- **Nothing is wrapped around asking availability.**  A probe that faults is a
+  broken install and propagates: swallowing it would report a blank page on a
+  box whose engine is installed and merely unreachable, which is `D83`'s
+  argument against a handler around `read`, applied to the question instead.
+- **The seam does not declare the question this module asks.**
+  `OcrEngine.__abstractmethods__` is `frozenset({"read"})` (`D82`) and
+  `is_available` is concrete on each engine (`D83`), so `select_engine` is the
+  one place in Tier 1 depending on a method the abstract class does not list.
+  `D83` forbids making it abstract and its tests hold both frozensets by name,
+  so the gap is recorded here rather than closed here: both engines in the
+  default registry are built in this module, so the gap cannot be reached by a
+  caller that passes nothing.  A third caller of `is_available`, or a caller
+  handing in its own registry, is what should reopen `D83`.
+- **The default registry is a mapping proxy over module-level singletons.**
+  Read-only because a caller must not be able to edit the set the default
+  choice is made from, and singletons because EasyOCR's reader -- and the
+  loaded models -- lives on the instance (`D84`): a registry or an engine
+  rebuilt per document would reload them per document.
+- **`engines` is keyword-only and injectable, and the tests are the reason.**
+  Every case in the file is answered by stubs, so each means the same thing on
+  a station with Tesseract and on one without; the two tests that touch the
+  real registry hold the answer to "one of ours or none" rather than to any
+  particular machine's answer, which is 12.3's machine-agnostic test again.
+
+**What this forbids**
+
+- Answering an unavailable preference with another engine, or walking the rest
+  of the registry once a name has been given.
+- Reading `""`, `"Tesseract"` or `"paddleocr"` as "no preference", or answering
+  `None` for a name that matches no engine.
+- A `try` around `is_available()`, or a fallback that catches instead of asking.
+- Reading a page, or building an EasyOCR reader, to decide which engine to read
+  with.
+- A default registry that is mutable, rebuilt per call, or holds engines built
+  per call.
+- Adding `is_available` to the interface to close the gap above.
+
+**Consequences.**  12.6 degrades on one `None` that now covers three causes --
+nothing installed, a named engine that is not available, and a registry holding
+none -- and 12.9's fallback is the only place a second engine is tried.  The
+costs are honest ones: a deployment that configures EasyOCR on a box without it
+gets "ocr unavailable" for every document rather than a silent Tesseract read,
+which is the intended refusal but is an operator-visible one; a caller
+injecting its own registry must hand in objects that answer `is_available`
+
+---
+
+## D86 -- A page no engine could read is a degraded result; a faulting engine is loud
+
+**Date:** October 2, 2026. **Status:** settled, task 12.6.
+
+**Context.**  ROADMAP B4.1 asks that "the unavailable engine degrades, it does
+not crash", and 12.6's task puts it as a test: Tier 1 degrades to "ocr
+unavailable" and the screening still completes.  `D85` settled what the caller
+is handed when an engine is missing -- one `None` covering three causes -- and
+named the case this task has to decide: an engine installed but unreachable
+reports itself available and then raises at its first read.  Two questions
+came with it.  What is "ocr unavailable" as a value, given that a blank page and
+an unread page carry the same words?  And does a read that faults degrade too,
+or raise?
+
+**Decision.**
+
+- **`run_tier1(image, preference, *, engines)` is Tier 1 as one call, in
+  `app.pipeline.tier1.runner`**, the path ROADMAP B4.12 gives the Tier 1 runner,
+  and it is the first caller of `select_engine`.  ROADMAP B4.12's partial score
+  and the cascade's own entry for it are 14.5's and are not pre-empted here.
+- **"ocr unavailable" is `Tier1Result(ocr=NO_WORDS, ocr_available=False)`.**
+  The read is the shared empty read rather than a second spelling of nothing
+  (`D83`), and `ocr_available` is what distinguishes it from a blank page an
+  available engine read -- a flag read off the words would make the two
+  identical, since both carry none.
+- **A missing engine is answered, not raised.**  The degrade is a branch on
+  `None`, not a handler, and it returns the same record shape an available
+  engine does, so every consumer reads `ocr_available` and nothing has to guard
+  a lookup.
+- **A read that faults is not degraded; it raises.**  This is `D83`/`D84`'s
+  rule applied one level up: a broken install swallowed into the degrade would
+  report a blank page on a box whose engine is installed and merely
+  unreachable, and the absence is the one case the selector could not have
+  known about.  14.11 is where a module fault is recorded without aborting the
+  rest of a screening; 12.6 is not that task and does not become it by
+  catching.
+- **A refusal stays a refusal.**  `UnknownEngineError` propagates out of the
+  runner: degrading a misspelling would hide the wiring mistake `D85` made it
+  loud for, on every document on the box.
+- **A preference is still honoured, and the runner never reads a page to find
+  out.**  `D85`'s non-substitution reaches the document unchanged; the one
+  engine tried is the one the selector chose, and 12.9 remains the only place a
+  second is tried.
+- **`engines` is keyword-only and injectable, for `D85`'s reason**: every case
+  in the file is answered by stubs, so a case means the same thing on a station
+  with Tesseract and one without.  The single test that touches the real
+  registry skips rather than assumes.
+- **The result is a frozen record of two fields and carries no public method**,
+  as `OcrResult` and `TierResult` are (`D82`).  **There is no reason or cause
+  field**: the three causes are one state to the caller (`D85`), and a field
+  distinguishing them would be a second answer about the same absence.
+
+**What this forbids**
+
+- A `try`/`except` around `select_engine` or `engine.read` in the runner.
+- A second spelling of the empty read, a `flags` or `reason` field nobody
+  writes, or a partial score `R1` here.
+- Substituting an engine for an unavailable preference, or trying a second one.
+- Refusing a frame that is not an image: 4.1's gate is the one answer about
+  what an image is.
+- Reading a page when no engine was chosen.
+
+**Consequences.**  A document on a box with no OCR engine now gets a Tier 1
+result that says so, which is the operator-visible refusal `D85` intended, and
+12.8-12.16 build on one record that carries the read.  The costs: a broken
+
+---
+
+## D87 — Tier 1's frame is a printed page in a real font, describing the person Part 4 already prints
+
+**Date:** October 2, 2026. **Status:** settled, task 12.7.
+
+**Context.**  Part 12 needs a frame to read, and Part 4 already ships a
+generator.  Reusing it was the obvious move and is wrong: `mrz_images` draws a
+zone as one glyph per cell from a 5x7 pattern table, because what reads a zone
+is 4.3's component cutting and 4.5's row grouping and a nearest-pattern match
+over cells it owns.  What reads a printed field is an OCR engine, and no engine
+is installed on this box -- so the fixture has to be judged on the description
+it hands back, not on a read.  That put four questions.  What is drawn, when
+nothing here can read it back.  How a field's region is stated, when 12.8 crops
+to it and 12.14 reports it.  What the specimen says, when 12.15 compares a
+printed field with an MRZ.  And which knobs belong here rather than in Part 4's.
+
+**Decision.**
+
+- **A second fixture, `tests/fixtures/document_images.py`, beside
+  `mrz_images` rather than inside it.**  A cell table has neither an advance
+  nor a baseline, so no word box and no row of a form can be measured off it;
+  adding a second page type to that module would have meant one module holding
+  two ways of drawing and one `cells` field meaning two things.
+- **The page is Hershey Simplex through `cv2.putText` at `LINE_8`, ink on
+  paper, and the paper and ink levels are `mrz_images`' own re-exported rather
+  than written down twice.**  A real font is what an engine is built to read,
+  and one paper/ink vocabulary means nothing downstream has to ask which face a
+  frame was drawn on.  **No rotation, gain, shadow or noise knob is added
+  here**: Part 4 owns those, and Tier 1 degrades a page through font scale and
+  re-read, so a second place to damage a page is a second answer to how one is
+  damaged.
+- **The specimen is the TD3 person, and the two dates print as a passport
+  prints them -- `12 AUG 1974`, not `1974-08-12`.**  12.15's clean case needs
+  printed fields that agree with the MRZ, or it hands a comparator four
+  mismatches on a clean document; and 12.13's normalisation needs a printed
+  form that is not already ISO, or it is tested on its own output.  **The two
+  fixtures stay separate frames and the test composes them**: neither fixture
+  knows about the other beyond the shared person and the shared paper.
+- **A field is `name`, `label`, `value` and two boxes -- a label box and a
+  value box, never one union box.**  12.11 finds a value by its anchor word and
+  takes what is beside it, and 12.8 crops to the region and re-reads it; a
+  union box would answer a re-read with the label and the value both, and put
+  the anchor text inside the field it located.  `field_of(page, name)` is the
+  lookup, because a field is addressed by name everywhere in this part.
+- **The value column is placed by the widest label, and nothing about a value
+  moves it.**  12.15 alters one printed date and reports a mismatch against
+  the region the field was printed in, so an override that reflowed the page
+  would move the region it reports and turn one altered field into four.
+- **A block that will not fit the page is refused rather than clipped**, on
+  Part 4's reasoning: half a printed date reads back as a date that was
+  misread, which is a pipeline test failing for a reason of the fixture's
+  making.  **A repeated field name and an override naming no field are
+  refusals too**, for the same reason in the other direction -- a field is
+  addressed by its name, so a page carrying two of them, or an override that
+  silently printed nothing, would leave a test asserting against a page nobody
+  altered.
+- **What the file pins is that the description is true of the frame**: every
+  box holds ink and sits inside the page, no ink is printed outside the boxes
+  the description names, and no two rows share a row of the page.  **The
+  limitation is recorded rather than hidden: no test here reads the page back
+  through an engine**, because neither engine is installed and the injected
+  stubs of 12.3 to 12.6 answer for a page of their own.
+
+**What this forbids**
+
+- A page type added to `mrz_images`, or a second set of paper/ink levels.
+- An ISO printed date in the specimen, or a fifth field no anchor word names.
+- One union box per field, a `dict` of fields on the page, or a field addressable
+  by anything but its name.
+- Clipping a block that does not fit, ignoring an override that names nothing, or
+  a rotation/noise/shadow knob on this fixture.
+
+**Consequences.**  12.8 to 12.16 have a frame with a per-field region and a
+known ground truth, and 12.12 adds a visa and a national ID by adding two
+specimen tables rather than a second generator.  The honest cost is that **this
+fixture cannot yet show that any engine reads it**: B4.1's "interface test runs
+against a synthetic image" is answered by stubs until Tesseract or EasyOCR is
+
+---
+
+## D88 -- A field is re-read on its own box, and the gate settles it before anything is reported
+
+**Date:** October 2, 2026. **Status:** settled, tasks 12.8, 12.9, 12.10.
+
+**Context.**  `tasks.md` carried 12.8 and 12.9 as done with no code behind
+them: `reread.py` held a one-line placeholder and nothing in the package
+mentioned a re-read or a confidence threshold.  12.10 cannot be written without
+both, because its claim is about what happens *after* a bad read.  Four
+questions followed.  What a re-read physically does to the frame.  What the
+gate is allowed to spend before it reports.  What "produces no flag" can mean
+while 12.15, which is what builds flags from OCR fields, has not been written.
+And what the threshold number is, given that the abstract states none.
+
+**Decision.**
+
+- **`re_read_field(image, region, engine)` crops to the field's own
+  `value_box`, enlarges 3x, re-thresholds with Otsu, and hands the engine's
+  own `OcrResult` back untouched.**  It prepares a frame and does not read,
+  score or second-guess the answer, on 12.6's rule that a result is carried
+  exactly as the engine reported it.  **The crop goes out as three channels**,
+  because 12.2's seam promises every frame an engine is handed is BGR and
+  EasyOCR is passed it untouched (`D84`) -- a single-channel image leaving this
+  module would break the one engine that cannot convert for itself.  **Otsu
+  rather than a fixed cut**, so the threshold is read off this crop's own two
+  levels and is not a second place a page's exposure is written down.
+- **`OCR_UPSCALE = 3` and `OCR_CONFIDENCE_THRESHOLD = 0.80` are module
+  constants, not caller arguments**, on `D82`'s reason that a read carries no
+  engine-specific option.  **The threshold is a stated default and not a
+  measured figure**: the abstract names no number, says thresholds are chosen
+  against a target false-alert rate and versioned, and claims no accuracy.
+  Part 27 is what earns a better one.
+- **`gate_field` is a branch on `mean_confidence >= OCR_CONFIDENCE_THRESHOLD`
+  and this module holds no handler.**  Below the threshold it re-reads once,
+  then asks a fallback engine **on the same crop**, and only then reports
+  `low_confidence`.  Handing a fallback the whole page would undo the
+  enlargement it is being asked for.  The comparison is `>=` at the boundary,
+  so the threshold itself is not a re-read.
+- **A fallback is asked on purpose, and this is the one place `D85`'s
+  non-substitution does not apply.**  `D85` is about *choosing* a read: a
+  preference is honoured or the run degrades, and no other engine is tried.
+  Repairing a read that came back unsure is a different question, and 4.1 names
+  it: "re-read **or a fallback engine** is used before any flag is raised".
+- **`FieldRead.low_confidence` is the only thing down this line that owes
+  anyone a finding**, and it is the gate's verdict rather than a value any
+  caller may recompute -- frozen, and carrying no public method, for the reason
+  `EvidenceFlag` is.  **A field the gate resolved owes nothing**, and that is
+  the entire content of the abstract's promise.
+- **This module holds no finding vocabulary at all**: no `app.risk` import, no
+  flag built, and a test that walks its own AST to keep it that way.  Deciding
+  what a page means is 12.11 to 12.16's question.  **12.10's "no flag" is
+  therefore asserted as two things that can be shown now** -- the gate owes
+  nothing and the value it keeps is what the page printed, so neither
+  `OCR_MRZ_MISMATCH` nor `OCR_LOW_CONFIDENCE` has anything to fire on -- rather
+  than as a count of emitted flags, which would have to wait for 12.15 and would
+  then be a test about the comparator rather than about the re-read.
+- **A re-read's word boxes are in the crop's own frame and not on the page**,
+  and the record says so.  12.14 reports the field's own region, which is what
+  a highlight is drawn from; the two are deliberately not interchangeable.
+
+**What this forbids**
+
+- A region grown, shrunk or unioned before cropping -- a box over a field *and*
+  its label answers with the anchor word as well (`D87`).
+- A fixed threshold, an adaptive-threshold block size that a small field cannot
+  satisfy, or a caller-supplied upscale factor.
+- Wrapping a read in a handler here, the way 12.6's degrade is a branch rather
+  than a catch (`D86`).
+- Importing `app.risk` from this module, or naming an `EvidenceFlag` here.
+- A crop handed to a fallback engine, or a fallback tried before the re-read.
+
+**Consequences.**  12.10's anti-false-alarm test now has something to assert
+against, and 12.11 to 12.16 inherit a gate that has already settled what to do
+with an unsure field.  The costs are honest: **no engine on this box has read
+any of it** -- the stubs answer by the shape they are handed, which is what
+makes the tests mean the same thing with and without Tesseract -- and **12.15
+must consume the gated read rather than the page read**, or the guarantee
+
+---
+
+## D89 — A printed label finds its field, and a value its own pattern cannot read is still a value
+
+**Date:** October 2, 2026. **Status:** settled, task 12.11.
+
+**Context.**  `D87` gave Tier 1 a page with a label box and a value box per
+field, and said why they are never one box, and 12.11 is the first task to
+consume a read off a whole page rather than a crop.  That put four questions.
+What a field is, and what extracting one answers.  What happens to a value that
+does not look like the field it sits beside.  How a label is found among words
+an engine returns in whatever order it likes, and how far "beside it" reaches.
+And what an unreadable field answers, against what 12.15 needs to be able to
+compare.
+
+**Decision.**
+
+- **A module, `app/pipeline/tier1/fields.py`, beside `reread.py`.**  It holds
+  :class:`FieldRule` -- a field's name, the label spellings that locate it and
+  the pattern its value matches -- and :data:`FIELD_TABLES`, one tuple of rules
+  per document type behind a mapping proxy, with :data:`DOCUMENT_TYPES` spelled
+  out beside it rather than read off its keys, as 12.5's registry does.  **One
+  function, `extract_fields(read, document_type)`,** taking the
+  :class:`~app.pipeline.tier1.ocr.OcrResult` :func:`~app.pipeline.tier1.runner.run_tier1`
+  returns and answering a frozen :class:`ExtractedFields` carrying an entry
+  for **every** field the table names.
+- **A value its own pattern cannot read is answered whole.**  The pattern says
+  which part of the text beside the label is the value and trims to it; where
+  it matches nothing, the whole of that text is the answer.  **Dropping it
+  instead would leave 12.15 with nothing to disagree with**, and a forged value
+  is often malformed -- that is precisely the case the comparator exists to
+  catch, and a table that discarded it would be a false-negative generator.
+  Absence stays ``None`` for the one case that really is absence: a label the
+  page never printed, or printed with nothing beside it.
+- **Rows are rebuilt from the boxes, and the value is what lies to the right of
+  the anchor on that row.**  Words are grouped by vertical overlap and sorted
+  left to right, because nothing in :class:`OcrResult` promises reading order
+  and one that did would be a second promise to keep.  **An anchor run may not
+  bridge a gap wider than :data:`ANCHOR_ADJACENCY` times the words' own
+  height** (1.0): a label is one run of words separated by a space's width,
+  while the value column is a form's own gap away, so the two are told apart by
+  geometry rather than by a pixel gap another page's size would move.  That
+  constant and not a caller argument, on ``D88``'s reason that one read carries
+  no option.
+- **Labels are compared with case, spacing and edge punctuation set aside.**
+  An engine's own spelling of a label is not a second label to fail on, and
+  "Passport No." and "Passport  No" are the one anchor the table lists.
+- **An unknown document type is a refusal, `UnknownDocumentError`.**  On 12.5's
+  reasoning: every name in :data:`DOCUMENT_TYPES` has a table, so answering
+  ``None`` for a misspelling would hand 12.15 four absent fields on every
+  document and say nothing about which type was asked for.
+- **No finding vocabulary and no log line.**  What a disagreement means is
+  12.15's question, and a field nothing could read is ``None`` rather than a
+  finding; the module imports neither :mod:`app.risk` nor :mod:`logging`, so a
+  printed value cannot reach one from here.
+
+**What this forbids**
+
+- A value dropped for matching no pattern, or a field answered ``""``.
+- Reading the whole row the label shares rather than what lies beside the
+  anchor, and a label run that bridges two printed blocks.
+- A gap in pixels rather than one relative to the words' own height.
+- Trusting the order an engine returned its words in.
+- An unknown document type answering ``None``, or falling back to the passport.
+- A mutable table, or one a caller may add a document type to.
+
+**Consequences.**  12.12 adds two specimen tables and two names in
+:data:`DOCUMENT_TYPES`, not a second mechanism, and its tests are the anchor
+round-trip this one already has.  12.13 normalises the values answered whole
+above, and 12.14 reports the region each came from -- a region this module
+deliberately does not carry, because a word box off a re-read is in the crop's
+frame and not the page's (``D88``).  The honest cost is unchanged from ``D87``:
+**no engine on this box has read any of this**, and the read the tests consume
+is a stub over ground truth that walks the drawing's own glyph advances, with
+
+---
+
+## D90 — A document type is a table, and a number's band is a value read whole or not at all
+
+**Date:** October 2, 2026. **Status:** settled, task 12.12.
+
+**Context.**  `D89` settled the shape of one document type's table and left
+12.12 two more: a visa and a national identity card, both named in the problem
+statement's Module 1 inputs and neither in `D89`'s one table.  That put three
+questions.  Whether the two new types are a second mechanism or two more rows
+in the first.  Which fields each names, given the passport table holds four
+and the problem statement lists six for a passport, four for a visa and none
+for an ID card.  And whether a number's width is a property of the pattern or
+of the document.
+
+**Decision.**
+
+- **Two more tables and no second mechanism.**  `VISA_FIELDS` and
+  `NATIONAL_ID_FIELDS` are tuples of the same :class:`FieldRule` in the same
+  :data:`FIELD_TABLES`, with `VISA` and `NATIONAL_ID` added to
+  :data:`DOCUMENT_TYPES` beside `PASSPORT`.  Same `extract_fields`, same
+  :class:`ExtractedFields`, same refusal for a name no table holds.  A fourth
+  document type is a fourth tuple, and the tests hold each one to a page it can
+  actually be read from.
+- **Each new table names four fields, and the four are the passport's four
+  with the number's own name.**  `name`, `date_of_birth`, `date_of_expiry` and
+  the document's own number -- `visa_number`, `national_id_number`.  **Not the
+  problem statement's wider list**: a visa's MRZ is a TD2 and an ID card's is a
+  TD1, and 12.15 compares each printed field with the MRZ field it must agree
+  with, so a field no MRZ carries has nothing to be compared against and a
+  table listing one is a claim no test downstream can keep.  `D89` already
+  chose the same four for a passport against a six-field list, and this holds
+  that choice rather than reopening it.  Adding a field is a table edit once
+  the MRZ work that can check it exists.
+- **A number's band belongs to the document, and a band is bounded at both
+  ends.**  An ICAO travel document's number is at most nine characters; an
+  identity card's number is not bound by ICAO at all, so
+  `_NATIONAL_ID_NUMBER` is its own pattern on a wider band rather than the
+  passport's.  **Both word boundaries are load-bearing**: `\b[A-Z0-9]{6,9}\b`
+  means a run of the same characters longer than the band matches *nothing*,
+  and `D89`'s rule then answers the whole of it.  Without them a twenty-digit
+  run is answered as its first nine, which is a number the document never
+  printed -- the one outcome 12.15 exists to catch, manufactured by the
+  comparator's own input.
+- **The tests are 12.11's two, over two new pages.**  The anchor round-trip and
+  the print-order hold, per table, plus each page read back whole and each
+  number field named by exactly one table.  Pages are drawn by
+  `document_images.draw_document` from rows the test file states: the fixture
+  prints one document, and 12.12 adds two tables rather than a second specimen.
+
+**What this forbids**
+
+- A visa or an ID card read by a different code path, a fallback to the
+  passport, or a table assembled from another's rules at run time.
+- A field in a table that no MRZ for that format carries.
+- One band shared by two document types whose numbers are bounded differently,
+  and an unbounded band inside any band.
+
+**Consequences.**  12.13 normalises the values these tables answer, and 12.14
+reports the region each came from.  A document type with no table is still
+`UnknownDocumentError` rather than four absent fields, and there are now three
+names in that message instead of one.  The honest cost is `D87`'s, unchanged:
+**no engine on this box has read any of this**, and all three tables are
+exercised through a stub over ground truth.  A real visa or ID card page will
+print labels none of these three tables lists, and the first such page is
+likely to find an anchor here that is wrong -- which is what the anchor
+
+---
+
+## D91 — A value is normalised by the type its own rule names, and one that cannot be read is handed back whole
+
+**Date:** October 2, 2026. **Status:** settled, task 12.13.
+
+**Context.**  `D90` left three tables answering a printed value as it was read,
+and 12.13 names the shape: dates to ISO, names uppercased and transliterated,
+numbers stripped of spaces.  That put four questions.  What a normaliser keys
+on.  Whether it is a step inside `extract_fields` or a separate call.  What it
+does with a value no pattern could read — which by `D89` is *most* of what
+it is handed.  And what happens to a value it cannot turn into the shape it
+wants.
+
+**Decision.**
+
+- **The type is the key, and it is the field\\'s type rather than the
+  document\\'s.**  `FieldRule` gains a required `value_type` naming one of
+  `DATE`, `NAME`, `NUMBER`, and `NORMALISERS` maps those three to three
+  functions.  A name is a name on all three tables, so keying on the document
+  would make a fourth table a fourth normaliser and would put "which table is
+  in play" ahead of "what does this value say".  **`value_type` is required and
+  not defaulted**, so a field added to a table cannot reach 12.15 unnormalised
+  by leaving it out; a name outside the three is `UnknownFieldTypeError`, on
+  `D89`\\'s reason that a misspelling is a refusal and not a shrug — including
+  a value type that is not a string at all, which would otherwise raise
+  `TypeError` out of the membership test.
+- **A separate call, not a step inside `extract_fields`.**  12.11 answers what
+  the page printed, and a value no pattern could read is the one 12.15 most
+  needs; folding the two together would hide a forgery in the record 12.14
+  points a region at.  `normalise_value` is the primitive and `normalise_fields`
+  the one walk over the document type\\'s own table — which is what makes all
+  three types cost one entry rather than one per table.
+- **Nothing is invented, and what cannot be read is handed back whole.**  A
+  date carrying an unknown month, an impossible day, a two-digit year or a
+  numeric order is carried through unchanged: each is a decision the page does
+  not carry, and a 31st of February rolled into March is a forgery this project
+  would have manufactured itself.  A number whose joined form misses **its own
+  band** is carried through whole, on 12.11\\'s rule that a value the pattern
+  cannot read is still a value.
+- **The band is the only judge of a number, and the normaliser removes
+  whitespace and nothing else.**  `NOT A NUMBER` beside `ID No` becomes
+  `NOTANUMBER`, because `\\b[A-Z0-9]{6,14}\\b` holds it and any content rule
+  beyond the band would answer the same value two ways depending on the words
+  in it.  12.15 disagrees with it either way, and the disagreement is the
+  finding.  A test pins that every printed character survives, in order, so the
+  claim is checkable rather than asserted.
+- **The month table is `calendar`\\'s, not twelve remembered values**, on 1.6\\'s
+  rule, and a test holds it at exactly twelve so a locale that renamed one
+  fails loudly instead of answering a date no document carries.
+- **Transliteration is borrowed, not copied.**  `_normalise_name` hands the
+  printed run to `tier0.td3.transliterate_names` as a surname — 2.8\\'s rule
+  that a space is not a separator, so it is not split and no given names are
+  invented beside it — and a test asserts `fields.py` holds neither
+  `TRANSLITERATIONS` nor `unicodedata`.
+- **The date pattern is grouped, not duplicated.**  `_DAY_MONTH_YEAR` gains
+  three capture groups so the normaliser reads its components off the pattern
+  the table matched on.  `group(0)` is unchanged, so 12.11\\'s answers are
+  byte-for-byte what they were.
+
+**What this forbids**
+
+- A normaliser keyed on the document type, a second normalising pass inside
+  `extract_fields`, and a fourth table that needs a fourth normaliser.
+- Rolling a date forward, numbering an unknown month, giving a two-digit year
+  a century, or reading `12/08/1974` day-first.
+- Joining a number whose compacted form misses its own band, or removing a
+  character the band does not admit.
+- A second copy of the ICAO transliteration map, or of the combining-mark rule.
+
+**Consequences.**  12.15 compares a shaped value against the MRZ and holds
+both sides.  12.14 reports a region beside a value that is no longer the
+string the page printed, so the record has to carry the printed form as well as
+the shaped one — which is why `normalise_fields` returns a new record rather
+than editing the one it was given.  12.16 has less to absorb, since spacing and
+diacritics are both gone before it runs.  The honest cost is `D87`\\'s,
+unchanged: **no engine on this box has read any of this**, so a month printed
+as `AUG.` with its own full stop, or a label row where the value is the whole
+
+---
+
+## D92 — A field is located by the words its own value was read from, and an absent region is a claim
+
+**Date:** October 2, 2026. **Status:** settled, task 12.14.
+
+**Context.**  12.14 names the region a field came from, and `D89` left none in
+the record, so `FieldRule` had nothing to read one out of and 12.15 had nothing
+to hang a finding on.  That put four questions.  What a region — a word's box,
+the page's box, or a flag's polygon.  Which words it covers when a value is
+only part of a printed row.  What it says where there is no value to point at.
+And what it says where a page prints one field on two rows.
+
+**Decision.**
+
+- **The region is the four corners of the words that field's value was read
+  from**, clockwise from the top left.  That is the shape a flag's ``region``
+  already carries, so 12.15 hands a finding one instead of re-expressing it,
+  and it is a box 12.8's gate could crop if a later step wants that.  **Plain
+  ``int``**, as ``MrzComponent`` converts to, so a region can go into a JSON
+  body where a ``numpy.int32`` cannot.
+- **The words are the value's own, which is what the trimming rule had already
+  decided.**  ``_beside`` trimmed the match to its own extent so trailing text
+  another field printed on the same row is not read as part of the value; the
+  region follows that same extent, so the value and the region cannot describe
+  different ink.  ``_beside`` is now ``_printed_words`` and answers the words
+  as well as the text.
+- **``None`` is the answer where there is no value**, on 23.6's reason: a
+  finding with nowhere to point is still a finding and is listed rather than
+  dropped.  A blank row, a field no anchor was printed for, and a page no
+  engine could read are all ``None`` — not an empty box, and not an error.
+- **``regions`` is required and not defaulted**, on ``D91``'s reason: a field
+  whose region a record does not carry is a field 12.15 has nowhere to point,
+  and the slot left out is the same gap.
+- **Normalising moves nothing.**  ``normalise_fields`` carries the regions of
+  the record it was given, and the printed value stays in the record that call
+  was handed — ``D91``'s consequence, paid rather than deferred.
+- **The frame is the page's, and the crop is not imported.**  12.8's re-read
+  boxes are in that crop's own coordinates, so this module takes no import of
+  ``reread`` and a test holds it there.
+- **A field printed on two rows is the first row's, value and region together.**
+  The value has always been the first row's; a region beside the second row's
+  ink would point at something the record does not claim.
+- **A word beside the anchor that carries no ink is not in the region.**  The
+  match is found in the stripped row and the word spans are counted in the raw
+  one, and the offset between them is applied rather than assumed away.
+
+**What this forbids**
+
+- A region covering the label, the whole row, or the page.
+- A region in a crop's frame, and one invented where the page printed no value.
+- A region that widens or clips a measured box.
+- Leaving the slot out, so that a field can be added to a table without one.
+
+**Consequences.**  12.15 writes ``EvidenceFlag(region=...)`` with no geometry
+of its own, and 23.6's list shows a field it cannot locate rather than omitting
+it.  The two halves of 12.11's answer stay on hand — ``extracted`` carries
+what the page printed, ``normalise_fields`` carries what it was shaped into,
+and both carry the same corners.  The honest cost is ``D87``'s, unchanged:
+**no engine on this box has read any of this**, so every region here is the
+stub's per-word layout over ground truth, and a real engine whose word boxes
+are tighter or looser than the ink would move a region's edge with it.
+
+---
+
+## D93 — A printed field is compared with the zone beside it, and the two halves a finding carries
+
+**Date:** October 2, 2026. **Status:** settled, task 12.15.
+
+**Context.**  `D92` gave every extracted field a region, `D91` gave every value a
+shape, and `D88` gave every uncertain field a re-read.  12.15 is the first thing
+in Tier 1 that turns any of that into a finding, and it is the first module in
+the tier to import `app.risk`.  That put six questions.  Which printed field is
+compared with which MRZ field, given that a visa's number and an identity
+card's are both the zone's `document_number`.  Which century a printed `1974`
+and a zone's `74` are in.  What `tolerance` reaches, and what it must not.  What
+a zone that does not carry a field at all means.  And what `expected` and
+`found` may hold, given that they are where a disagreement is written down.
+
+**Decision.**
+
+- **A module, `app/pipeline/tier1/mismatch.py`, beside `fields.py` and
+  `reread.py`, holding one function.**  `compare_to_mrz(ocr_fields,
+  mrz_document, tolerance)` walks the document type's own field table and answers
+  a tuple of `EvidenceFlag` in the table's printed order, one per field that
+  disagrees.  **It takes an `ExtractedFields` and not an `OcrResult`**, which is
+  how `D88`'s promise is kept: a caller hands it the record built from the
+  *gated* read, and the comparator cannot be given the page read by accident.
+- **The field-to-field mapping is a named table, `MRZ_FIELDS`, and a field it
+  does not name is a refusal.**  The three document types name three different
+  numbers and the zone calls all three `document_number`; a name is the zone's
+  `surname` and `given_names` together.  **Checked before anything is
+  emitted**, so a fourth table cannot produce a partial answer, and a test holds
+  every field of every table against it.
+- **The zone's side is shaped too, and the filler is the only edit made to it.**
+  A TD3 prints its document number padded to nine places (`L898902C<`), so a
+  comparison that kept the filler would disagree with every genuine passport.
+  Both sides therefore go out as upper-case words with the filler set aside.
+- **A date is compared on the two year digits the zone prints, and no century is
+  invented.**  `1974-08-12` and `740812` agree; `1874-08-12` agrees with them
+  too, because the zone carries no century to disagree with.  3.12 left the
+  century open on purpose and `mrz.infer_birth_year` is what closes it — a
+  comparator that guessed one would be inventing the forgery it then reports.
+- **`tolerance` is a count of name *words*, required and not defaulted, and it
+  reaches a name and nothing else.**  Two names are compared as the shortest run
+  of word substitutions turning one into the other, so a diacritic 12.13 already
+  took off and a run of spaces cost neither of them anything.  **A date and a
+  number are exact or are not**: a digit is a digit, and a tolerance that bought
+  a date one day out would buy a forgery one day out.
+- **Two absences are not disagreements.**  A field the page printed nothing for
+  is `None` and is compared with nothing, on 12.10's ground that 4.1's promise
+  is about misreads; and a zone record carrying none of a field's halves — a
+  TD1's name sits on line 3, which 3.7 has not read — is a capability gap, and
+  flagging every identity card would be the false alarm this project exists to
+  avoid.
+- **A name's `expected` and `found` are counts of words, and the other two
+  types carry the two values.**  `D6` and `EvidenceFlag`'s own rule are that a
+  flag never carries a line of printed text so that a flag cannot become a place
+  identity data is stored, and a holder's name is the one value here that is
+  identity data.  So a name mismatch reads `expected="3 name words"`,
+  `found="2 agree"`, `field="name"`, and a region over the printed name — an
+  officer judges it off the two images, which is what the region is for.  **The
+  cost is honest**: a name finding says *how far* the two disagree and never
+  *which word*, where a date finding says exactly which day.
+- **The region is 12.14's, handed over untouched, and this module holds no
+  geometry.**  No `cv2`, no `bbox`, no corner of its own.
+- **`value` and `confidence` are both 1.0, because both sides were read and
+  12.9's gate already settled how sure they were.**  A structural disagreement
+  between two readings of the same page is not a measurement to be hedged.
+- **One id for every field.**  `flag_ids.OCR_MRZ_MISMATCH` is what `flag_ids.py`
+  promised 12.15, and which field is about is `field` (`D17`), not a second id.
+
+**What this forbids**
+
+- A second id per field, a field name reaching an id, or a comparator holding
+  its own weight.
+- Comparing a printed value with a raw one, or a date that assumes a century.
+- A tolerance that reaches a digit, and a default the caller never states.
+- A finding for a field the page printed nothing for, or for one the zone does
+  not carry.
+- A holder's name in `expected`, `found`, `label` or `reason`.
+- Geometry of its own, and any import of `cv2`.
+
+**Consequences.**  12.16 has less to absorb than it would have: diacritics and
+spacing are both gone before it runs, and the tests here already hold a diacritic
+and a hyphenated word within tolerance.  **12.10's "no flag" can now be asserted
+as a count** as well as the two structural claims `D88` settled it with.
+`Tier1Result` still has no `flags` field for `R1` to be summed from — 12.15
+writes the first finding and the record that carries it is still the next task.
+The honest cost is `D87`'s, unchanged: **no engine on this box has read any of
+this**, so every disagreement below is between two readings of a page a fixture
+drew, and a real engine's misreads will reach this comparator far more often
+than a forgery's will.
+
+---
+
+## D94 — A barcode is a second reading of the page, and it is compared with the page and not with the zone
+
+**Date:** October 2, 2026. **Status:** settled, task 13.3.
+
+**Context.**  `D93` settled how a printed field is compared with the machine-
+readable zone beside it.  13.3 asks the same question of a second machine-
+readable thing: a 2D barcode, which on an ePassport carries the very same TD3
+zone in a form a phone camera can read off the same paper.  That puts four
+questions.  What the payload is read *as*, when the standard says what a TD3
+zone looks like but says nothing about what a QR on a border document
+happens to encode.  Which printed fields it is compared against at all.  What a
+payload this cannot parse means — and the answer that is easy to get wrong
+here is to call it a mismatch, which would flag every genuine document whose
+barcode carries something this build does not recognise.  And whether the
+comparison belongs in `mismatch.py`, which is named for one.
+
+**Decision.**
+
+- **`compare_to_barcode(ocr_fields, payload)` sits beside `compare_to_mrz` in
+  the same module, and takes the record and a string.**  Two readings of one
+  page disagreeing is one subject, and the record, the region, the band, the
+  `source_module` and the flag shape are all `D93`'s.  **The payload is text,
+  not a `DecodedBarcode`**: the decoder's job ends at handing over the payload,
+  and a comparator that took its own frame would decode a second time.
+- **The payload is read as a TD3 zone, through `td3.validate_td3_lines` and
+  `td3.td3_field`.**  `BARCODE_FIELDS` names the printed field and the TD3
+  line-2 field each is read from, exactly as `MRZ_FIELDS` does, and the three
+  document numbers map to the zone's one `document_number` for the same reason.
+  **The payload's own edges are stripped before it is split into lines**,
+  because a scanner hands back a trailing newline and a padded zone is read
+  rather than called unreadable.
+- **`name` is not in `BARCODE_FIELDS`, and that absence is the claim.**  A TD3
+  payload carries no name to disagree with, so there is nothing to compare and
+  nothing to say.  This is the one place the two tables differ, and a test says
+  so, because a table that grew a name later would be comparing a value that is
+  not in the payload.
+- **A payload that is not a TD3 zone is an absence, not a disagreement.**  It
+  answers `()`, and the reason is not politeness: naming what a payload we
+  cannot parse disagrees with would be inventing the other half of the
+  comparison and then reporting it.  **This is a known blind spot and not a
+  safe default** — a forged document whose barcode carries a payload this build
+  does not recognise gets no finding from this rule, and the flag for that is
+  not in `flag_ids.py` yet.
+- **A date and a number are exact or are not, and no tolerance parameter
+  exists.**  `_agrees` is now `_exact_agrees` plus a name half: 13.3 calls the
+  exact half, so the two functions cannot hold two answers to the same question.
+  The century question `D93` settled is untouched — a payload printing `74` has
+  no century to disagree with either.
+- **`expected` is the payload's value and `found` is the printed one, and the
+  region is the printed field's.**  The officer reads two values and one box,
+  and the box is on the page rather than on the barcode, because the printed
+  side is the one 12.14 located and the barcode's corners belong to 13.3's
+  caller.
+- **The band is `review`, not `high`, and that is `v1.yaml`'s own word.**
+  `BARCODE_MISMATCH_BAND` exists so a test can hold the code to the weightset
+  the way 12.15's is held.  **Both of this finding's readings come off one
+  image, so either can be the wrong one** — which is also why `value` and
+  `confidence` are 1.0 (both sides were read) while the *weight* stays low.
+- **One id, `flag_ids.OCR_BARCODE_MISMATCH`, under the `OCR_` prefix** the flag
+  registry already recorded for this rule rather than a ninth family.
+- **The payload's own check digits are not re-verified here.**  A payload whose
+  check digit is wrong is a `MRZ_*_CHECK_DIGIT_MISMATCH` finding when Tier 0
+  reads the same text as a zone, not a second finding from here.
+
+**What this forbids**
+
+- Comparing a printed value with a payload that does not carry it, and a name
+  against a TD3 payload.
+- A finding for a payload this cannot parse, and a tolerance that reaches a
+  digit.
+- Decoding inside the comparator, and geometry of its own.
+- `expected` and `found` carrying anything but the two compared values, and any
+  part of line 1 — which is where the holder's name is — reaching either.
+
+**Consequences.**  13.3 is the third reading of the page and the first that can
+disagree with `D93`'s: the test that moves a field inside the payload while the
+zone keeps it, and asserts 13.3 answers `()` where 12.15 answers a finding, is
+what makes the pair independent rather than one a restatement of the other.
+**The blind spot above is the thing to reopen first**, along with
+`Tier1Result` still having no `flags` field for `R1` to be summed from — 13.3
+writes the second kind of finding and the record that carries both is still
+next.  Nothing here has read a real document either: the QR is drawn by the same
+library that decodes it, and the printed side comes from a fixture.
+
+---
+
+## D95 -- A template is a reference image and a rectangle per field, and no name in it is looked up in Python
+
+**Date:** October 2, 2026. **Status:** settled, task 13.4.
+
+**Context.**  13.4 asks what a template *is*, and every later layout question --
+13.6's corners, 13.7's homography, 13.8's tolerances, 13.9's deviation -- is
+measured against whatever this settles.  There are four ways it could have been
+defined wrongly.  Rectangles in absolute pixels on one capture, which locate
+nothing on a page of any other size.  A reference size written into the JSON
+beside the image, which is a second copy of a fact the image already carries and
+can disagree with it unnoticed.  A shape validated against this project's own
+document-type and field registries, which would make a new document type a
+Python change -- exactly what 13.5 exists to deny.  And a loader that answers an
+empty template when a file is missing, which reads as a layout with no fields on
+it rather than as a fault.
+
+**Decision.**
+
+- **A template is one JSON file naming a document type, a reference image and a
+  rectangle per field, held in a package of its own.**  `app/pipeline/tier1/
+  templates/` holds `passport_td3.json` and `passport_td3.png` and is read as a
+  package resource through `importlib.resources` -- `app.risk.weightsets` under
+  `D15` is the precedent -- so `loader.load_template(name)` is the one way in
+  and a caller holds a `Template` and never a path.
+- **A rectangle is written as `x`, `y`, `width`, `height` and answered as four
+  corners.**  The JSON form is what a person measures off a reference image
+  with; `FieldRect.corners` answers them clockwise from the top left, the order
+  `app.risk.flags.EvidenceFlag.region` already uses, so 13.9 hangs a finding on
+  a template's rectangle without re-expressing it.
+- **The frame is read off the reference image, not written beside it.**
+  `Template.reference_size` comes from opening the image -- as a stream, so the
+  read survives the package being a zip -- and a rectangle falling outside that
+  frame raises.  A rectangle off the page locates nothing, and keeping it would
+  hand 13.9 a position no page can occupy.
+- **No name is looked up in Python.**  `document_type` is answered as the string
+  the file carries and a field name is held only to being non-empty.
+  `fields.DOCUMENT_TYPES` is 12.12's registry, and checking it here is precisely
+  what would make a new document type a Python change; a test holds the one
+  committed template's type against it instead, which puts the check on the file
+  that shipped rather than on every file written after it.
+- **Every key the loader reads is required, and a key it does not read is
+  ignored.**  13.8 puts a per-field tolerance in these very rows, and a loader
+  that refused a key it had not heard of would make that a loader change.  A
+  misspelt key the loader *does* read is caught by that key's own absence.
+- **Nothing is defaulted, and a file that cannot be read raises
+  `TemplateError`.**  Absent JSON, unreadable JSON, a non-mapping top level, no
+  document type, no reference image, a reference that is absent or is not an
+  image, no fields at all, a field that is not four whole pixels (a `bool` is
+  not one), a rectangle with no area or one running off the frame, a field named
+  nothing: each raises, and every message names the file and the field and never
+  a row's contents.
+- **A key the file names twice raises.**  `json.loads` keeps the last of a
+  repeated key and says nothing, so a rectangle an author wrote twice would be
+  dropped without a word, and a hand-written data file is exactly where that
+  happens.
+- **There is no default template name**, because nothing has chosen the layout
+  Tier 1 should reach for and a default would be that choice made on the
+  loader's behalf.
+- **The MRZ is not in a template.**  Tier 0 locates the zone by detecting it
+  (`mrz_region.detect_mrz`), so a rectangle naming the zone here would be a
+  second answer to a question one module already answers.
+- **The committed rectangles were measured, not invented.**  They are the boxes
+  `tests/fixtures/document_images.py` printed those four fields at, with four
+  pixels of slack, over a 1000x700 blank page carrying that fixture's own
+  labels.  `photo` is the one rectangle the four `PASSPORT_FIELDS` do not name,
+  and 13.14 is what will read it.
+
+**What this forbids**
+
+- Declaring the reference size in the JSON, or looking a document type or a field
+  name up in a Python table from inside the loader.
+- Answering a template with no field, a defaulted document type, a rectangle off
+  its own reference image, or a repeated key silently collapsed.
+- Anchoring a layout to one capture's absolute pixels, and naming the MRZ in a
+  template at all.
+
+**Consequences.**  13.5's claim -- a new document type is a new JSON file and no
+Python change -- rests on the loader holding no registry, no default and no
+per-type code, which is why those three absences are the decision rather than
+incidents.  **The reference image is a blank form with its labels on it**: a
+layout, not a specimen, and nothing here has put a photographed document into
+template space -- 13.6 and 13.7 are the first tasks that will.  One template
+ships, a passport; the visa and national-ID layouts 12.12 names have none, and
+13.5 is what a second one looks like.
+
+---
+
+## D96 -- Tier 1 asks the quality checker where the document is, and reads no pixels of its own
+
+**Date:** October 2, 2026. **Status:** settled, task 13.6.
+
+**Context.**  13.6 is the first of the layout tasks, and every one of 13.7
+through 13.11 is measured against whatever it settles.  There are two ways it
+could have been done wrongly.  **A corner detector written inside Tier 1**,
+which is what the task's own wording invites, and this repository already owns
+one -- `app/quality_checker/m8_coverage.find_card`, byte for byte identical in
+five modules, `m4_uniformity`, `m5_glare`, `m6_ppi`, `m7_skew` and `m8_coverage`
+itself, none of them tested and none of them named in any decision.  A sixth
+copy would be a second answer to a question five answers already give, free to
+disagree on exactly the off-axis photographs where the answer decides whether
+the layout can be measured at all.  And **a detector that answers a rectangle
+as though it were a quadrilateral**, which is what the one already in the tree
+does when it cannot simplify an outline to four corners: it returns the
+rectangle that best fits the contour, which is a guess about a page rather
+than a measurement of one.
+
+**Decision.**
+
+- **Tier 1's corner search is `m8_coverage.find_card`, called rather than
+  copied.**  `corners.detect_corners(image)` is the seam.  This follows
+  `mrz_region.deskew`, which calls `m7_skew.text_skew` for the same reason;
+  `m7_skew`'s copy of `find_card` being a copy is a defect this decision
+  records rather than one it fixes.
+- **The reuse is checkable rather than asserted.**  A test replaces
+  `find_card` with a stub and is handed a string in place of an image, so the
+  corners must follow the stub and Tier 1 must never have opened the frame
+  itself; a second search written beside it fails that test instead of quietly
+  agreeing.  A second test holds `order_corners` to the checker's own ordering
+  the same way.
+- **The ordering is one function, not one per caller.**  `m8_coverage._order`
+  is renamed `order_card_corners` and is the sort every corner set in this
+  repository goes through.  `corners.order_corners(points)` refuses anything
+  that is not exactly four points rather than reshaping it into four.
+- **The corners are whole pixels, clockwise from the top left, and each is the
+  nearest pixel rather than the one truncated towards zero.**  That is the
+  order `EvidenceFlag.region` and `FieldRect.corners` are both written in, so
+  a detected corner and a template rectangle are one shape and 13.9 can hang a
+  finding on either.  A corner left of the frame is exactly where truncating
+  and rounding part company, so a test pins it.
+- **A frame holding no document is answered `:data:`NO_CORNERS`, not raised.**
+  `()` is the whole answer, on `mrz_region.detect_mrz`'s reason that a page
+  which is not a document is an ordinary outcome, and on `barcode.NO_BARCODES`'
+  reason that one empty value should not be spelled two ways.
+- **An outline that was not a quadrilateral is `NO_CORNERS`.**  Only
+  `find_card`'s own `"quad"` answer is read; its fitted-rectangle answer is a
+  guess, and 13.7's homography off a guess would straighten a document nobody
+  has found.
+
+**What this forbids**
+
+- A second corner search under `app/pipeline/`, and a second ordering sort.
+- Reading `find_card`'s fitted rectangle as if it were the document's corners.
+- Answering detected corners as floats, as a truncated pixel, or in an order of
+  this module's own.
+
+**Consequences.**  The synthetic specimen is a real one -- the printed page
+laid at a known quadrilateral and photographed on a background below its paper
+-- because the four corners have to be ground truth rather than a re-reading of
+whatever the detector produced; 13.7 warps the same capture, so
+`tests/fixtures/document_images.photograph` is where that page is built.
+
+---
+
+## D97 -- Template space is the reference frame's own four corners, and a page that is not there is answered
+
+**Date:** October 2, 2026. **Status:** settled, task 13.7.
+
+**Context.**  13.7 is the second of the layout tasks, and 13.8 through 13.11 are
+all measured in whatever space it settles.  Three things had to be answered.
+**What "template space" is.**  A template carries a reference image and a
+rectangle per field, and no page outline -- the file has no key for one, and
+`loader.Template` keeps no bitmap.  So the frame the rectangles were measured
+on has to become the target, and inventing a second frame beside it would give
+13.9 two coordinates to convert between.  **What the search is.**  13.6 settled
+that the corner search is `m8_coverage.find_card`; 13.7 could call
+`detect_corners` itself or take corners, and doing both would let the two
+halves disagree about where the page is.  **What happens when there is no
+page.**  13.6 answers `NO_CORNERS` rather than raising, and 13.7 has to answer
+in the same shape or a caller has to catch one and test the other.
+
+**Decision.**
+
+- **Template space is the reference frame's own four corners**, `(0, 0)`
+  through `(width, height)`, clockwise from the top left --
+  `align.template_corners(template)`.  Not a field rectangle, and not a
+  constant written beside the template: `FieldRect.corners` already measures
+  against that frame, so a field read in template space is already in the
+  coordinates its rectangle is written in.
+- **`align.warp_to_template(image, template, corners)` takes the corners and
+  detects nothing.**  `detect_corners` is the seam 13.6 settled, and the warp is
+  the mechanical half of the same question.  A caller holding corners -- from a
+  stub, or from a capture it has already searched -- does not pay for a second
+  search, and this module cannot open a frame of its own.
+- **The matrix is public.**  `align.homography` returns the 3x3 rather than
+  keeping it, because a field box found in template space has to be carried
+  back to capture pixels for `EvidenceFlag.region`, which is written in capture
+  coordinates.
+- **A capture with no page in it is answered `NO_WARP`, which is `None`.**  Not
+  a raise, and not an empty frame: an image of nothing would be a picture and
+  not a refusal.  13.6's reason -- a page that is not a document is an ordinary
+  outcome -- is 13.7's.
+- **Four points enclosing no area are refused as well.**  This is the one place
+  OpenCV does not refuse for us: `cv2.getPerspectiveTransform` handed four
+  collinear points returns a near-zero matrix without raising, and
+  `warpPerspective` then writes whatever that matrix implies without a word.
+  That is 13.6's "a fitted rectangle is a guess, not a page" applied to a
+  different failure, and the guard is `cv2.contourArea(...) <= 0`.
+- **A wrong corner count raises, and says how many it got.**  Not the
+  `ValueError` numpy's own reshape would raise: the caller passed three points
+  and should be told three.
+
+**Consequences.**  **The test lays the committed template down rather than the
+printed specimen.**  `tests/fixtures/document_images.lay` is the new seam -- it
+takes a bare frame where `photograph` takes a printed page, and `photograph` is
+now `lay` given a page's own frame -- so the capture under test is the one
+artefact 13.9 will measure against and "close to the template" is a comparison
+with that file rather than with a second drawing of it.
+
+The page is laid down turned 7 degrees about its own centre and photographed on
+a background below its paper, and the limits the test holds are a mean
+difference below 8 grey levels with over 96% of the frame within 40.  **What
+they reject, measured:** a capture left where it was (mean 61), one
+straightened off a reversed corner order (21), one off a mirrored one (19), and
+one built off corners 10 pixels off the page's own (9.3).  **What the correct
+warp measures is 4.4 to 4.7** across tilts of 5, 7 and 9 degrees either way.
+
+**Two things this task does not claim.**  **The resampling filter is named but
+not pinned.**  `align.INTERPOLATION` is `cv2.INTER_LINEAR`, and a mutant
+setting it to `INTER_NEAREST` still passes every test, because on a capture
+this close to 1:1 both filters land inside the same limits; a future session
+changing it would not be caught.  **IoU of the ink mask is deliberately not the
+test's measure.**  The detector's corners are 4 to 5 pixels off the page's own
+on this capture, which on thin glyphs is the difference between an IoU of 0.98
+for the exact quadrilateral and 0.32 for the warp this task actually builds --
+so an IoU assertion would be a test of `find_card`'s accuracy wearing a warp's
+
+---
+
+## D98 -- A tolerance lives in its own field's row, and the loader reads none of it yet
+
+**Date:** October 2, 2026. **Status:** settled, task 13.8.
+
+**Context.**  13.8 asks what a template records about where a printed field may
+sit rather than where it does sit, and three things had to be answered before a
+number could be written down.  **Whether a tolerance is one value per document
+or one per field.**  A single document-wide figure would be a fourth key beside
+`document_type`, and 13.9 hangs its finding on one field's region -- so the
+allowance that decides a flag would belong to the page rather than to the field
+the flag names.  **Whether it is one number or three.**  The task names
+position, size and rotation, and those fail apart from one another: a field
+printed in the right place at the wrong angle is a different fault from one
+printed small, and a single figure wide enough for the second would excuse the
+first on every field at once.  **Whether the loader reads it.**  `D95` settled
+that a key the loader does not read is ignored, and wrote 13.8's tolerance into
+that decision on purpose; reading it here would be a loader change 13.8 did not
+ask for, and it would move the parse in front of the question 13.9 has not
+answered -- what a displacement is measured against, and whether a size is a
+ratio or a pixel count.
+
+**Decision.**
+
+- **A tolerance is written in the field's own row, as `position`, `size` and
+  `rotation`.**  Per field and not per document, three numbers and not one, for
+  the two reasons above.
+- **Position and size are pixels of the reference frame; rotation is degrees.**
+  `D97` settled that template space is that frame's own four corners, so a
+  pixel in this file is a pixel 13.9 measures in, with no second conversion
+  and no scale factor to agree about.
+- **The committed passport's five fields carry `position: 12`, `size: 8`,
+  `rotation: 2.0`.**  Position is chosen against the detector rather than by
+  taste: `find_card`'s corners land 4 to 5 pixels off the page's own on the
+  1000x700 reference (`D96`), and that error reaches template space as every
+  field's displacement.  Twelve is more than double it, so a correctly
+  photographed document does not read as displaced.
+- **The loader reads none of it and `FieldRect` carries no tolerance.**
+  `D95`'s decision, kept because 13.8 is a data task and 13.9 is the task that
+  knows what the numbers are for.  The cost is real and is paid for below.
+- **A test reads the template files by path and covers every field of every
+  file that shipped**, not the passport alone, and holds each to a positive
+  finite number and to a position wider than the detector's own error.  This is
+  the same move `D95` makes for `document_type` against
+  `fields.DOCUMENT_TYPES`: the check sits on the files, because with the loader
+  reading none of these keys the files and this test are the only two places
+  that can catch a field left with no tolerance on it.
+
+**What this forbids**
+
+- One tolerance per document, or one number standing for position, size and
+  rotation together.
+- A position tolerance at or below the detector's error, which would report a
+  correctly photographed document as a displaced one on every field.
+- Reading the tolerance into `FieldRect` before 13.9 settles what a displacement
+  is measured against.
+
+**Consequences.**  13.9 has to parse these rows, and the numbers above are that
+task's to use or to argue with -- a tolerance that reads every field as
+displaced is a figure to change in this file, not a threshold to lower in
+Python.  Only one layout ships, so the claim rests on a single invented file,
+but the test walks the directory instead of naming the passport, so a second
+layout is covered the day it lands.  The five committed rows happen to agree
+with one another; that is a fact about this layout and not a rule the loader
+enforces, because a layout with one loose field is exactly what storing these
+per field is for.
+
+---
+
+## D99 -- A field is measured against the ink its own reference prints, and a rectangle with none is skipped
+
+**Date:** October 2, 2026. **Status:** settled, task 13.9.
+
+**Context.**  `D98` left 13.8's tolerances unread, holding them for the task
+that knows what a displacement is measured against.  Three questions were open.
+**What "a field's position" is**, given a template rectangle is a region of a
+reference image and not a measurement of anything.  **Which ink belongs to
+which field** once a field has moved, since a field printed off its row lands
+inside its neighbour's rectangle.  **What a field with nothing printed in its
+reference rectangle means**, which on the committed passport is four fields out
+of five.
+
+**Decision.**
+
+- **A displacement is a whole-pixel distance in template space, from a field
+  rectangle's centre to the centre of that field's own ink.**  Position only:
+  size and rotation fail apart from it (`D98`), so the ink's centre of mass is
+  used rather than its bounding box, and a field printed larger in the right
+  place scores no position deviation at all.
+- **A field's ink is the blob nearest its own rectangle, not the ink inside
+  it.**  A box test was measured first and is wrong in the one case this
+  module exists for: a field moved 30 px right and 25 px down lands in
+  `passport_number`'s rectangle and was reported as `passport_number` sitting
+  +15, -20 off -- a confident finding about the wrong field.  Nearest-centre
+  assignment keeps a moved field with its own ink.
+- **A rectangle carrying no ink in the reference is skipped, never scored as
+  zero.**  Its centre is a drawn box, and the box is not the document.  This is
+  a limit of the committed data and it is large: `passport_td3.json` leaves
+  `name`, `passport_number`, `date_of_birth` and `date_of_expiry` blank, so
+  **only `photo` is measurable today**, and the claim rests on one field.
+  Scoring them anyway was measured and rejected -- a correctly printed value
+  reads 7.6 px off its own rectangle against a 12 px tolerance, which would
+  flag honest documents and spend half the tolerance on the box.
+- **The aligned frame's outer 8 px are not ink.**  `D96`'s detector lands 4 to
+  5 px off the page's own, so a warp built on its corners samples the capture's
+  background into the frame's outermost pixels; counted as ink it dragged the
+  photo block's centroid 37 px sideways and the measurement was meaningless.
+- **Ink is the reference's own paper less 40 levels, and the paper is the
+  frame's 95th percentile.**  Taken from the reference frame rather than
+  declared, so a template printed on tinted stock measures against itself.
+- **A field further than 64 px from its own centre is not measured.**  Five
+  times the shipped tolerance, and far enough to keep the measurement
+  meaningful rather than clipped -- an anchor-sized window reported a true 50 px
+  move as 30.
+- **The band is `low` and the id is `LAYOUT_DEVIATION`, both already declared
+  in `v1.yaml`**, which calls template deviation the classic false alarm on a
+  genuine document.  13.9 did not choose either.
+- **`loader.read_document` is public and `Template` carries its own `name`.**
+  `D98`'s "the loader reads none of it" holds: `FieldRect` still holds no
+  tolerance and the loader still interprets no tolerance key.  What changed is
+  that the parsed file is now reachable, so the module that owns the number
+  reads it out of the one parse rather than opening a second that could disagree.
+
+**What this forbids**
+
+- Scoring a field against a rectangle the reference prints nothing into, and
+  reporting that as a displacement of zero.
+- Assigning a field's ink by rectangle containment, which misattributes any
+  field moved more than half a row from where the layout puts it.
+- Counting the aligned frame's border as a field's ink.
+- Changing the 12 px tolerance in Python to make a measurement fit.
+
+**Consequences.**  `LAYOUT_DEVIATION` can be emitted for one field of the one
+layout that ships, and the four text fields are unmeasured rather than
+measured-clean until the committed reference prints values inside their
+rectangles -- a change to `passport_td3.png`, not to this module.  A field
+moved beyond 64 px is absent from the answer rather than reported as in place,
+which is a gap a forgery could sit in and which 13.10 inherits.  13.11's "an
+unaligned page scores worse than an aligned one" is now measurable rather than
+constant: the committed page reads 2.3 px and a page shifted 39 px reads 39.
+
+---
+
+## D100 -- A font is two numbers read off the type a page prints, and both are measured against the reference's own
+
+**Date:** October 2, 2026. **Status:** settled, task 13.10.
+
+**Context.**  The abstract's tier 1 is "template alignment of layout, fonts and
+text positions".  13.9 answered the last two, per field, and left the middle one.
+Three questions were open.  **What a font is**, on an image, when nothing here
+classifies type.  **What the number is compared against**, given `D99`'s finding
+that a measurement means nothing until it is measured against what the reference
+itself prints.  **How it reaches a score**, when 13.9's `LAYOUT_DEVIATION` is one
+finding per field with that field's rectangle on it and a page-wide style number
+has no field to hang on.
+
+**Decision.**
+
+- **A glyph is a mark 6 to 60 rows tall carrying at least 8 pixels of ink, and
+  the type on a page is two numbers taken over the glyphs the band admits**:
+  `stroke_density`, the share of those glyphs' own bounding boxes that carries
+  ink, and `height_spread`, their heights' standard deviation over their mean.
+  Both are ratios of positive quantities, so neither needs a page size to be
+  compared against anything.
+- **The photo block is excluded by the height band, not by a rule about
+  pictures.**  360 rows is not a glyph at any weight, and naming the one block
+  `passport_td3` happens to carry would be a rule about this layout.
+- **The band is fitted to the one page that ships and is stated as such.**
+  `passport_td3.png` prints glyphs 15 to 22 rows tall; 6 and 60 sit an order of
+  magnitude below the tallest type and far below the smallest mark that is not
+  type.  This is that layout's band and not a rule, exactly as 13.9's 64 px and
+  12 px are that layout's numbers.
+- **Both numbers are taken over every glyph on the page, not inside the<truncated omitted_approx_tokens="378" />eld with that field's rectangle on it, and a page-wide style
+  number has no rectangle to point at.  `flag_ids.LAYOUT_DEVIATION`'s own
+  comment, "counting the font-style proxy of 13.10", is read as the aggregate
+  and not as a per-field value.
+
+**What this forbids**
+
+- Reading a font off a page against a constant stroke width or a constant glyph
+  height, or against any number but the reference's own.
+- Naming the photo block, or any other block, as a thing to exclude, rather than
+  leaving it to the glyph band.
+- Reading the proxy inside the field rectangles, where the committed reference
+  prints nothing at all.
+- Scoring a page whose type could not be measured as clean.
+
+**Consequences.**  Two numbers stand in for a font.  Measured on this page: a
+second face at the same size, in the same place, over the same four words
+(`FONT_HERSHEY_DUPLEX` against the reference's `FONT_HERSHEY_SIMPLEX`) departs
+by 39% of the density band and 240% of the spread band, so the style departure
+saturates at 1.0 while the committed page's own capture costs 7% and 3%.  A face
+that agreed with the reference on both numbers would be called clean, and nothing
+here claims more than that.  Both tolerances are fifteen to thirty times *this*
+capture's cost, so a worse capture than `test_align.py`'s narrows them.  The
+committed reference is `cv2.putText` in `FONT_HERSHEY_SIMPLEX` at scale 1.0,
+thickness 2, at four baselines, and a reprint in that face reproduces its style
+numbers exactly -- which is what makes the test's control a control.  **In this
+OpenCV build `putText` thickness saturates at 2**, so a heavier weight of the
+*same* face could not be drawn as a fixture and the face had to change; that is
+a property of the box, not a finding about fonts.  **`layout_score` has no
+caller**: it is what 13.11 measures and what the risk engine will carry once
+`Tier1Result` grows the field `R1` is summed from, which it still does not have.
+
+---
+
+
+[36] tool exec_command result: Chunk ID: e7ac32
+Wall time: 0.6386 seconds
+Process exited with code 0
+Original token count: 8145
+Output:
+Warning: truncated output (original token count: 8145)
+Total output lines: 230
+
+
+lorebook\abstract.txt:1:1. Problem Statement and Context Border checkpoints must decide within seconds whether a traveller's documents are 
+genuine, current and actually belong to the person presenting them. The threats have grown beyond crude forgery. Attackers now use forged or 
+digitally altered passports and visas, expired or reused documents, impersonation with genuine documents, and facial images that are morphed or 
+synthetically generated. A morphed photograph is especially difficult because it can resemble two different people, so a document can pass a face 
+comparison for both of them. Current verification relies on manual inspection and several disconnected checks: a visual examination, a separate 
+MRZ read, and a separate database lookup. This has four consequences: - Time and congestion. Each additional check adds seconds per traveller, and 
+queues build at peak hours. - Inconsistency. Outcomes depend on the experience, fatigue and attention of the officer on duty. - No explanation. 
+Where automated tools exist, they tend to return a pass or fail verdict without showing what was wrong or where. - No verifiable record. There is 
+rarely a tamper-evident account of what the system showed the officer and what the officer decided, which weakens accountability in disputed 
+cases. Any solution must also handle sensitive identity and biometric data, so the design cannot solve the fraud problem by creating a new privacy 
+
+---
+
+## D101 -- The face seam is two interfaces, and a stub that is labelled rather than silent
+
+**Date:** October 2, 2026. **Status:** settled, task 13.12.
+
+**Context.**  The abstract's Tier 1 ends with "face detection, alignment and
+embedding, matched against a live capture", and 13.13-13.16 build the model,
+the alignment, the similarity and the flag.  Three questions were open before
+any of them.  **What a detector is asked**, given that 13.14 needs a place to
+put a face and 13.15 needs a place to put a number.  **What an embedder is
+asked to return**, given that a missing face model is an ordinary box rather
+than a broken one (`D83`).  **What Tier 1 does with no face model at all**,
+which is the case on every machine this project has been run on so far: the
+stub that fills the gap is the one piece here that will be read on a real
+screening before a real model exists.
+
+**Decision.**
+
+- **Two seams, not one.**  `FaceDetector.detect(image)` answers *where the
+  faces are*, as a tuple of `DetectedFace`; `Embedder.embed(image)` answers
+  *what one face is*, as an `Embedding` or nothing.  They are separate because
+  13.14 owns the first and 13.13 owns the second, and one method doing both
+  would make the crop 13.14 builds an argument only a detector understands --
+  the failure `D82` was written to prevent, arriving again one tier over.
+- **Both are `abc.ABC` and both declare exactly one method**, on `D82` and
+  `D83`'s reasoning: a subclass that omits its method cannot be built, and
+  availability stays concrete on each implementation rather than becoming a
+  second abstract method nothing here can answer honestly.
+- **`detect` answers `()` for a frame holding no face**, which is a
+  measurement of nothing rather than a failure to measure -- `ocr.NO_WORDS`
+  and `MrzDetection` already answer the same way.
+- **`embed` answers `None` for a face it could not measure, and that is a
+  different statement from the stub's answer.**  `D99`'s rule, held here:
+  where nothing was measured the answer is `None`, never a zero that reads
+  like a reading.
+- **`is_stub` rides on the `Embedding`, not on the embedder.**  A caller
+  holding two embeddings cannot ask which embedder produced either of them,
+  so a label on the object that made them would be a question the comparison
+  could not answer.  It defaults to `False`, because a vector is a
+  measurement unless it says otherwise, and the record is frozen so a stub
+  cannot be relabelled after the fact.
+- **`NullEmbedder` returns the same zero vector for every image, and labels
+  it.**  This is the load-bearing part: a zero vector has no direction, so the
+  cosine 13.15 computes is `0 / 0` and undefined against it.  Refusing to
+  score it is the only correct answer, and the refusal needs something to key
+  on -- which is what the label is for.  A stub that returned a plausible
+  random vector instead would be strictly worse: it would score, and it would
+  score the same for every traveller.
+- **`NULL_EMBEDDING_DIM` is 512, ArcFace's own width, and is stated as such
+  rather than measured** -- no face model is installed here, so there was
+  nothing to measure against.  It buys shape compatibility (a caller does not
+  branch on vector length) and nothing else: since a stub is refused rather
+  than scored, the length is never load-bearing for correctness.  A `dim` that
+  is not a positive `int` raises rather than defaulting, on `D98`'s reasoning.
+- **`DetectedFace.region` is a polygon of whole-pixel corners in the order
+  `EvidenceFlag.region` uses**, so a face and a flag are drawn by one routine.
+  It carries no landmarks: 13.14's alignment is a crop this record does not
+  hold, and guessing a landmark order here would be a claim 13.14's
+  implementation has not earned.
+- **Neither record defaults.**  A defaulted `confidence` would be a face
+  measured at a clean zero, which is the one answer this project's own rules
+  refuse everywhere else.
+
+**What this forbids**
+
+- A detector or an embedder taking an argument only it understands, or an
+  image argument with a default.
+- An `Embedding` that can be relabelled after it is created, or whose
+  `is_stub` defaults to `True`.
+- A zero vector presented as a similarity, a score, or a match against
+  anything.
+- Reporting "no face" as `None` from `detect`, or a stub as a real vector.
+- Naming a landmark order on `DetectedFace` before 13.14 builds one.
+
+**Consequences.**  A box with no face model answers every question here and
+answers none of them truthfully, which is what the label is for: 13.15's
+cosine is undefined against a zero vector, so the similarity a caller would
+have reported is refused rather than divided by.  **`NullEmbedder` has no
+caller yet** -- nothing in Tier 1 reads it, so on a box without a model a
+screening today takes the same path it took before 13.12; the stub is what
+13.15-13.16 will degrade onto.  **`DetectedFace` carries no landmarks**, so
+13.14 may find it needs a field this record does not have; that is a change to
+add then, and the seam is one dataclass wide.  **Both interfaces are
+unchecked at the call site**: `is_available` is not declared on either, so a
+future selector reaches a method the abstract class does not list, which is
+the same gap `selection.py` records for OCR and is what should reopen `D83`
+if a third caller appears.
+
+---
+
+## D102 -- A face is aligned by a similarity to ArcFace's own five points, and a face that cannot be fitted is absent
+
+**Date:** October 2, 2026. **Status:** settled, task 13.14.
+
+**Context.**  13.14 asks for "face detection and alignment (landmark-based
+similarity transform to a canonical crop) in the photo region".  Three things
+were open.  **Where a detector is pointed** -- anywhere on the page would find
+a face in the printed portrait *or* in a face pasted into the visa sticker, and
+nothing downstream would say which.  **What "aligned" is measured against** --
+`D99` has twice refused a measurement against a constant in favour of one
+against a reference, and this could have gone either way.  **What happens to
+landmarks that describe no face**, which is the geometry version of a detector
+answering `None`.
+
+**Decision.**
+
+- **A detector is pointed at the template's own `photo` field**, cut out of
+  the aligned frame by `photo_region`.  The rectangle is read in the space
+  `align.warp_to_template` produced it in, so a face is looked for where the
+  document says the face is.  A template placing no `photo` field answers
+  `NO_CROP`, and so does a frame too small to hold the rectangle it names.
+- **The rectangle is checked against the frame rather than sliced.**  A numpy
+  slice past the edge returns a *shorter* frame, so an unclipped
+  `photo_region` hands a detector a partial portrait and reports whatever it
+  found there as though the whole region had been searched.  This was a real
+  failure during this task, not a hypothetical one.
+- **The canonical landmarks are ArcFace's own five reference points for a
+  112-square**, stated rather than measured -- they are the recogniser's input
+  contract (`insightface_embedder.MODEL_INPUT_SIZE` is the same 112, held to it
+  by a test).  Fitting to them is what "aligned" means, the same way 13.11's
+  alignment space is the reference frame's own corners.
+- **The fit is a similarity, not a full affine.**  A full affine would also fit
+  five points and would add a shear term no flatter photograph asked for.
+  **Five points that are already a similarity determine it uniquely, so the two
+  fitters agree on an undeformed face** -- which is why the test that holds
+  this drags the mouth corners off the fitted pose, where a full affine puts
+  0.36 of shear on a transform that should have none.  That number was measured,
+  not chosen.
+- **Landmarks that enclose no area -- stacked on one point, or all on one line
+  -- answer `NO_CROP`, never a zero crop.**  A 112-square of black would read
+  like a face measured and found empty, which is the answer `D99` refuses
+  everywhere else.  OpenCV itself returns `None` for the stacked case; the
+  collinear case it fits anyway with half its points marked outliers, so the
+  area check is this module's and not merely a pass-through.
+- **Landmarks that are not five finite `(x, y)` pairs raise**, on `D98`'s
+  reasoning.  Padding or trimming them into shape would produce a transform
+  that looked measured and was not.
+- **`aligned_crops` drops an unalignable face and keeps the rest.**  One
+  unusable face does not stop a good one being reported beside it, and a caller
+  asking "what did this photo show" gets faces rather than a failure.
+- **`DetectedFace` gained `landmarks`**, which `D101` forbade naming until
+  13.14 built one.  The record is one dataclass wide and the alternative was a
+  second return value no caller would have kept in step with the first.
+
+**What this forbids**
+
+- Pointing a detector at anything but the template's own `photo` field.
+- Slicing a rectangle out of a frame too small to hold it.
+- Fitting a full affine, or fitting no similarity at all.
+- Reporting an unalignable face as a black crop, a `None` landmark, or a
+  `DetectedFace` with five points that were never measured.
+- Adding a default to `DetectedFace.landmarks`, on `D99` and `D101`.
+
+**Consequences.**  **`photo_region` needs the template, so `aligned_crops` is
+the only caller that has both** -- there is no face-aware path into `runner.py`
+yet.  **The canonical landmarks are ArcFace's and were not measured here**; a
+different recogniser would need different numbers, and only
+`CANONICAL_SIZE == MODEL_INPUT_SIZE` is held to 13.13's module today.  **The
+landmark order is named in `LANDMARK_ORDER` and the record's docstring, and a
+test holds the two to five** -- but nothing detects a detector that returns its
+five points in a different order, which is the same unanswerable gap
+`selection.py` records for OCR engines.  **`InsightFaceEmbedder` still has no
+test at all**, so 13.13's box is ticked on the strength of the module existing;
+this task read its `MODEL_INPUT_SIZE` and verified nothing else about it.
+
+---
+
+## D103 -- Two faces are compared by the cosine between them, and a vector with no direction is not compared at all
+
+**Date:** October 2, 2026. **Status:** settled, task 13.15.
+
+**Context.**  13.12 built the seam and left one thing in it open: a stub
+returns a zero vector, and `D101` recorded that the cosine against a zero
+vector is `0 / 0`.  13.15 is the task that has to do something about it, and it
+is the first part of this project that reads two measurements and produces a
+number rather than measuring one thing.  Two questions followed.  **What a
+comparison answers**, given that the abstract's flag carries both a similarity
+and a threshold and neither number can be recovered from the other afterwards.
+**What a caller with no face model gets**, which is this box and every box the
+project has been run on so far.
+
+**Decision.**
+
+- **The similarity is the cosine, and both vectors are scaled to unit length
+  before they are multiplied.**  A dot product of the same pair scores a
+  5-12-13 vector against itself at 169.0 rather than 1.0, and it is not
+  invariant to the brightness of either photograph.  The fixture is
+  deliberately not unit length, so a module reaching for the dot product fails
+  on the first case instead of passing it by luck.
+- **The answer is a `MatchScore` carrying `similarity` and `threshold`, and
+  neither field defaults.**  The threshold rides on the record rather than
+  living here as a constant, because 13.16's flag carries both numbers and a
+  score whose threshold is a constant the caller must remember is one place for
+  the two to drift apart.  `matches` is a property rather than a stored field,
+  so it cannot disagree with the two numbers printed beside it, and reaching
+  the threshold counts as meeting it.
+- **`threshold` is required, and must be above 0.0 and no more than 1.0.**  No
+  default, on `D98`'s reasoning: it is part of the answer rather than a default
+  standing behind it, and a caller scoring against a bar this module chose is
+  scoring against a number it cannot see.  A cosine runs from -1.0 to 1.0, so a
+  bar above one is a mistake no pair of vectors can clear -- stricter is a
+  policy, unreachable is a wiring error.
+- **A stub on either side, and any vector with no length, answer `NO_MATCH`
+  (`None`) and never a similarity of zero.**  `D101` named the refusal and
+  `D99` gives it its value: where nothing was measured the answer is `None`,
+  and a clean `0.0` would read as a measurement of two faces that are merely
+  unlike.  **The label and the norm are checked separately and both are
+  load-bearing**: `NullEmbedder`'s vector is all zeros, which the norm alone
+  would catch, and the stub carrying a *plausible* vector that `D101` calls
+  strictly worse is caught by the label alone.
+- **A vector holding something that is not a finite number raises**, on the
+  same reasoning as 13.14's landmarks: `float("0.5")` would take a string, and
+  a `nan` reaches the cosine as itself.  Two vectors of different widths raise
+  too, since two face models produce two widths and comparing them is a mistake
+  rather than a measurement of nothing.
+- **The similarity is clamped to the cosine's own range.**  This is measured,
+  not decorative: a 5-12-13 vector against itself reads 1.0000000000000002
+  unclamped -- a similarity above a perfect match, which fails the exact
+  assertion the identical case is written with.  `math.fsum` rounds once at the
+  end, so an exact sum of rounded products can still leave the range it came
+  from.
+
+**What this forbids**
+
+- Scaling either vector into the answer, or reporting a dot product as a
+  similarity.
+- Defaulting the threshold, or accepting one no cosine can reach.
+- Reporting a stub, a zero vector, or a vector with no components as a
+  similarity, and above all as a similarity of `0.0`.
+- Padding or truncating two vectors of different widths into one comparison.
+- Storing `matches` on the record beside the two numbers it derives from.
+
+**Consequences.**  **`match_score` has no caller**, the gap 13.11's
+`layout_score` and 13.14's `aligned_crops` are in: 13.16 is what turns the
+score into a flag and nothing wires either into `runner.py`, so no screening
+compares faces today.  **A stub degrades to `None`, so `MatchScore | None` is
+the answer at every call site** -- 13.16 has to decide what a face that was
+never compared reports, and a `None` that became a `0.0` flag is the failure
+`D99` exists to prevent.  **Nothing here reads a face model**, so every number
+is the fixture's own geometry: no threshold is claimed to be measured against
+real ArcFace pairs, and none of these figures is a statement about how alike two
+travellers' photographs really are.
+
+---
+
+## D104 -- The cascade carries one mutable context, and the depth is not called "mode"
+
+`backend/app/pipeline/orchestrator.py` holds `ScreeningContext`: the screening
+id, the caller's document claim, the working frame, the injected reference day
+and the checkpoint's depth, beside the two lists the run fills in -- the flags
+found so far and the stage trace.  Four decisions came out of writing it, and
+three of them are refusals rather than additions.
+
+- **The context is mutable, and that is the one thing that separates it from
+  every record this project freezes.**  A stage appends a flag and a trace
+  entry; a frozen context would have to be rebuilt after each one, and the
+  rebuilt copy is a second record that could disagree with the one the run is
+  holding.  `EvidenceFlag`, `MrzDocument` and `MatchScore` are frozen because
+  they are evidence, and a context is not evidence -- it is the run's own
+  working record, and nothing reads it after the screening is scored.
+- **The two accumulators default to empty, per instance.**  `default_factory`
+  rather than a shared `[]`, because a list as a class-level default is one
+  list that every context on the box appends to.  **An empty list is a fact
+  about time, not about a document**: it says no stage has run yet, which is
+  exactly what is true of a context built this second, and it is not the
+  answer "this document is clean", which is what a zero would read as.  This
+  is `D99`'s rule -- where there is nothing to measure, the answer is `None`
+  or the thing is absent -- applied to the one field where absence is the
+  truth.
+- **The depth field is `depth_mode`, and the two vocabularies are held
+  disjoint.**  `Screening.mode` in `app/storage/models.py` is the quality
+  gate's reading of how the document was captured -- `photo` or `scan` -- and
+  this field is whether the checkpoint runs the ordinary cascade or the
+  abstract's full-depth one.  Two questions about a screening, and `D5`'s
+  reason that one cannot answer the other: a context field named `mode` would
+  be written into the row's capture column by whoever stores the result, and
+  both hold short lowercase words, so nothing would object.
+  `test_the_depths_are_the_two_named_and_not_the_capture_modes` holds the two
+  sets apart, so a third depth or a fourth capture mode cannot quietly grow
+  into the other's vocabulary.
+- **The depth is required and has no default.**  A context defaulting to
+  `STANDARD` is a screening that silently skipped Tier 2, and the escalation
+  it skipped is 14.9's rule to make loud.  This is the same argument as
+  `selection.UnknownEngineError`: answering "standard" for a misspelled mode
+  degrades every screening on the box with nothing to say which mode was asked
+  for, so an unknown name raises `ContextValueError` instead, and the message
+  names both depths so a caller can see the vocabulary without reading the
+  module.
+
+**What is checked at construction, and what is deliberately not**
+
+- **`screening_id` must be a `uuid.UUID`, and `depth_mode` must name a mode.**
+  Those are the two fields *no stage owns*, so they are checked where the
+  record is built and nowhere else.  The id's type is load-bearing for 14.8:
+  the randomised audit draw is `HMAC(server_secret, screening_id)`, and a
+  string id would make that draw depend on how the string happened to be
+  spelled.  The mode's membership is load-bearing for 14.9 in the other
+  direction -- a mode nothing recognises must not read as a standard one.
+- **The frame, the document claim and the reference day are not checked
+  here.**  Each has an owner: 4.1 is the only gate that decides what an image
+  is, and `run_tier0` already refuses a `document_type` that is neither
+  `None` nor a non-empty string and a `reference_date` that is not a date.
+  Copying either judgement here would be a second opinion about the same
+  question, and `_check_parsed_document`'s reasoning -- a second gate that
+  copies a judgement is a second opinion -- applies to a context as much as to
+  a runner.  So a bad value is refused by the stage that reads it, not by the
+  record that carries it.
+- **`stage_trace` is a list of whatever 14.10 writes, and is typed `Any` for
+  that reason.**  14.1 fixes that the context carries the stages in the order
+  they ran and starts empty; the record's own shape -- stage, started, elapsed,
+  flags added, escalated -- is 14.10's to write, and typing the list now would
+  be a promise about a shape this task does not decide.
+
+**What this forbids**
+
+- Freezing the context, or handing two contexts one shared default list.
+- Naming the depth `mode`, or writing a depth into the row's capture column.
+- Defaulting `depth_mode` to `STANDARD`, or answering a mode nothing names.
+- Re-checking the frame, the document claim or the reference day here.
+- Reading a clock for the reference day, or typing the trace list to a shape
+  14.10 has not written.
+
+**Consequences.**  **Nothing reads this record yet**: 14.2 is the registry
+that will drive stages against it, 14.3 is the first stage to add flags to it,
+and no route constructs one yet, so a screening still reaches Tier 0 alone
+through `app/screening.py`.  **`image` is typed `Any` and nothing gates it**,
+so the first frame to reach a context is judged by whatever stage runs first
+rather than at construction; that is the intended division, and it is worth
+revisiting if a caller ever wants the refusal earlier than 14.3.
+
+---
+
+## D105 -- The cascade draws its stages from a read-only registry, and a name it does not hold is a refusal
+
+`backend/app/pipeline/orchestrator.py` holds `STAGES`: the stage callables
+this cascade may run, keyed by name and in cascade order.
+`resolve_stage(name, stages=None)` answers the callable a name asks for, and
+raises `UnknownStageError` for a name no registry holds.
+
+- **A stage is a callable handed the context.**  One argument, no return
+  value, because a stage answers by what it writes onto the context and a
+  second channel out of it would be a record the run has to keep in step with
+  the context itself.  **What a stage may return, and how one asks the cascade
+  to stop, are 14.4's to decide**, so this task fixes only the call.
+- **The registry is read-only and built once.**  A mapping proxy, on
+  12.5's reasoning: a registry a caller could add to would make "the stages
+  this cascade runs" a property of whoever wired it up last.
+- **`STAGE_NAMES` is read off the registry rather than spelled out beside it.**
+  12.5 spells `ENGINE_NAMES` out because its order is a *preference* order --
+  "first available" walks it -- and that order has to exist before the engines
+  do.  A stage order is the registry's own insertion order, so a second
+  listing could only ever disagree with it.
+- **An unknown name raises `UnknownStageError`, a `ValueError`.**  This is a
+  wiring mistake and not an absence: every name the registry holds has a
+  callable behind it, so answering `None` for a misspelling would run a
+  screening through no stage at all and say nothing about which stage was
+  asked for -- a screening that found no forgery because nothing looked.  The
+  message lists the names this call does know and echoes the name asked for,
+  which is a deployment's own configuration and not anything a document
+  printed.  A name of the wrong type is the same refusal, on `ContextValueError`
+  and `UnknownEngineError`'s reasoning.
+- **The shipped registry is empty, and that is the honest reading.**  14.3
+  writes the first stage callable; until then every name is unknown, and a
+  name mapped to a callable that measures nothing would be a stage that ran
+  and reported nothing -- the clean zero `D99` forbids.  **The tests
+  therefore hand in their own registry**, so what is pinned here is the
+  mapping and the refusal, not the number of stages that exist today.
+- **A caller may hand in its own registry.**  The same seam `select_engine`
+  offers, and what lets a test drive a two-stage cascade without the shipped
+  registry having to grow a stage to be exercised.
+
+**What this forbids**
+
+- Registering a name whose callable measures nothing, or returning `None` for
+  a name the registry does not hold.
+- Editing `STAGES`, or listing the stage names a second time somewhere.
+- Fixing here what a stage returns, or how a stage stops the cascade.
+
+**Consequences.**  **Nothing dispatches through this yet**: `STAGES` is empty,
+no route constructs a `ScreeningContext`, and a screening still reaches Tier 0
+alone through `app/screening.py`.  **The registry cannot be checked against
+the tree by a test** -- a name mapped to a callable that was deleted or
+renamed imports fine -- so what holds the map honest is 14.10's trace
+recording the name that actually ran.
+
+---
+
+## D106 -- The capture gate is stage 0, and its nine failures are `quality` tier flags
+
+`backend/app/pipeline/quality.py` holds `run_quality`, registered in
+`app.pipeline.orchestrator.STAGES` under `STAGE_NAME` = `"quality"`.  It hands
+`context.image` to `app.quality_checker.engine.analyze_image` and appends one
+`EvidenceFlag` per result whose `passed` is `False`.  `CHECKS` is the one
+table mapping each of the gate's nine checks to the id its failure carries.
+
+**Context.**  D105 left the shipped registry empty and named 14.3 as the task
+that fills it.  Two of its gaps were recorded elsewhere and are closed here:
+D7's "no ninth prefix without changing `PREFIXES` and the test that holds its
+eight names", and D17's revisit on a flag emitted about something with no
+field at all.
+
+- **The stage runs the gate that already exists and changes nothing in it.**
+  `analyze_image` is called on the context's own frame with its own
+  `requested_mode="auto"`, because the photo-or-scan reading is
+  `Screening.mode`'s only permitted writer and the context has no slot for it
+  (D104).  **A second quality implementation beside this one would be five
+  answers to one question**, which is the duplication D96 exists to prevent.
+- **`QUALITY_` is a ninth family, and it comes first.**  Stage 0 runs before
+  tier 0, so the family leads `PREFIXES`, `ALL_FLAG_IDS` and `v1.yaml`'s rows
+  in that order.  Both halves of D7's condition were met: the list changed and
+  `test_flag_ids.py`'s `NAMED_PREFIXES` changed with it, deliberately.
+- **`tier="quality"` is the fifth name `EvidenceFlag.tier` allows.**  It is the
+  one finding on record that is about the photograph rather than about the
+  page, and `tier` stays unchecked, as D6 has it.
+- **One id per check, keyed on the label `run_all` writes.**  A module's own
+  result is keyed by its short name (`"sharpness"`) while the error path in
+  `run_all` writes `module.__name__` (`"app.quality_checker.m1_sharpness"`),
+  so the label is the only key both paths share.  **A label `CHECKS` does not
+  hold raises `UnknownCheckError` rather than being dropped**: a tenth check
+  with no tenth id is a wiring fault, and dropping the result would report a
+  capture the gate could not clear as one it did.
+- **Only `passed is False` reaches the stream.**  `None` is the gate's own
+  answer for a check that does not apply -- glare on a flat scan, resolution
+  on a page it found no text on -- which is neither a failure nor an absence
+  of one.
+- **`value` and `confidence` are both 1.0, as 6.2's check-digit flags are.**
+  The gate measured and its own threshold decided, which is all the finding
+  says.  **The measurement is not a severity on `[0, 1]`** -- a Laplacian
+  variance or a median character height has no meaning there -- so it is
+  carried in `found` as the number the gate printed, and `found` is `None`
+  where the gate printed none.  `expected` stays `None` for all nine: the
+  gate's rule is a sentence (`PASS if Laplacian variance >= 100.0`) and
+  `found` is a value column, not a sentence column.
+- **A module that raised is written, not dropped.**  `run_all` already reports
+  such a check as `passed: False` with `reasons: ["module_error"]` and no
+  score, so the flag carries that reason and no number.  **Silence would be
+  the worse answer**: a broken check that vanishes leaves a capture the gate
+  could not clear looking like one it did, which is the silent stub D101
+  refuses.
+- **`field` is `None` on all nine, and that is one meaning.**  D17's revisit
+  asked whether `None` would come to carry more than one thing.  It does not:
+  the check is named by `id` and measured by `source_module`, both read off
+  the gate's own table, and `None` says only that the finding is about no
+  field of the document.
+- **Every quality row weighs 5 and is banded `low` -- one weight for nine
+  checks.**  They are one gate, and nine separate uncalibrated figures would
+  pretend to know which check matters most.  Three failures weigh what one
+  unreadable field weighs (15) and all nine weigh 45, which reads `review`:
+  a capture nothing can be read out of is a screening no officer can clear.
+  `LOW_MAX`'s own rationale in `app/risk/config.py` no longer held -- it
+  promised a number above *any* pile of `low` rows, and there are eleven now --
+  so it was amended rather than left claiming something false.
+- **`RULESET_VERSION` moves to 0.2.0.**  Nine new weighted rows is a flag and
+  a weight changing (D22), and a score is only comparable against the ruleset
+  that produced it.
+- **One assertion elsewhere was wrong, and nine five-point rows found it.**
+  `test_compute_risk.py`'s hard-fail pile expected `min(100, floor + pile)`,
+  which leaves the overriding flag's own weight out of the sum and adds the
+  floor as though it were a contribution.  **It agreed with the engine only by
+  coincidence**: the pile's first soft id used to weigh 55, so all four sizes
+  clamped to 100 and the two formulas met.  The expectation now spells the
+  engine's own composition, `min(MAX, max(floor, sum))`, which is what
+  `apply_hard_rules` and `clamp_score` do.
+
+**What this forbids**
+
+- Judging a frame anywhere but the gate, or opening a tenth quality check
+  without a tenth id in `app.risk.flag_ids` and a tenth row in `v1.yaml`.
+- Writing a flag for a check that passed or does not apply, and dropping one
+  whose check `CHECKS` does not hold.
+- Retuning the weightset's version without the bump, or the weight without the
+  version.
+
+**Consequences.**  **Nothing dispatches through the cascade yet**: no route
+builds a `ScreeningContext`, so `app/screening.py` still reaches Tier 0 alone
+and the gate still runs nowhere in a real screening.  `Screening.mode` is still
+unwritten, because the context has no field for it and D104 reserved the name
+-- whoever builds a row from a context writes it, and no route may.  **From
+14.5 the first time the score is summed from a context, a blurred capture
+costs five points**, which is the first way a photograph can move a score in
+this system.
+
+**Revisit only if** a tenth check is added to the gate, or if the gate's own
+`MODULES` table stops being the one place its checks are listed -- which is
+what `CHECKS` is keyed against and what `test_quality_stage.py` reads back.
+
+## D107 -- A hard fail is one reason on the context, and the cascade stops where it is written
+
+`backend/app/pipeline/tier0/stage.py` holds `run_tier0`, registered in
+`app.pipeline.orchestrator.STAGES` under `STAGE_NAME` read off
+`runner.TIER_NAME`.  It hands the context's frame, claim and injected day to
+`app.pipeline.tier0.runner.run_tier0` and writes the result's findings onto
+`context.flags` and, when the result hard failed, its reason onto
+`context.hard_fail_reason`.  `orchestrator.run_cascade(context, *, stages=None)`
+runs a registry in order and breaks the moment that field is no longer `None`.
+
+**Context.**  D105 fixed a stage as a callable handed the context and
+answering only by what it writes, and left the registry empty of any way to
+stop.  14.4 is the first stage that can end a cascade, so it is the first to
+force the question.
+
+- **The stop is a field, not an exception and not a return value.**  D105
+  leaves a stage answering by its writes, and both alternatives open a second
+  channel beside them: a raised `HardFail` would make "the stage failed" and
+  "the cascade stopped" one event that no caller could tell apart, and a
+  returned verdict would give every stage a second answer to read.  A field
+  keeps D105 whole -- the stage writes, and the cascade reads.
+- **A reason *is* the hard fail.**  There is one optional field rather than a
+  bool beside a sentence, so the pairing `TierResult` already refuses to let
+  disagree (`hard_failed != (hard_fail_reason is not None)` raises there) is
+  structural here rather than merely checked: a non-`None` reason *is* the
+  stop.  Nothing on the context can say "hard failed" without saying why.
+- **The cascade reads the field after a stage returns, never inside it.**  A
+  stage cannot know what runs after it; only the cascade holds the order.  The
+  break is therefore one line in `run_cascade` and the stage knows nothing
+  about it.
+- **The override is the runner's verdict, copied rather than recomputed.**  The
+  stage writes `result.hard_fail_reason` because `result.hard_failed` said so.
+  **Membership of the runner's `_HARD_FAIL_IDS` is the whole test there** --
+  a stolen-document hit is `high` and does not override -- so deciding it again
+  here would be a second answer to 6.5's question, and one free to disagree
+  with the first.  `test_a_heavy_finding_that_is_not_a_hard_fail_does_not_stop_the_cascade`
+  pins that a heavy flag runs the tiers on.
+- **A tier a hard fail kept out is absent from the answer, not skipped in it.**
+  `run_cascade` returns the names that ran.  Recording a skipped tier would
+  make `tiers_run` and the tier events beside it (D68, D69) two answers to one
+  question, which is the drift `_TIER_RUNNERS`/`CASCADE` in `app/screening.py`
+  is built to prevent.
+- **An empty registry answers `()`, where `app/screening.py` raises.**  That
+  module's `CASCADE` is a module constant that lost its entries, which is a
+  fault worth refusing; here `stages` is a caller's argument, so an empty one
+  is a caller who asked for no stages.
+
+**What this forbids**
+
+- Deciding the override anywhere but the runner that raised it, or treating a
+  weight band as though it were one.
+- A second field beside `hard_fail_reason` that could disagree with it, and a
+  stage that stops the cascade by any means but writing to the context.
+- Reporting a tier as run because the cascade reached for it.
+
+**Consequences.**  **The new cascade is still unreachable**: no route builds a
+`ScreeningContext`, so `app/screening.py` runs its own `_run_cascade` and
+reaches Tier 0 alone, and the two are separate code with the same job.
+**A context-driven Tier 0 cannot hard fail today.**  The runner's two override
+families are exactly the check digits, which need a `parsed_document`, and the
+blacklist, which needs a `watchlist` -- and `ScreeningContext` has no slot for
+either, so the stage asks for neither and 14.5's `R1` has nothing to stop on.
+`test_the_hard_fail_stops_the_cascade` reaches the stop by standing the runner
+in, and that stand-in is the honest shape of the seam until a later task gives
+the context those two slots.
+`test_stage_registry.py` and `test_quality_stage.py` each asserted that
+`"tier_0"` was a name the shipped registry refused; 14.4 registers it, so both
+now refuse `"tier_1"` -- the same claim, about a name the registry still does
+not hold.
+
+**Revisit only if** a second family grows an override of its own, which would
+make `hard_fail_reason` a summary of several findings rather than the runner's
+one sentence, or the context gains slots for a parse and a watchlist, which
+would let a real page reach the stop without a stand-in.
+
+## D108 -- R1 is the weighted sum of Tier 1's own findings, and the stage writes it
+
+`backend/app/pipeline/tier1/stage.py` holds `run_tier1`, registered in
+`app.pipeline.orchestrator.STAGES` under `STAGE_NAME = "tier_1"`.  It hands the
+context's frame to `app.pipeline.tier1.runner.run_tier1`, extends
+`context.flags` with the findings that came back, and writes
+`app.risk.scoring.weighted_sum(result.flags, weightset)` to the new
+`ScreeningContext.r1`.  `Tier1Result` grew the `flags` field that sum is made
+from, empty by default so every construction of it that named two fields still
+reads.
+
+**Context.**  D105 made a stage answer only by what it writes, D106 gave the
+cascade its first two stages and D107 its stop.  The abstract's escalation rule
+turns on `R1`, so 14.5 is the first task whose output is a number rather than a
+finding, and it had to choose what that number is made of.
+
+- **`R1` is Tier 1's own flags, not the whole flag stream.**  The abstract says
+  "Tier 1 produces a partial score R1" and the task says `R1` is computed
+  "from its flags", so Tier 0's non-override findings -- a stolen document, an
+  identity already seen, a date not yet valid -- do not move it.  They move the
+  eventual `R`, which 7.5 already sums over every flag a run collected.
+  `test_r1_is_the_sum_of_tier_1s_own_flags_and_not_of_the_whole_stream` pins
+  this with a stage-0 quality flag already on the context, which is otherwise
+  the one finding that could have been argued into the sum: **a failed quality
+  check does not cost five points here, whatever the handover predicted.**
+- **`None` means the tier has not run; `0.0` means it ran and found nothing.**
+  7.5 holds an empty sequence to be `0.0`, a real answer rather than a missing
+  one, so the field's two states are questions about *the run* and never about
+  the document.
+- **The sum is 7.5's `weighted_sum`, unchanged.**  Nothing is clamped, banded,
+  floored or hard-ruled in the stage, so a `high` Tier 1 finding is a weight and
+  never an override -- which
+  `test_a_heavy_tier_1_finding_moves_the_score_and_stops_nothing` pins.  The
+  ambiguity band is 14.6's question asked of this number, not this stage's.
+- **The weightset is the stage's argument, defaulting to the shipped one read
+  per call.**  The loader refuses to cache at module level, and a `weightset=`
+  argument lets a caller or a test score against a retuned table without the
+  stage holding a number of its own;
+  `test_r1_is_scored_against_the_weightset_the_caller_hands_over` uses a second
+  id to show the table, not the stage, decides.
+- **The one finding this runner makes today is a page no engine could read.**
+  D86 already answered that page with `ocr_available=False` rather than a
+  refusal; 14.5 adds the `OCR_LOW_CONFIDENCE` finding beside it, which is the
+  honest id -- the weightset's own comment calls that row a statement about our
+  reading and not about the document.  A page an engine *did* read produces no
+  flags, because the four checks that would fire -- `compare_to_mrz`,
+  `compare_to_barcode`, `compare_layout`, `match_score` -- need a parsed MRZ and
+  a live capture, and the context carries neither.
+
+**What this forbids**
+
+- Summing the context's whole flag stream into `r1`, or multiplying a term
+  anywhere but `weighted_sum`.
+- Reading a weight band as an override, or clamping, banding or hard-ruling
+  `r1` inside the stage.
+- Leaving `r1` absent once Tier 1 has run, or writing it from any other stage.
+
+**Consequences.**  **`R1` cannot yet tell a genuine page from an untested one.**
+A readable page scores `0.0` whatever it carries, because none of Tier 1's four
+comparisons is wired, so 14.6's band has nothing to separate until they are.
+`test_stage_registry.py` and `test_quality_stage.py` each asserted that
+`"tier_1"` was a name the shipped registry refused; 14.5 registers it, so both
+now refuse `"tier_2"` -- the same claim, about a name the registry still does
+not hold.
+
+**Revisit only if** the context gains slots for a parsed MRZ and a live capture,
+which would let the four Tier 1 comparisons fire and give `R1` something other
+than zero to separate, or if the escalation rule ever asks for the cumulative
+score across the tiers rather than Tier 1's own.
+
+## D109 -- The ambiguity band is a range closed at its own top, and an escalation is a reason
+
+`backend/app/pipeline/escalation.py` holds `AmbiguityBand(low_max,
+review_max)`, `default_band()`, `check_ambiguity(context, *, band=None)` and
+the `CHECK_NAME` this trigger is named by.  `ScreeningContext` grew
+`escalations: list[str]` and the derived `escalated` property.  The check
+reads `context.r1`, asks the band one question, and on a yes appends a
+sentence to `escalations`; on a no it writes nothing and returns `False`.
+
+**Context.**  D108 made `R1` a number and left the band that reads it to
+14.6.  The abstract's escalation rule is "R1 falls in the ambiguous band and
+the case is routed to Tier 2", and its thresholds are policy that is versioned
+with every change, so the band is a committed reading a caller may retune --
+not a literal in the check.
+
+- **The band is `(low_max, review_max]`: open at the bottom, closed at its
+  own top.**  That is 7.9's shape for all three bands, and the reason each
+  edge is named `*_max` rather than `lower`/`upper` is that the name says
+  which side is open.  34 is the top of `low` and not the first `review`
+  score, and 69 is the top of `review` and not the first `high` one; a
+  symmetric pair of names would have left each edge's membership an accident.
+  `test_the_band_is_closed_at_its_top_and_open_at_its_bottom` sweeps below,
+  at each edge, just inside each edge and above, with every score read off
+  `app.risk.config`.
+- **The band is the check's argument, defaulting to the committed one read
+  per call.**  `default_band()` reads `LOW_MAX` and `REVIEW_MAX` on every
+  call rather than binding them at import, which is 14.5's `weightset`
+  argument's argument: a retune of D28's pair then moves the edges with
+  nothing else edited.  `test_the_band_the_caller_hands_over_is_the_one_that_decides`
+  hands over a second band and shows the same `R1` escalating under one and
+  not the other, so the record rather than the module decides.
+- **The default band and 7.9's middle band are one answer held to each other,
+  not one derived from the other.**  `to_band` answers what an officer reads
+  off a finished total; this answers whether an unclamped partial score is
+  routed on.  They coincide today on every score
+  (`test_the_default_band_reads_the_scores_7_9_reads_as_review`), so a retune
+  cannot move one and leave the other, and the check does not become
+  unconfigurable in the name of consistency.
+- **`None` is an absence and `0.0` is a score.**  D108 fixed the two states
+  of `r1`: `None` is a tier that has not run, so there is nothing for a band
+  to read and the check returns `False` without touching it, and `0.0` is a
+  Tier 1 that ran and found nothing, which sits below the band and is
+  likewise not an escalation.  A band whose lower edge could reach below zero
+  would be the one case that made those two answers disagree, and the default
+  one cannot.
+- **The band is not held to `[MIN_SCORE, MAX_SCORE]`, though 7.6 holds its
+  floor there.**  `R1` is an unclamped weighted sum (D108), so it can exceed
+  the top of the scale; a band refused above `MAX_SCORE` would have a half no
+  score could reach.  The two edges are still refused unless they are finite
+  reals and the pair is a range, through 7.6's own `_score`, so a `nan` --
+  which compares false against both edges and would read as a clean page --
+  stops the screening rather than answering it.
+- **An escalation is a sentence, and the bool is read off the sentences.**
+  `escalations` holds one reason per trigger in the order they fired, and
+  `escalated` is a property over it rather than a field beside it.  This is
+  D107's rule that a reason *is* the signal, extended from one trigger to the
+  four this part needs: a stored bool could be `True` with nothing written, or
+  `False` beside a reason, and 14.7 to 14.9 would each have had to decide what
+  to do with the previous one's answer.
+- **It is not a stage, and `STAGES` is unchanged.**  A trigger is a decision
+  on what a stage already found, where D105's stage is an analysis handed the
+  context.  Registering four decisions would make `run_cascade`'s returned
+  `ran` claim four tiers had run, which is the one answer 14.4 made an absence
+  rather than a record for.  `STAGE_NAMES` is still
+  `("quality", "tier_0", "tier_1")`.
+- **It escalates and stops nothing.**  `hard_fail_reason` stays `None` and
+  `r1` is not rewritten, because D107's stop is the runner's own override and
+  a band is a routing decision;
+  `test_an_escalation_hard_fails_nothing_and_changes_no_score` holds it.
+
+**What this forbids**
+
+- A second band, or a comparison against a threshold written beside
+  `AmbiguityBand.contains`.
+- Storing an `escalated` bool beside the reasons, or overwriting a trigger's
+  reason with the next one's.
+- Reading a hard fail as an ambiguity escalation, or a `heavy` Tier 1
+  finding as one by weight band rather than by score.
+- Putting the trigger in `STAGES`, or a band edge in the module rather than on
+  the record.
+
+**Consequences.**  **Nothing calls `check_ambiguity` yet.**  `run_cascade`
+  runs three stages and never escalates, so the trigger is a function a
+  caller runs against a record the cascade produced, and the wiring belongs
+  with the gate that asks all four independently.  **And `R1` still cannot
+  reach the band on its own**: per D108 the only score a real Tier 1 produces
+  today is `0.0` or the weight of one `OCR_LOW_CONFIDENCE`, both below
+  `LOW_MAX`, so every test that escalates stands in an `r1` rather than
+  running the tier.  That is the honest shape of the seam until 14.7's slots
+  and the four Tier 1 comparisons exist, and it is the same reason the band is
+  an argument: the check is ready for a score that can land in it.
+
+**Revisit only if** `R1` is ever asked for as a clamped number, which would
+  make the scale's ends the partial score's ends too, or if a fifth trigger
+  appears that must escalate *without* naming a reason, which is the case the
+  reasons-are-the-signal rule could not carry.
+## D110 -- A high-risk profile watches two claims, and the shipped profile names nothing
+
+`backend/app/pipeline/escalation.py` grows `HighRiskProfile(document_types,
+issuing_states)`, the two committed lists `SHIPPED_DOCUMENT_TYPES` and
+`SHIPPED_ISSUING_STATES`, `default_profile()` and
+`check_high_risk_profile(context, *, profile=None)`, with
+`HIGH_RISK_PROFILE_CHECK_NAME` beside 14.6's `CHECK_NAME`.
+`ScreeningContext` grows `issuing_state: str | None = None`.  D109's shape is
+untouched: the check appends one sentence, and `escalated` is still read off
+the reasons.
+
+**Context.**  The abstract's escalation rule turns on four triggers, and 14.7
+is the second: "the case matches a high-risk profile".  Nothing in this
+repository says what such a profile holds, so the task's own wording -- "a
+*configurable* watchlist" -- is the whole instruction, and two questions were
+left open by it: what a profile watches, and what ships.
+
+- **The profile watches claims, not identities.**  The two halves are
+  `document_type` and `issuing_state`: the two things a document says about
+  itself before anyone has checked it.  **This is not `app.risk.watchlist`** --
+  that seam answers "is this document number or this person listed", is Tier 0's
+  own hard-failing work, and carries D13's reasons; this one asks "is this kind
+  of document or this state worth a second look" and is a routing decision.
+  D13 still holds over it for the same reason, though: the reason names the
+  watchlist entry that matched, and that entry is a document type or a
+  three-letter code -- never a document number, a name or a date of birth.
+- **`None` is an absence and not a hit.**  No MRZ reaches the context today, so
+  `issuing_state` is `None` on every real run, and a watchlist that read `None`
+  as a listed value would send every document on the moment it was consulted.
+  `test_an_unclaimed_value_is_not_a_hit` holds it, and
+  `test_a_claim_no_watchlist_can_be_read_against_is_refused` refuses a claim
+  that is neither `None` nor a string, because a value nobody typed is a
+  wiring mistake and not an absence.
+- **Both ends fold to lower case and trim.**  An MRZ prints `IND` in capitals
+  while a configured list is typed by hand, so comparing the raw strings would
+  make a hit a matter of spelling.  `HighRiskProfile.__post_init__` folds the
+  entries and `_claim` folds the claims, so exactly one spelling is compared
+  and an entry cannot be listed twice in two spellings.  The reason still
+  quotes the claim **as the document printed it**, because that is the string
+  an officer reads back.
+- **The shipped lists are both empty, and that is the decision.**  The abstract
+  names the trigger and never the list.  Shipping one would put policy in this
+  package that no commit recorded and no calibration chose -- what D22 forbids
+  for a threshold -- and a plausible-looking list of states would be worse than
+  none, because every deployment would inherit it silently.  So the profile is
+  an argument, the way 14.6's band is: `default_profile()` builds it from the
+  two committed constants per call, and an agency holding its own list hands it
+  over.  **The test that pins the emptiness is meant to fail** the moment a
+  list is filled in, because filling it in is the change that must be recorded.
+- **One trigger writes one reason.**  A document whose type *and* state are
+  both listed is escalated once, naming the type.  D109's rule is one sentence
+  per trigger, and a second sentence would make the count a property of the
+  document rather than of the trigger.
+- **It escalates and stops nothing.**  `hard_fail_reason` stays `None`, `r1`
+  and `flags` are untouched, and the profile's twin of 14.6's
+  `test_an_escalation_hard_fails_nothing_and_changes_no_score` holds it.
+- **`CHECK_NAME` stays as 14.6 named it and this one is prefixed.**  Renaming
+  the first would have broken the claim its own test makes, so the four
+  triggers end up as `CHECK_NAME`, `HIGH_RISK_PROFILE_CHECK_NAME`, and two more
+  in the same prefixed shape.  That is the seam 14.8 and 14.9 copy rather than a
+  collision they have to resolve.
+
+**What this forbids**
+
+- Reading an unclaimed value as a listed one, or escalating on a claim the
+  profile does not list.
+- Shipping a high-risk list without recording it in the same commit, or reading
+  one from a file or an environment, so a deployment could retune it with
+  nothing recording the change.
+- Editing a profile after it is built, or matching a document type against the
+  states list.
+- Writing a reason that does not name the entry that matched.
+
+**Consequences.**  **Nothing writes `issuing_state`.**  It is a claim on the
+record with no producer, in the same position `r1` held before 14.5, so every
+14.7 test stands a context in and the check is unreachable from a live cascade
+-- which is where its wiring belongs, beside 14.6's.  **The shipped profile
+escalates nothing**, so the default path never sends a case on, and a
+deployment that configures no list gets the abstract's other triggers and no
+more.  **`issuing_state` sits after `stage_trace`**, not beside
+`document_type`, because a defaulted field cannot precede a required one and
+moving it would have shifted every positional construction in the tree.
+
+**Revisit only if** a task gives the context a parsed MRZ, which would make
+`issuing_state` something the cascade writes rather than something a caller
+states, or if a deployment needs the lists in a file, which would make the
+loaded value part of the recorded ruleset version instead of a constant beside
+the check.
+
+## D111 -- The deep audit draw is an HMAC keyed by the server secret, and the shipped rate is zero
+
+`backend/app/pipeline/escalation.py` grows `DeepAuditDraw(rate, secret)`, the
+committed `SHIPPED_DEEP_AUDIT_RATE`, `default_draw(secret)` and
+`check_deep_audit(context, *, draw)`, with `DEEP_AUDIT_CHECK_NAME` beside the
+other two.  D109's shape is untouched: the check appends one sentence, and
+`escalated` is still read off the reasons.
+
+**Context.**  The abstract's escalation rule turns on four triggers, and
+14.8 is the third: "if it is drawn for a random audit".  It also says why --
+"A random sample of low-risk documents still receives deep analysis, so an
+adversary cannot learn exactly what passes the light checks" -- which makes
+the draw a security control rather than a load-shaving knob, and gives three
+questions the task's own wording leaves open: where the randomness comes
+from, what the draw is a function of, and what ships.
+
+- **The randomness comes from an HMAC, not from a generator.**  The draw is
+  `HMAC_SHA256(secret, screening_id)`, its leading eight bytes read
+  big-endian as a fraction of `2**64`, compared against the rate.  **A
+  generator would have broken the one property the trigger exists for**: a
+  caller's `random` or `secrets` answers a different way each call, so the
+  same case could be re-drawn by asking twice, and a re-draw is an oracle.
+  `test_the_draw_is_an_hmac_and_reaches_neither_a_clock_nor_a_file` pins the
+  primitive, and the module-wide scan that already held 14.6 and 14.7 now
+  reads this file too.
+- **The draw is a function of the secret and the id, and of nothing else.**
+  Not of the clock, the case, the score, the image, or the order two checks
+  ran in.  So the same id draws the same way forever -- across a process
+  restart, a retry, and a second checkpoint -- which is what
+  `test_the_same_screening_id_always_draws_the_same_outcome` holds.  It is
+  also why a different secret changes the corpus:
+  `test_a_second_secret_draws_the_same_corpus_differently` holds that.
+- **The secret is required, and none is shipped.**  `check_deep_audit` takes
+  `draw` as a required keyword rather than defaulting it, which is the one
+  place this file breaks 14.6's and 14.7's shape.  A secret is the one
+  value here that cannot be committed: a shipped one is a key every
+  deployment would share, and an unkeyed HMAC is a plain hash of the id,
+  which an adversary computes offline and knows the whole draw in advance.
+  So there is nothing to default to and the type says so.
+- **The rate is a probability, refused outside `[0, 1]`.**  A rate is not a
+  score, so it does not go through `_score`'s `MIN_SCORE`/`MAX_SCORE` ends;
+  it reuses `_score` to refuse a non-real or non-finite value and range-checks
+  it itself.  `0.0` draws nobody and `1.0` draws everybody, both exactly,
+  which `test_the_edges_of_a_rate_are_exact_and_need_no_corpus` holds
+  without a sample.
+- **The shipped rate is zero, and that is the decision.**  The abstract says
+  a random sample still receives deep analysis and never says how large a
+  sample is.  D110's argument applies unchanged: a number here would be
+  policy no commit recorded and no calibration chose, and every deployment
+  would inherit it silently.  So `default_draw` is the same shape as
+  `default_band` and `default_profile` -- an argument, built per call from a
+  committed constant -- and **the test that pins the zero is meant to fail**
+  when the constant is filled in, because filling it in is a change to
+  record against `RULESET_VERSION` (D22).
+- **The distribution claim is statistical, and says so.**  The share drawn
+  over 10 000 ids is asserted to sit within five binomial standard
+  deviations of the configured rate, at two rates.  A fixed secret gives one
+  fixed count, so a tighter band would only ever have fitted the number
+  observed today; the binomial band is a claim about the draw, not about
+  this corpus.  The edges are held exactly instead.
+- **It escalates and stops nothing, and needs nothing to have run.**  It
+  reads the id alone, so it fires on a context whose `r1` is `None` and whose
+  claims were never made -- the one trigger of the four that a cascade can
+  answer before any stage has produced anything.
+
+**What this forbids**
+
+- Drawing from `random`, `secrets`, the clock, or any per-call state, or
+  re-drawing a case a caller asks about twice.
+- Committing a secret, defaulting one, or accepting a key that is not bytes.
+- Shipping a rate, or reading one from a file or an environment, so that a
+  deployment could retune it with nothing recording the change.
+- Writing a reason that quotes the secret or the screening id.  The reason
+  names the rate, which is the policy an officer reads.
+- Reusing a bare `hash(id)` in place of the keyed draw.
+
+**Consequences.**  **The shipped draw escalates nothing**, exactly as the
+shipped profile does in 14.7: a deployment that configures no rate gets the
+abstract's other triggers and no more.  **A deployment must supply a secret
+from outside the package**, and nothing reads one today, so the check is
+unreachable from a live cascade -- where 14.6's and 14.7's wiring belongs,
+beside the gate that asks all four independently.  **No `ScreeningContext`
+field moved**: the draw reads the id the context already holds.
+
+**Revisit only if** the escalation gate (14.9) needs to know whether a case
+was drawn without re-running the draw, which would put the outcome on the
+context, or if a deployment wants the rate in configuration rather than in
+the ruleset, which would make it a settings value that the ruleset version
+has to name.
+
+
+## D112 -- The fourth trigger reads the depth off the context and takes no argument
+
+The abstract lists four reasons a document proceeds to Tier 2, and this is the
+fourth: the document proceeds "if the checkpoint is running in full-depth
+mode".  `check_full_depth` answers that one question and nothing else.  Four
+things came out of writing it, and three of them are refusals.
+
+- **The mode is read off `context.depth_mode`, not passed in.**  The record
+  already carries the depth of the checkpoint, and D104 made the field
+  required so no context can assume `STANDARD`.  A `mode=` keyword would let
+  a caller ask what a screening nobody is running would do, which is a
+  question the gate must not be able to ask.
+  `test_the_mode_is_read_off_the_context_and_is_not_a_parameter` holds the
+  signature down to its one parameter.
+- **`FULL_DEPTH` is imported from `app.pipeline.orchestrator`, never
+  re-spelled.**  The D104 rule is that the depth vocabulary and the capture
+  vocabulary are held disjoint, and a second copy of `"full_depth"` written
+  here would be a second place to grow a third depth.
+  `test_the_fourth_trigger_never_reads_a_capture_mode` holds the two sets
+  apart where this trigger reads one of them.
+- **The vocabulary is refused by the record, not again here.**
+  `ScreeningContext` already refuses a `depth_mode` naming nothing known with
+  a `ContextValueError`, and D104 says that check is load-bearing for this
+  task in this direction: a mode nothing recognises must not read as a
+  standard one.  Repeating the membership test here would be the
+  `_check_parsed_document` second opinion about a question that has an owner,
+  so this trigger carries no `:raises FlagValueError:` clause and is the only
+  one of the four that refuses nothing at all.
+- **There is no shipped constant and nothing to configure.**  14.6, 14.7 and
+  14.8 each ship a value on purpose: a band with real edges, and two empty
+  lists and a zero rate that name a policy nobody recorded (D110, D111).
+  This trigger has no such value.  `FULL_DEPTH` is a depth the context either
+  is or is not, so there is no number to fill in and no test meant to fail
+  when one is.  A `default_full_depth()` would be a function returning its
+  own argument, and it is deliberately absent.
+
+**What this forbids**
+
+- Passing a mode in, or reading one from a file, an environment or a settings
+  object, so a deployment could retune the depth of a box with nothing
+  recording the change.
+- Writing a reason that quotes the document claim, the issuing state, the
+  screening id, or anything else the traveller brought.  The reason names the
+  mode, which is the only reason here.
+- Treating the mode as anything but the field the context already owns:
+  reading `Screening.mode`, a capture mode, or a third depth name.
+- Making this trigger stop the cascade.  It escalates and nothing else, as
+  `test_a_full_depth_escalation_hard_fails_nothing_and_changes_no_score` holds.
+
+**Consequences.**  **All four of the abstract triggers now exist**, and none
+is wired into `run_cascade`: each is a function a caller runs against a
+record the cascade produced, and the gate that asks all four independently is
+still to be written.  **This is the one trigger that escalates out of the
+box** -- unlike the two empty lists of the profile and the zero rate of the
+draw, a checkpoint configured at full depth escalates every screening today,
+because the abstract states the behaviour of that mode rather than leaving it
+to a deployment.  **No `ScreeningContext` field moved**: the mode was already
+required, already checked, and already carrying the D104 vocabulary.
+
+**Revisit only if** the gate wants the four answers at once and needs this
+one reportable without asking, which would put the answer on the context
+rather than on the list of reasons, or if a third depth is ever recorded,
+which changes what "no other depth escalates" means and so changes
+`test_the_trigger_escalates_for_full_depth_and_no_other_depth`.
+
+---
+
+## D113 -- One trace row per stage that ran, and the answer carries it beside the names
+
+ackend/app/pipeline/orchestrator.py holds StageTrace(stage, started,
+elapsed, flags_added, escalated), frozen, and CascadeResponse(ran, trace),
+also frozen.  
+un_cascade appends one row to context.stage_trace as each
+stage returns, and returns a response carrying the rows beside the names it
+already returned.
+
+**Context.**  14.1 put stage_trace on the record as list[Any] and said so
+openly: D104 left the list untyped because the shape was this task to write.
+D105 went further and said the registry could not be checked against the tree
+by a test, so what would hold that map honest is the trace recording the name
+that actually ran.  Both debts land here, and eight things came out of it.
+
+- **One row per stage that ran, appended as the stage returns.**  D107 rule
+  stands unchanged: a stage a hard fail kept out is absent from the answer, so
+  it is absent from the trace too.  Recording it as skipped would make the trace
+  and 
+an two answers to one question.
+- **The row names the registry key, not the callable.**  That is the whole of
+  D105 to have been for: a name mapped to a callable that was renamed imports
+  fine, and the row is what says which key ran.
+- **lags_added is the growth of context.flags across the one stage.**  It
+  is read before the stage and after it, so it counts what that stage left
+  behind and cannot absorb a finding another stage wrote.
+- **escalated is read off the reasons at the moment the row is written**, and
+  is never stored beside them as a second bool (D109).  A row therefore records
+  when the run was escalated, so a trigger firing in a later stage does not
+  rewrite the rows before it.
+- **The clock is 	ime.perf_counter, and it is a keyword.**  A monotonic
+  reading cannot run backwards when the wall clock is adjusted, and no wall
+  clock is written beside it because the screening already carries a timestamp
+  and two timestamps for one moment is one too many.  The keyword exists so a
+  test can pin the arithmetic; nothing ships that retunes it.
+- **stage_trace is now typed list[StageTrace].**  D104 forbade typing the
+  list to a shape this task had not written, and this is the task that wrote
+  it, so the reservation is discharged rather than overridden.
+- **The answer keeps the names beside the rows.**  CascadeResponse.ran is
+  D107 to the word; 	race is the new half beside it.  Deriving the names from
+  the rows instead would have left D107 recorded answer as a second spelling of
+  the trace.
+- **Both records are frozen, for the reason a flag is.**  A row is a record of
+  what happened, and a record that can be edited afterwards is the tidied
+  version of itself.
+
+**What this forbids**
+
+- Recording a stage that did not run, or recording one as skipped.
+- A second clock, or a wall-clock timestamp beside the elapsed seconds.
+- A stage writing its own row, or the trace being anything but rows of this
+  shape.
+- An escalated bool stored beside the reasons, or a row carrying one written
+  by anything but the cascade.
+- lags_added counting findings the stage did not add.
+
+**Consequences.**  **The trace is written and nothing reads it yet**: no route
+builds a ScreeningContext, so the cascade runs only under test and D107 two
+cascades still stand.  **
+un_cascade returns a CascadeResponse rather than
+a bare tuple of names**, so the five assertions in 	est_tier0_stage.py and
+	est_tier1_stage.py that pinned the tuple now read .ran; the claim is
+D107 to the word and only its spelling moved.  **A stage that raises leaves no
+row**, because the row is written after the stage returns, which is the seam
+14.11 closes.  **Tier 2 has no stage of its own to trace yet**: the shipped
+registry reads quality, tier_0, tier_1, so
+	est_the_trace_reads_tier_0_then_tier_1_then_tier_2 runs the three tiers
+through a stand-in registry and 15.1 is what registers the deep analysis tier.
+
+**Revisit only if** a stage is registered that runs beside another rather than
+after it, which would make started and the order of the trace mean something
+else, or the trace is to be anchored in the audit record, which would need a
+canonical serialisation and a wall clock this decision does not write.
+
+
+---
+
+## D114 -- A stage that raises is traced as failed, and the cascade runs on
+
+backend/app/pipeline/orchestrator.py runs each stage through a private
+_run, which catches Exception and answers whether the stage returned.  The
+row is written either way, carrying a sixth field, `failed`.
+
+**Context.**  D113 named the seam this closes: the row was written after the
+stage returned, so a stage that raised left no row and took the rest of the
+cascade with it.  One broken check must not lose the whole screening.
+
+- **The row is written whether or not the stage returned.**  A stage that
+  raised did run, so it is absent from nothing: it is in `ran` and in the
+  trace like any other, and `failed` is what says how it went.  Recording it
+  as skipped would be D113's second answer to one question.
+- **`failed` is a bool beside the other five, never a reason.**  D106 keeps
+  a broken check's own words off the record so an internal detail cannot
+  reach an officer, and this is that rule one tier up: the row says the
+  stage failed and never carries the exception.
+- **Only Exception is caught.**  A KeyboardInterrupt or SystemExit still
+  stops the run, because a shutdown is not a broken check.
+- **A hard fail still stops the cascade.**  Isolation and D107's one stop
+  are not rivals: a stage that wrote `hard_fail_reason` and then raised is
+  traced as failed and keeps the stages after it out.
+- **What the stage left before it broke still counts.**  `flags_added` is
+  read across the stage as before, so a finding written before the raise is
+  a finding rather than a casualty of the raise.
+
+**What this forbids**
+
+- An exception escaping `run_cascade`, or its message reaching a row.
+- A stage kept out of the trace because it raised.
+- Isolation swallowing a BaseException, or overriding the hard fail.
+
+**Consequences.**  `test_stage_trace.py` holds the isolation tests, and the
+row-shape test grew from five fields to six.  **A broken shipped stage is
+now quiet**, which is the trade: the run completes and the trace says which
+stage failed, and nothing reads that trace yet (D113).
+
+**Revisit only if** the trace is anchored in the audit record, where a stage
+recorded as failed has to carry enough to reconstruct why, or if a stage
+that raises is ever meant to stop the cascade rather than be traced.
+"""
+
+---
+
+## D115 -- An empty Tier 2 registry is an answer, and a module is not caught twice
+
+backend/app/pipeline/tier2/base.py holds `DeepModule`, the `DeepRun` record, and
+`run_deep_modules`, which runs every module in `DEEP_MODULES` and answers a
+`DeepRun` naming what ran beside what each said.  The registry ships empty.
+
+**Context.**  D114 left Tier 2 with no stage of its own and no seam to hang one
+on; 15.1 is that seam.  Its verification names the state worth settling first,
+a registry holding zero modules.
+
+- **The registry is read-only and holds none yet.**  A mapping proxy, as
+  `STAGES` and `DEFAULT_ENGINES` are, so the set a screening draws from cannot
+  be widened by a caller.  The first module behind it is 15.3's.
+- **Zero modules is a `DeepRun` with nothing in it, not a refusal.**  D86's
+  rule one tier up: an absent capability stays visible.  Raising here would
+  report a wiring mistake on a box that is merely unconfigured, and the caller
+  could not tell the two apart.
+- **An empty run is not a clean document.**  An empty `ran` says no deep module
+  was configured.  15.9 makes the same demand of a missing stamp template, and
+  15.7 is what holds a clean document near zero.
+- **A module that raises is not caught here.**  D114 isolates a broken stage
+  inside `run_cascade`, one level up, and a deep module is reached through that
+  cascade.  Catching a second time here would hide the failure from the trace
+  row whose whole job is to record it.
+- **`DeepResult` is forward-referenced, not defined.**  15.2 owns that record,
+  and the annotations here are strings so this task does not spend it.
+
+**What this forbids**
+
+- `run_deep_modules` raising on an empty registry.
+- A caller adding to `DEEP_MODULES`.
+- An exception from a module caught twice, or its words reaching a row.
+- An empty `DeepRun` being read as a pass.
+
+**Consequences.**  `test_tier2_base.py` holds the tests, 8 of them.
+**`DeepModule.run` is not the seam the cascade runs**, and Tier 2 still has no
+stage in `STAGES`, so nothing calls `run_deep_modules` outside a test and the
+`tier_2` trace in `test_stage_trace.py` is still a stand-in.
+
+**Revisit only if** a module holds state that cannot be built once at import,
+which is `DEFAULT_ENGINES`'s reason for module-level engines and would argue for
+a factory, or if an empty run ever has to reach an officer as more than an
+absence.
+"""
+---
+
+## D116 -- A deep result names who produced it, and refuses to be clipped
+
+backend/app/pipeline/tier2/base.py holds `DeepResult`, the record every
+`DeepModule.run` answers with: `module`, `score`, `is_stub`, `model_version`,
+`detail`, and `heatmap` and `regions`.  Its verification names the state worth
+settling first, a result produced by a stand-in.
+
+**Context.**  D115 shipped the seam and forward-referenced this record, naming
+15.2 as its owner.  Every Tier 2 module from 15.3 on answers one of these, and
+the tasks require that a stand-in be labelled rather than shipped as a
+detector.
+
+- **`is_stub` and `model_version` have no default.**  Every other field may
+  have one; these two may not, because the failure they guard against is a
+  module that forgets to label itself.  A default would make the dishonest
+  answer the shorter one to write.
+- **A stub's score is never evidence that a document is clean.**  A stand-in
+  that answers `0.0` has measured nothing, and `is_stub` is what tells a caller
+  that.  This is D86's rule one level down: an absent capability stays visible.
+- **An empty `heatmap` or `regions` means the module produced neither.**  It is
+  not a map of zeros and not an all-clear.  A caller that renders an overlay
+  must decide what it draws over nothing.
+- **`score` is the module's own confidence, not a probability of forgery**, the
+  same split `EvidenceFlag.value` makes, and it is a real number in `[0, 1]`.
+- **Nothing is coerced.**  A malformed field raises `DeepResultError`, a
+  `ValueError`, on D6's rule: a clipped `1.4` reads stronger than the finding
+  that was measured.  `True` is refused for `score` and `is_stub` alike, since
+  it is a real number in Python and not a confidence.
+- **`heatmap` is rows of `[0, 1]` numbers of one width, and `regions` are
+  whole-pixel polygons.**  Reusing `MIN_REGION_CORNERS` and `EvidenceFlag`'s
+  corner rule is what lets 15.13 hand a region straight to a flag.  A ragged
+  grid is refused because no overlay draws on one.
+- **Frozen, for `DeepRun`'s reason**, and a message names the rule broken and
+  never repeats the value, which is where a heatmap's numbers would otherwise
+  land.
+
+**What this forbids**
+
+- A `DeepResult` built without saying whether a model did the work.
+- A stub's score being read, on its own, as a clean document.
+- An empty heatmap being drawn as an all-zero map.
+- Clipping a score or a heatmap cell into range instead of refusing it.
+
+**Consequences.**  `test_tier2_result.py` holds the tests, 15 of them.
+`DeepRun.results` and `DeepModule.run` are annotated with the real class now
+that it exists.  Nothing constructs a `DeepResult` yet, because
+`DEEP_MODULES` is still empty; the first module to do so is 15.3's.
+
+**Revisit only if** a module needs to hand back a raw numpy array rather than
+rows of numbers, which would move the map off the record and into a converter,
+or if a module ever has to answer "I could not run" as distinct from "I ran and
+found nothing", which today would be a `DeepResult` whose `detail` says so.
+## D117 -- ELA normalises against a committed ceiling, and ships labelled
+
+backend/app/pipeline/tier2/ela.py holds `ela_heatmap` and `ELAModule`, the first
+module behind 15.1's seam and the first to build the record 15.2 froze.  It
+re-encodes the working frame at JPEG qualities 75, 85 and 95, takes each
+quality's per-pixel discrepancy, averages those per 8x8 block, and normalises
+the block means into the heatmap it answers with.
+
+**Context.**  D116 forward-referenced this record's owner and named 15.3 as the
+first module to construct a `DeepResult`.  Nothing in the tier was calibrated
+against ground truth, and a tamper map drawn over a document is the most
+convincing thing this project can get wrong, so the argument below is mostly
+about what the map must not claim.
+
+- **The map is normalised against `SATURATION`, not against its own maximum.**
+  A block whose mean amplified discrepancy reaches `SATURATION` (60.0, which is
+  `AMPLIFY` times three gray levels) reads fully hot, and the map is clipped
+  there.  Dividing by the largest block on the page would instead stretch
+  whatever that page happened to be worst at across the full scale, so a clean
+  capture's own noise would paint its whole surface at 1.0 -- a cell claiming
+  certainty because the normalisation was fitted to it.
+- **A cell is one JPEG block, and a partial block is dropped.**  `BLOCK_SIZE` is
+  8, the unit the codec actually coded, and the remainder along an edge is not
+  averaged over fewer pixels than its neighbours.  A ragged grid is what D116
+  refuses to hold, so the seam between a cell of 64 pixels and one of 8 would
+  have been invisible until a caller drew it.
+- **The several qualities are averaged, not maxed.**  Ringing around an edge is
+  present at every quality and is evidence of nothing, and a per-block maximum
+  would promote it to a finding the moment one quality happened to ring
+  hardest.  Averaging damps what every codec does and leaves the blocks that
+  disagree for a reason.
+- **`score` is the worst block on the map.**  One comparable scale is what 15.6's
+  fusion needs; a share of hot blocks would score a large, local, obvious edit
+  below a page-wide faint one, which is the wrong order for a border document.
+- **ELA measures re-compression, not tampering, so it ships `is_stub: true`.**
+  The qualities, the amplification and the ceiling are this repository's
+  choices and nothing here is calibrated against labelled data, so
+  `model_version` is `ela-v0` -- the rule's own version -- and `detail` names
+  the qualities, the worst block, and the share above `HOT_LEVEL`.  D116's
+  `is_stub` is true for a stand-in rather than for a method, and under-claiming
+  is the safe direction of the two: the shipped weightset already calls every
+  Tier 2 module a labelled stub.
+- **`regions` is left empty.**  15.13 is the task that turns a heatmap into
+  polygons, and a region derived here would be a second answer to that
+  question.
+- **A frame ELA cannot measure is refused with `ELAError`, never answered as a
+  clean page.**  That is no quality at all, a quality outside `[1, 100]`
+  (OpenCV clamps rather than refuses, so 500 would quietly measure 100), a
+  frame too small to hold one whole block, and a frame that is not a non-empty
+  8-bit array.  Rescaling a float frame silently would have been a measurement
+  of a different picture, which is the one failure this map cannot detect.
+- **The module is shipped and is not registered.**  `DEEP_MODULES` stays empty
+  (D115), so a screening that ran Tier 2 does not claim that one of three
+  modules stood behind it; 15.6 is the task that fuses them and the one that
+  belongs to wiring the set.
+- **Nothing about the capture reaches the record but numbers.**  The heatmap is
+  a grid of floats in `[0, 1]`, an error message names the rule rather than the
+  frame, and no ELA call logs (D5's rule, and the reason this map is not a
+  ledger entry).
+
+**What this forbids**
+
+- Normalising the map by its own maximum, or clipping a ceiling that was fitted
+  to the capture in hand.
+- Reading a hot block as evidence of tampering rather than of re-compression.
+- Answering an unmeasurable frame with an empty or all-dark map.
+- Registering one module of three and letting `ran` claim the tier.
+
+**Consequences.**  `test_tier2_ela.py` holds the tests, 21 of them, over
+synthetic captures: a soft gradient page written once at quality 95, with one
+region replaced by the output of a second encoder at quality 30.  The task's
+own verification is the contrast between that region and a control region of
+the same size on the same page, because a real capture's text rings under
+every quality and an absolute reading would prove nothing.  **ELA has still
+never run on a real capture**, and no route calls `run_deep_modules`.
+
+**Revisit only if** a calibrated ELA with labelled thresholds replaces these
+constants, which would let `is_stub` flip and would make the ceiling a
+measured number rather than a chosen one, or if 15.13 wants block rectangles
+from the module itself rather than deriving them from the heatmap.
+## D118 -- Noise residual measures each block against the page's own median noise
+
+**Context.** 15.3's ELA needs a second codec to disagree with. Noise residual
+needs only the capture: a spliced or re-encoded region carries the noise of the
+source it came from, so its high-pass residual has a different variance from the
+blocks around it.
+
+**Decision.**
+
+- **The baseline is the page's own median block variance, and the departure is
+  the log-ratio, so the map is relative rather than absolute.** A capture's
+  absolute noise is set by its scanner, its lighting and its encoder, none of
+  which this repository can calibrate, and D117's committed ceiling would be a
+  second such guess. Dividing each block by the page's own median makes the one
+  comparison that is available offline, and it is the comparison the evidence
+  supports: a block that differs from its own neighbours is inconsistent with
+  them, whatever the page's overall noise level happens to be.
+- **`ANOMALY_FACTOR` is 8.0, measured rather than chosen.** Four synthetic
+  captures were probed first. On an untouched grainy page written once at
+  quality 95, the worst block sat 2.0x the median, which reads 0.28 on a
+  factor of 8. A region blurred until its grain collapsed sat 0.05x the median,
+  and a region given extra grain sat 5.7x. So 8x is four times past what a
+  capture's own noise produces, and an edit in either direction saturates.
+- **The departure is symmetric**, so a denoised splice reads as anomalous as a
+  noisier one. Only the smoother direction was the common finding in the
+  literature when this was written; nothing in these probes shows the noisier
+  direction is uninformative, and refusing it would hide half of what the
+  measurement sees.
+- **The high-pass is a median filter, not a mean.** A document is full of edges
+  and a mean high-pass answers those edges rather than the noise underneath them.
+- **`VARIANCE_BLOCK` is ELA's `BLOCK_SIZE`.** The two maps then overlay cell for
+  cell, which is what 15.6's fusion needs.
+- **A page carrying no measurable noise is refused with `NoiseResidualError`,
+  never answered as a clean page.** With every variance at zero there is nothing
+  to depart from, and a ratio against zero is not a measurement. This is the
+  one degenerate case the probes surfaced that a synthetic test image walks
+  straight into.
+- **`to_gray` is repeated rather than shared with ELA.** Sharing it would make
+  this module's refusals `ELAError`, so a caller catching one could mistake a
+  frame this module can measure for one it cannot.
+- **The module is shipped and is not registered.** `DEEP_MODULES` stays empty
+  (D115) for the reason D117 gives: 15.5 and 15.6 are still ahead, and a
+  two-of-three registry would let `ran` claim the tier stood behind all of it.
+- **`HOT_LEVEL` is ELA's, 0.5**, so 15.6's fusion reads both modules on one line.
+- **Nothing about the capture reaches the record but numbers**, by D117's rule.
+
+**What this forbids**
+
+- Dividing by an absolute noise ceiling, or by the map's own maximum.
+- Reading an anomalous block as evidence of tampering rather than of local
+  inconsistency.
+- Answering a noiseless page with an all-dark map.
+- Registering two of three modules and letting `ran` claim the tier.
+
+**Consequences.** `test_tier2_noise_residual.py` holds the tests, 34 of them,
+over synthetic captures: a grainy gradient page written once at quality 95, with
+one region blurred until its noise collapsed and another given grain it did not
+have. The task's own verification is the contrast between the blurred region and
+a control region of the same size on the same page. **Noise residual has still
+never run on a real capture**, and no route calls `run_deep_modules`.
+
+**Revisit only if** a calibrated noise model replaces these constants, which
+would let `is_stub` flip, or if 15.6's fusion finds the two modules disagreeing
+so often that the shared `HOT_LEVEL` has to become two.
+
+## D119 -- Copy-move believes a translation only when enough keypoints agree on it
+
+**Context.** 15.5 needs to say where a capture repeats itself. A document is
+already full of self-similarity -- ruled lines, a letterhead, a table's repeated
+rows -- so the measurement has to separate that from a region pasted from one
+place to another, or it reports every page as forged.
+
+**Decision.**
+
+- **A translation is called a copy only when `MIN_COPIES` keypoint pairs agree
+  on it.** This is the whole discriminator, and it is measured: on an untouched
+  synthetic page the largest group of pairs agreeing on one translation is 3,
+  while the same page with a 150x150 region pasted elsewhere reaches 121. Eight
+  sits in the gap. Clustering the shifts before deciding anything is also what
+  makes the answer cheap to read -- the copied page's largest group is 40x its
+  own clean page's.
+- **The detector is SIFT, not ORB.** Both separate a copied page from a clean
+  one at these settings, but SIFT reaches it with 869 keypoints where ORB needs
+  4245, and `cv2` 4.14 carries it in the main package rather than contrib.
+- **`RATIO = 0.6` on the nearest match against the runner-up, with the keypoint
+  itself excluded.** Self-matching returns every keypoint as its own nearest
+  match at distance zero, so the diagonal is dropped before the two rivals are
+  taken; a page's own nearest rival is then a genuine second place.
+- **`MIN_SHIFT = 24.0` pixels is the floor on a translation.** A keypoint
+  matched to its own immediate neighbourhood is the same structure twice over,
+  not a second copy. Measured at 16 and 24 the result is identical, so 24 is
+  taken as the safer of two equal answers.
+- **`SHIFT_TOLERANCE = 16.0` bins two shifts into one translation**, absorbing a
+  detector's localisation error. Measured: below this the copied page's
+  agreement fragments across neighbouring bins, at it the one real translation
+  separates cleanly from every spurious group.
+- **`SATURATION = 4.0` agreeing pairs in a block is a fully hot cell.** In a
+  copied page the most common block carries 4 pairs and the busiest carries 6;
+  in the untouched page no block carries any, so the scale separates them
+  completely. The ceiling is committed rather than taken from the page's own
+  maximum, by D117's rule, so two captures are read on one scale.
+- **`HOT_LEVEL` and `BLOCK_SIZE` are the other two modules'.** All three maps
+  then overlay cell for cell and read on one line, which is what 15.6's fusion
+  needs and what D117 and D118 each arranged.
+- **`REGION_MERGE = 48.0` pixels groups matched keypoints into a box.** Measured:
+  the two ends of a copy stay two separate boxes anywhere from 32 to 128 pixels
+  of merge radius, so 48 sits inside a wide plateau rather than on its edge.
+  Polygons follow `_box_polygon`'s promise -- clockwise from the top left, far
+  corner exclusive, plain integers -- because that is the one writer whose
+  corner order the record treats as a promise.
+- **`to_gray` is repeated rather than shared.** Three modules, three error
+  types, so a caller catching one cannot mistake a frame it can measure for a
+  frame another cannot.
+- **Translation only.** A scaled, rotated or mirrored duplicate is a different
+  measurement, is not attempted here, and is not claimed.
+- **A capture with too little texture to match is refused with `CopyMoveError`,
+  never answered as a page with no copy in it.** With no features there is
+  nothing to match against itself.
+- **The module answers `regions` where ELA and noise residual leave them
+  empty.** The other two read a pixel map and can only say where it went hot;
+  copy-move knows which keypoints matched, so its boxes are where the copy
+  actually is rather than a threshold's edge. 15.13 still owns turning a
+  heatmap into flags.
+- **The module is shipped and is not registered.** `DEEP_MODULES` stays empty
+  (D115) for D117's reason: 15.6 is still ahead, and a three-of-three registry
+  would let `ran` claim the tier stood behind all of it.
+- **Nothing about the capture reaches the record but numbers and whole pixels**,
+  by D117's rule.
+
+**What this forbids**
+
+- Calling one self-similar pair a copy-move, or dividing a map by its own
+  maximum.
+- Reading a repeated region as proof of tampering rather than of repetition: a
+  letterhead, a repeated table row and a forged duplicate are one finding to
+  this measurement, which is why `is_stub` is set and the detail says so.
+- Claiming scaled, rotated or mirrored copies.
+- Registering three of three modules and letting `ran` claim the tier.
+
+**Consequences.** `test_tier2_copy_move.py` holds the tests, 46 of them, over a
+synthetic textured page written once at quality 95 with one 150x150 region
+pasted elsewhere and the file written again. The task's own verification is
+that both ends of the copy are named as boxes, and that the rest of the page is
+dark. **Copy-move has still never run on a real capture**, and no route calls
+`run_deep_modules`.
+
+**Revisit only if** a rotation- or scale-invariant matcher replaces this one,
+which would widen what a translation can mean, or if 15.6's fusion finds this
+module disagreeing with the other two often enough for the shared `HOT_LEVEL`
+to become three.
+---
+
+## D120 -- Stamp matching resamples both sides onto one grid, and every committed template is drawn here
+
+**Context.** 15.8 asks for a stamp template registry plus detection and template
+matching. Nothing had been said about what a template *is*: a mark on a
+document is ink of some colour at whatever size it was printed, so a
+comparison has to survive both. It had also not been said whose stamps would be
+in the registry, and committing no real mark is not a gap to be filled later by
+picking one.
+
+**Decision.**
+
+- **Every template the registry ships is drawn by this repository**
+  (`demo_entry_stamp`, `demo_exit_stamp`), and their names carry a `demo_`
+  prefix that a test holds. No authority's mark is committed, so a real stamp
+  matches nothing here, and the module's `detail` says so in the sentence an
+  officer reads. Committing a real stamp later is the deployment's call, not
+  this module's.
+- **Detection proposes and matching disposes.** `find_stamps` returns every
+  component of chromatic ink that is big enough, and `detect_stamps` reports
+  only those a template explains. This is the whole of the realistic false
+  positive: a colour photograph is *proposed* and then declined, and a detector
+  that never proposed it could not find a stamp printed beside one.
+- **`CHROMA_LEVEL = 55` separates ink from paper.** Measured: a grayscale page
+  has a chroma of exactly 0 everywhere, a colour photograph reaches 94, and the
+  stamp's ink reaches 148. Below 55 the photograph survives as a component; at
+  55 it is gone and the stamp's component is unchanged, so the line is placed
+  on the gap rather than on a round number.
+- **`CLOSE = 15` joins one mark into one component.** A ring, a star and its
+  lettering are three components before the mask is closed and one after, and a
+  mark reported as three findings is not a mark.
+- **`MIN_INK = 1000` and `MIN_SIDE = 40` are what a stamp is not.** A print too
+  small for the grid is not offered rather than offered and refused, because a
+  caller holding a match computed from a stamp smaller than the comparison is
+  worse than holding none.
+- **Both sides are resampled onto one `CANONICAL = 64` grid before they are
+  compared**, which is what makes the printed size irrelevant. Measured on a
+  mark genuinely rescaled rather than redrawn, the right template correlates at
+  0.987 to 0.9997 across printed sizes from 0.6x to 1.4x, and the wrong one at
+  0.636 to 0.663, so `MATCH_LEVEL = 0.75` sits in a gap roughly 0.09 wide on
+  each side.
+- **The resampling is what made the earlier attempts fail, and a fixture was
+  the reason.** Resizing the template to the candidate and sliding it over a
+  padded window were both measured first and both read a mark 10% off its
+  authored size as the *other* mark. The cause was the probe, not the matcher:
+  it rebuilt the mark at each size, and redrawing a mark changes its relative
+  stroke widths, so no scale-normalising method could succeed. A probe can only
+  tell you about the fixture you probed.
+- **A template is cropped to its own ink, and `make_template` reads the raw ink
+  extent rather than `ink_mask`.** This was a defect this task found by reading
+  its own module back: cropping the template to the *closed* mask gave it a
+  border the candidate it is compared against does not have, and the two then
+  sat on the canonical grid differently -- the shipped entry mark scored 0.378
+  against a page carrying that very mark, and 0.9997 once both were cropped the
+  same way. `test_tier2_stamp.py` pins the crop.
+- **A grayscale frame is refused with `StampError`, not answered as a page with
+  no stamp on it**, by D119's rule. It carries no chromatic ink by
+  construction, so an answer would be a claim about the module.
+- **The module answers `regions` and leaves `heatmap` empty.** It knows where a
+  mark is rather than how hot a pixel map went, so there is no map to draw.
+- **`score` is the best match on the page, and `is_stub` is set.** A name for a
+  mark this repository drew is not authentication; the detail says "a likeness,
+  not an authentication".
+- **The module is shipped and is not registered**, on D119's reason: `DEEP_MODULES`
+  stays empty so `ran` cannot claim the tier stood behind all of it.
+- **An empty match list is a measurement, not a clean page, and an empty
+  registry is a third answer again.** `detect_stamps(..., templates={})` returns
+  nothing on a page that plainly carries a mark. What that absence must be
+  *reported* as is 15.9's task, and this task deliberately left it alone.
+
+**What this forbids**
+
+- Describing a template as an authority's mark, or a match as authentication.
+- Treating a proposed candidate as a finding without a template behind it.
+- Comparing a stamp at its authored size only, or sliding a resized template
+  over a window, since both were measured and both misread an off-size mark.
+- Registering four of four modules and letting `ran` claim the tier.
+
+**Consequences.** `test_tier2_stamp.py` holds the tests, 49 of them, over a
+synthetic text page written at quality 95 with a mark from the registry pasted
+onto it and the file written again. The task's own verification is that the mark
+is found and its own template is named, once per mark, and that two marks on one
+page are named apart. **No real stamp has ever been recognised**, no route calls
+`run_deep_modules`, and the closing kernel can bridge a mark to nearby
+chromatic ink and report a box wider than the ink that produced it.
+
+**Revisit only if** real marks are committed to the registry, which is a
+deployment decision and widens what a match means, or if 15.9's `not_configured`
+answer needs a seam this task's `templates` argument does not already provide.
+
+## D121 -- An empty registry answers `not_configured`, and silence is never a pass
+
+**Context.** 15.8 shipped stamp detection against a committed registry and
+deliberately left one thing open: `detect_stamps(..., templates={})` returned
+an empty match list on a page that plainly carried a mark, which is the same
+answer a page with nothing on it gets. D120 called it a third answer and named
+this task as the one that has to say what it is.
+
+**Decision.**
+
+- **`detect_stamps` answers a `StampDetection`, not a match list.** The record
+  carries a `status`, the `matches`, and the `proposed` count of candidates the
+  detector offered. The return type changed because the distinction cannot be
+  carried any other way: two answers that both hold no match are
+  indistinguishable as bare tuples, which is the whole of the defect.
+- **There are three statuses and `clean` is not one of them.** `matched` says a
+  template explained a proposal; `no_match` says every proposal was compared and
+  none was explained; `not_configured` says the registry held nothing and
+  **nothing was compared at all**. Naming the middle one `clean` would be this
+  module's silence read as a verdict on the document, which D115 forbids and
+  which no caller should be able to pass by mistyping a string.
+- **The status is about the registry and not about the page.** A blank page
+  against an empty registry is `not_configured` too, since a measurement nobody
+  could make is still a measurement nobody made.
+- **`proposed` carries the ink an unconfigured answer had no template for.** It
+  is what stops `not_configured` from reading as a page with nothing on it, and
+  it removes the module's second pass over the frame.
+- **A `not_configured` answer reports no region.** D120's rule holds: nothing is
+  reported without a template behind it, so an absent capability reports no
+  finding rather than an unlabelled one.
+- **The registry is a constructor argument on `StampModule`.** D120 set the
+  revisit trigger at a seam the `templates` argument did not already provide,
+  and it did, so `StampModule(templates={})` is a configured instance holding
+  nothing. The registry is checked once, at construction, rather than once per
+  document.
+- **`DeepResult` is not widened, and `detail` carries the answer.** The frozen
+  record has no status field and adding one is 15.1's seam rather than this
+  task's; `detail` is the sentence D116 says is the one an officer reads beside
+  the score. The score is `0.0` under every status, which is precisely why the
+  wording has to carry the distinction.
+- **The shipped registry is not empty and a test holds it.** Both entries are
+  D120's `demo_` marks, so `StampModule()` is never unconfigured here.
+
+**What this forbids**
+
+- Answering an empty registry with an empty match list, or any answer in which
+  an unconfigured run is indistinguishable from a measured one.
+- Naming a status `clean`, or reading `no_match` as a verdict on the document.
+- Reporting a region for ink that no template named.
+
+**Consequences.** `test_tier2_stamp_config.py` holds the tests over a page
+carrying the entry mark pasted at the size it was authored at, so no figure in
+it came from a probe that redrew the mark. 15.8's 49 tests were updated for the
+new return type rather than weakened, and the one that pinned an empty
+registry's silence now reads `.matches` and points here. **The seam still has no
+status field**, so a caller that ignores `detail` can go on reading a zero as a
+pass; closing that is 15.1's call and not this task's.
+
+**Revisit only if** `DeepResult` grows a status field of its own, at which
+point the four modules should answer through it rather than through a sentence,
+or if real marks are committed to the registry and the `demo_` prefix stops
+being the honest default.
+
+---
+
+## D122 -- A morph classifier is an interface, its stand-in is labelled at the classifier, and both cue lines are midpoints of measured gaps
+
+**Date:** October 2, 2026. **Status:** settled, task 15.10.
+
+**Context.** 15.10 asks for a `MorphClassifier` interface and a clearly
+labelled heuristic stand-in reading "frequency + boundary irregularity cues at
+the photo region", with `model_version: heuristic-v0`. Three things were open.
+**What the cues actually are**, since "frequency" and "boundary irregularity"
+name properties rather than measurements. **Where the label lives**, which D116
+settled for the record but not for whatever produced it. **And what the module
+measures**, because "at the photo region" is a claim about a rectangle that
+nothing on `ScreeningContext` carries.
+
+**Decision.**
+
+- **Two cues, and they move in opposite directions.** A morph is one portrait
+  averaged with another, so `frequency_cue` reads the fine detail that
+  averaging cancels (the share of spectral power outside `FREQUENCY_RING` of the
+  centre) and `boundary_cue` reads the second outline averaging leaves behind
+  (the largest silhouette's shape factor, `perimeter^2 / (4*pi*area)`). A blend
+  measured 0.0258 against a clean portrait's 0.0395 on the first and 1.219
+  against 1.140 on the second.
+- **The score is the mean of the two, not the maximum**, on ELA's rule that a
+  maximum promotes one cue to a finding the other would have contradicted. This
+  is not stylistic here: **one clean portrait of fifteen measured 1.194, past
+  `BOUNDARY_LEVEL`, and on its own it would have been a finding against a
+  genuine traveller.** The frequency cue separated every clean portrait from
+  every blend; the boundary cue did not, and it is kept because it catches what
+  the frequency cue catches least.
+- **Every cue is read on one canonical 64px grid.** Read on the capture as
+  photographed, the frequency share is not a property of the portrait at all:
+  it fell from 0.0397 at 80px to 0.0039 at 240px across four sizes of the
+  *same artwork*, so any constant sat against it would describe the scanner.
+  D120's answer to exactly this problem was a canonical grid and it is the same
+  one, held again rather than shared on D38's rule.
+- **Every line is the midpoint of a gap the probe measured, not a round number.**
+  `FREQUENCY_LEVEL` 0.0345 sits between the lowest clean share observed (0.0352)
+  and the highest blend (0.0338); `BOUNDARY_LEVEL` 1.162 between 1.146 and
+  1.178; `SUSPECT_LEVEL` 0.221 between the worst clean portrait on 30 the probe
+  had not been tuned on (0.128) and the weakest blend (0.314). Each span is the
+  distance from its line to the most extreme case observed in the flagged
+  direction. **`BOUNDARY_LEVEL` is the weakest of the three and did not hold on
+  the held-out set**, which is why the mean is load-bearing and why the test
+  pins a clean portrait sitting over that line rather than pretending it does
+  not.
+- **`model_version` and `is_stub` are attributes of the classifier, not of the
+  module.** `MorphModule` copies them off whatever classifier it holds, so a
+  trained model swapped in behind the same interface answers
+  `arcface-morph-v3` and `is_stub: false` without the module's code changing.
+  D116 froze the record, and this keeps the label travelling with the work
+  rather than with the wrapper.
+- **The module refuses a classifier that cannot say what it is,** at
+  construction, on 15.9's rule that a seam checked per document is a seam
+  checked too late.
+- **The region is a constructor seam, and the default is named rather than
+  implied.** `region_of` defaults to `whole_frame`, because nothing on
+  `ScreeningContext` says where a document's portrait is. A caller holding an
+  aligned frame and a template hands in `face_align.photo_region` instead. **An
+  earlier draft claimed to read "the photo region" off the context and would
+  have been claiming a measurement it did not make**; the record now says which
+  region this instance was pointed at.
+- **`boundary_cue` refuses a region with no closed outline** and `NO_FACE` names
+  that answer, because a cue over a region with nothing in it is a measurement
+  of the region.
+- **These cues do not know what a face is, and this repository cannot fix that
+  yet.** Measured on purpose: a block of body text read 0.500 and a checkerboard
+  0.445, both suspect. **The limit is in the `detail` sentence**, since that is
+  what an officer reads, and it is why nothing here is a pass in either
+  direction.
+
+**What this forbids**
+
+- Reading either cue off the capture as photographed, or against any constant
+  that was not measured on a synthetic pair first.
+- Taking the maximum of the two cues, or letting the boundary cue alone raise a
+  finding.
+- A module that reports `heuristic-v0` and `is_stub` for a classifier that
+  answered, or that lets a classifier in without saying what it is.
+- Wording a score of 0.00 as a suspicion. D121's rule holds one level up.
+- Claiming to have measured the photo region off a context that does not carry
+  one.
+
+**Consequences.** `test_tier2_morph.py` holds 28 tests, including the two the
+task names and one that pins a clean portrait sitting over `BOUNDARY_LEVEL`.
+The fixture **resizes the artwork it already has** rather than redrawing it, on
+15.8's lesson that redrawing changes relative stroke widths and would make an
+unstable method look stable for the wrong reason. **`DEEP_MODULES` is still
+empty and a test pins it**, as 15.3-15.5 and 15.8-15.9 each did. **The seam
+gained no status field**; the refusal raises, which is D115's rule.
+
+**Revisit only if** a real morphing attack set replaces the synthetic pairs,
+at which point all five constants are chosen lines rather than measured ones
+and the suspect line in particular has never met a document that was not drawn
+by this repository, or if a face detector lands, at which point the text-block
+and checkerboard readings above stop being this module's problem to own.
+
+---
+
+## D123 -- A deepfake classifier is an interface, its one cue is a share of exactly-flat gradients, and the second candidate was rejected on its numbers
+
+**Date:** October 2, 2026. **Status:** settled, task 15.11.
+
+**Context.** 15.11 asks for a `DeepfakeClassifier` interface and a labelled
+heuristic stand-in, "with the same stub test". D122 settled that shape for a
+morph, so the interface is not open: the label belongs to the classifier, the
+module copies it onto the record, and a stand-in refuses to answer otherwise.
+**What the cue is, was open**, and unlike 15.10 the task named none. Four
+candidates were probed and one survived, which is a thinner result than D122's
+two cues and is recorded as such.
+
+**Decision.**
+
+- **One cue: `flat_share`, the share of adjacent-pixel gradients that are
+  exactly zero.** A deepfake is a portrait no camera saw, so unlike a morph --
+  two real captures averaged, and so still carrying a real sensor's grain -- it
+  carries none, and a capture's own noise fills almost every gradient in. The
+  cue is a **share**, on D120's principle that a share is scale-stable where an
+  absolute level is not.
+- **`GRADIENT_LEVEL` 0.1706 is a measured gap midpoint.** Across 840 clean
+  captures and 700 reconstructions the highest clean share was 0.1482 and the
+  lowest reconstructed 0.1931; the midpoint sits in a gap nothing observed
+  occupies. `GRADIENT_SPAN` 0.7712 is the distance from the level to the most
+  extreme reconstructed share measured, 0.9418.
+- **`SUSPECT_LEVEL` is 0.0116, and it is very low.** Normalised, the
+  reconstructed group spreads 0.023 to 1.000 against every clean capture's
+  exact 0.000, so the midpoint of that gap is 0.0116. **A line this low is a
+  false-alarm risk on anything this repository has not drawn**, which is
+  exactly what D21 raises about a stand-in reaching High on its own at weight
+  65. The line was not raised to a safer-sounding number the probe never
+  produced; the risk is recorded instead.
+- **A second cue was probed and rejected, and that is why the score is the cue
+  itself.** A chroma noise-floor cue -- the share of blocks whose residual
+  variance sits far below the median block, read on the two chroma channels --
+  separated nothing: on the held-out set clean captures reached 0.250 while
+  reconstructions fell to 0.000, and on a re-grain ladder it collapsed to 0.000
+  past 2.5 while the surviving cue still fired at 6.0. Averaging it in would
+  have **hidden detections rather than damping them**, which is the opposite of
+  what D122's mean was for. An earlier noise-floor candidate measured on the
+  luma channel inverted the same way at 0.8 of added grain.
+- **`model_version` and `is_stub` are attributes of the classifier**, exactly as
+  D122 settled for the morph, and `heuristic-v0` is deliberately the same string
+  15.10's stand-in uses: `module` on the record is what tells the two apart.
+- **A region with no power at all is refused, not scored, and `NO_SIGNAL`
+  names that answer.** Blank paper reads a flat share of 1.000 -- the strongest
+  possible finding -- so scoring it would report an empty region as a deepfake.
+- **The region is a constructor seam defaulting to `whole_frame`**, on D122's
+  reasoning that nothing on `ScreeningContext` says where a portrait is.
+
+**What this forbids**
+
+- Reading the cue off the capture as photographed, or against any constant that
+  was not measured on a synthetic pair first.
+- Shipping a second cue because a mean of two reads better than one, and
+  re-probing it when it does not separate.
+- A module that reports `heuristic-v0` and `is_stub` for a classifier that
+  answered, or that lets a classifier in without saying what it is.
+- Wording a score of 0.00 as a suspicion. D121's rule holds one level up.
+
+**The limits, which are the substance of this decision.**
+
+- **This cue reads flatness, not provenance, and no real deepfake has ever been
+  scored against it.** A body-text block reads 0.506 and a checkerboard 0.000,
+  so it points the wrong way on both non-faces. The limit is in the `detail`
+  sentence, because that is what an officer reads.
+- **It is a share and so far steadier across sizes, but not size-invariant.**
+  Added grain survives the canonical grid less well from a small source: a 120px
+  portrait re-grained past about 5.0 reads clean where a 320px one still fires
+  at 6.0, and all fourteen misses in the sweep were 120px or 160px sources. The
+  clean side does not move -- no clean capture at any size crossed the line.
+- **The constants describe this repository's fixture and not deepfakes.** A
+  real generative model produces texture, not piecewise smoothness, so this cue
+  would plausibly **not fire on a real deepfake at all**. That is the honest
+  reading of what was measured and it is why the module ships labelled.
+
+**Consequences.** `test_tier2_deepfake.py` holds 26 tests, including the
+verification the task names and four pinning the limits above. The fixture
+**resizes the artwork it already has** rather than redrawing it, on 15.8's
+lesson. **`DEEP_MODULES` is still empty and a test pins it**, as 15.3-15.5 and
+15.8-15.10 each did. Six modules now exist and none is reachable from a route.
+
+**Revisit only if** a real deepfake set arrives, at which point this cue should
+be expected to fail and the suspect line becomes meaningless, or if a face
+detector lands, at which point the text-block reading stops being this module's
+problem to own, or if `DeepResult` grows a status field (D121), at which point
+this module answers through it rather than through a sentence.
+---
+
+## D124 -- The Tier 2 common scale is a fifteen-number vector, and the outlier line is the fixture's own 95th percentile, not scikit-learn's "auto"
+
+**Date:** October 2, 2026. **Status:** settled, task 15.12.
+
+**Context.** Every Tier 2 module reads its own thing -- a map, a mark, two
+cues, one number -- so nothing has ever put two documents on one scale, and
+15.6's fusion has had no agreed scale to fuse on. 15.12 asks for a per-document
+feature vector over five named families and an IsolationForest fitted on a
+committed feature fixture. What the vector holds, what the score means, and
+where the line sits were all open.
+
+**Decision.**
+
+- **Fifteen numbers in five families, in a fixed order** (`FEATURE_NAMES`):
+  three from ELA pooled over all three JPEG qualities, three from noise
+  residual (median block variance, its 95th percentile, their ratio in
+  octaves), four from the histogram (mean, standard deviation, ink share under
+  level 200, 16-bin entropy), two from edge density (Canny share at 100/200,
+  mean Sobel strength), three from field geometry (share of rows and of columns
+  holding a straight ink run over a quarter of the frame, and the share of rows
+  carrying ink). The families are reused from `ela` and `noise_residual` rather
+  than reimplemented, and their refusals are translated into `AnomalyError`.
+- **One grid for every capture size.** The document is resampled to 256px on
+  its long side and cropped to whole 8px blocks before any family reads it, on
+  D120's rule. **A frame under 256px is refused rather than upsampled**, since
+  interpolating up measures pixels the capture never held.
+- **The score is a rank, not a probability.** `rank` is the share of fixture
+  rows *less* anomalous than the document measured, so it is in [0, 1] and
+  needs no hand-chosen constant. `raw` is the forest's own `-score_samples` and
+  is kept beside it because the rank saturates at 1.0 and would hide how far
+  past the fixture a document sits.
+- **The fixture ships in the package** at `app/pipeline/tier2/fixtures/clean_features_v1.json`,
+  120 rows from 120 clean synthetic pages this repository drew. It cannot live
+  beside the tests, because the scorer that reads it is production code. **Its
+  header is checked against `FEATURE_NAMES`**, so a reordered fixture is
+  refused rather than fitted on: that is a silent wrong answer, not a rounding
+  difference.
+- **`contamination=0.05`, which is the fixture's own 95th percentile, and
+  `"auto"` was measured and rejected.** `"auto"` puts the line at a raw score
+  of 0.500 -- the middle of the clean band, not above it -- and called **41 of
+  the 120 committed rows and 6 of 12 freshly drawn clean pages** outliers. At
+  0.05 the line sits at 0.5498, which calls 6 of 120 and 1 of 12.
+- **`"auto"` stays an accepted value.** It is rejected as a *default* on
+  measured numbers, not removed from the seam.
+- **Per-feature scaling was probed and is deliberately absent.** A forest draws
+  each tree's threshold uniformly inside one feature's own range, so dividing
+  every column by its spread across the fixture left the probe's clean and
+  out-of-distribution scores identical to four decimal places. A normalisation
+  step that does nothing was not added.
+- **The scorer is labelled.** `is_stub` is `True` and `model_version` is
+  `isolation-forest-v0`: a forest really was fitted, but on artwork this
+  repository drew, exactly as every other Tier 2 constant. A fit on real
+  captures takes a different version string, not a cleared flag.
+
+**What this forbids**
+
+- Reading the score as a probability that a document is forged, or the rank as
+  one. It is how unlike the fixture a document is.
+- Tuning the line against the documents it must catch. It is the fixture's own
+  tail, and it moves when the fixture is regenerated -- which is the point.
+- Refitting per document, or on anything not committed and countable.
+- Refusing a fixture whose header disagrees, or accepting one quietly.
+
+**The limits, which are the substance of this decision.**
+
+- **Nothing here has met a real document.** The fixture is synthetic artwork,
+  the same footing as `SATURATION`, `ANOMALY_FACTOR`, `MATCH_LEVEL`,
+  `FREQUENCY_LEVEL`, `BOUNDARY_LEVEL`, `SUSPECT_LEVEL` and `GRADIENT_LEVEL`.
+- **Added grain is the measured weakness, and it was measured on purpose.**
+  Re-encoding a clean page down to quality 10 leaves it inside the clean band,
+  and the odd documents hold, because ELA is part of the vector. But re-graining
+  a clean page past sigma 6 pushed it above the line in one case of two, and
+  sigma 12 in both. **The line was not raised to hide this**, because raising
+  it is what would cost the detections. D123's lesson, hit again from the other
+  side.
+- **The margin is thin where it should be broad, and thin where it matters.**
+  The odd documents clear the worst fresh clean page by +0.030 (an inverted
+  page) to +0.104 (a halftone); the clean band itself spans 0.4258 to 0.5779,
+  so the line at 0.5498 sits inside the band and one clean page in twelve
+  crosses it. **A 1-in-12 false-alarm rate on a fixture drawn by the same
+  repository is not a false-alarm rate on a real document.**
+- **Not every odd document is measurable.** A flat colour field and a smooth
+  ramp are *refused* -- there is no noise to measure a departure from -- rather
+  than scored. That is D115, and it means "out of distribution" and "cannot be
+  measured" are two different answers.
+- **The rank saturates.** Everything past the fixture reads 1.0, which is why
+  `raw` is carried beside it.
+- **The scorer is behind no seam.** `DEEP_MODULES` is still empty and this task
+  registered nothing: a per-document score is not a heatmap, so 15.13's
+  region-carrying flag does not follow from it, and the weightsheet id question
+  is 15.14's. This is the common scale 15.6 needs, not a stage of its own.
+
+**Consequences.** `test_tier2_anomaly.py` holds 39 tests, including the
+verification the task names and the limits above, and draws its clean pages
+from the same `_clean_page` the committed rows were measured from.
+`scikit-learn>=1.3,<2` is now a backend dependency.
+
+**Revisit only if** real clean captures arrive, at which point the fixture is
+regenerated and the line moves with it, or if 15.6 fuses on this vector, at
+which point the fusion owns the scale and this module owns nothing else, or if
+a document is refused rather than scored often enough to matter operationally,
+at which point the refusal needs its own answer in the record.
+
+## D125 -- A Tier 2 result becomes a flag unconditionally, and the region is the strongest place the record can name
+
+**Date:** October 2, 2026. **Status:** settled, task 15.13.
+
+**Context.** Tier 2 modules read five different shapes -- a map, a mark, two
+cues, one number, and from D124 a fifteen-number vector -- and none of them had
+been turned into anything an officer reads. 15.13 asks for each result to become
+a flag with a heatmap-derived region, so a Tier 2 finding is as locatable as a
+Tier 0 field's. Three things were open: where a flag's region comes from when
+the record may name a place, may carry a map, or may be a single number for the
+whole page; whether converting a result is also the place that decides the
+result *is* a finding; and what a result that locates nothing should become.
+
+**Decision.**
+
+- **One `DeepResult` becomes one `EvidenceFlag`, unconditionally.** Nothing in
+  the conversion decides that a result is a finding, because **a gate at the
+  module's own level would fire on an ordinary clean page.** Measured on a
+  clean printed page written at JPEG 95, ELA reads 1.0000 with 53.9% of its
+  blocks at or above `HOT_LEVEL`, and 100% of them once grain of sigma 20 or 40
+  was added. Whether two documents fuse into a verdict is 15.6's question, and
+  this module only answers "what did this module say, and where".
+- **The region is the strongest place the record can name, in three steps.**
+  A box the module located itself wins, because it measured the place rather
+  than the map; the first is taken, since the modules carrying both order their
+  groups as they found them. Failing that the box is derived from the heatmap,
+  and failing that the region is `None`. **A result that is one number for the
+  whole page carries neither and answers `None`**, which is a finding with
+  nowhere to point rather than a dropped flag.
+- **The derived box is the four-connected group of cells at or above the level
+  holding the map peak**, so one tampered area is one box rather than one box
+  per block of it. A tie keeps the first cell in image order, so a repeated run
+  draws the same highlight. A map whose peak is below the level answers `None`
+  rather than a box over the frame, which would claim a measurement nobody
+  made.
+- **The map grid is stretched across the whole frame**, so a frame that is not a
+  whole number of blocks still answers boxes inside its own edges.
+- **The level a region is drawn at is each module's own constant**, read out of
+  the module rather than copied into `RULES`, so a module retuning its line
+  cannot leave this table answering for it. `registry` is the seam a caller
+  substitutes its own rules through; `RULE_BY_MODULE` itself stays read-only.
+  **A level outside the unit interval is refused**, since a line above every
+  cell would report the map as carrying nothing.
+- **Two numbers read the same measurement.** A module answers one score, so
+  `value` and `confidence` both carry it rather than one of them estimating a
+  second thing nobody measured. `expected` and `found` are `None`, because a map
+  has no expected half, and `reason` is the module's own sentence, which is
+  where `is_stub` and `model_version` travel: `EvidenceFlag` has no field of its
+  own for either.
+- **A result that locates nothing still takes its row**, on the same rule 4.12
+  gave Tier 0: no box is not no finding. Flags report `tier=2` and
+  `field=None`, since a Tier 2 finding is about the capture and never about one
+  printed field.
+- **`Tier2FlagError` is a `ValueError`**, as D114 requires of everything Tier 2
+  raises, and a module with no rule is refused rather than answered as a module
+  that found nothing.
+
+**Measured and left alone.** On the capture `test_tier2_flags.py` draws, the
+group of hot blocks holding the ELA peak is the two leftmost block columns of
+the rewritten patch, so the box is 16px of a 48px one and sits wholly inside it.
+That is the map reading honestly -- the second codec rewrote the most where the
+box is -- so the test asserts containment and locality rather than a
+half-overlap threshold this fixture never produced.
+
+**Revisit only if** 15.6's fusion needs a per-module gate to keep a weak module
+from reporting at all, at which point the gate belongs there and reads the
+level these rules already carry, or if `EvidenceFlag` grows a field for a
+module's stand-in label, at which point `reason` stops carrying it.
+## D126 -- A traveler case is a named group of documents and carries no verdict
+
+**Date:** October 2, 2026. **Status:** settled, task 16.1.
+
+**Context.** Part 16 is cross-document verification, and its first question is
+what two documents are compared *against each other* as. Nothing held that
+grouping, so 16.1 asked for a `TravelerCase` model and table with three named
+columns and left every choice inside them open. Two of those choices would be
+expensive to reverse later: what a case's `label` may be, and whether the row
+may hold the answer to the comparison its documents are about.
+
+**Decision.**
+
+- **`traveler_cases` carries exactly `id`, `created_at` and `label`, in that
+  order, and no more.** A fourth column is a task, not an extension of this
+  one. The table is generated into the schema by `be3f9e1a6e14` and is not
+  editable from the first migration, on the reason 10.2 gave.
+- **`label` is required.** A case is reached by an officer looking for one
+  traveller's paperwork (24.11), and a nullable label makes a row that is
+  reachable by no name at all. This is the same reasoning 8.4 applied to
+  `document_type` and `filename`: the columns a caller cannot write a row
+  without are the ones that say what the row *is*. The refusal is the
+  database's rather than a check in the model, so `nullable=False` is what
+  makes it real on both backends.
+- **The label is caller-supplied text and is never indexed.** `Screening.filename`
+  sets the precedent and the reason: a search over officer-typed text is a
+  scale claim nothing in this project measures, and 24.3 moves search to
+  server parameters against `screenings`, not against this table.
+- **`id` is an opaque UUID and `created_at` a UTC stamp, both defaulted by the
+  ORM**, on `Screening`'s reasoning rather than as a fresh decision: a case id
+  is named beside a screening, and neither should be a counter a stranger can
+  walk up.
+- **The table carries no index and declares no foreign key.** Nothing filters
+  a case yet, and `id` is the primary key. The association runs the other way
+  and by value: 16.2 adds a `case_id` to `screenings`, on the same reasoning
+  `AuditEvent.screening_id` states -- a screening must outlive nothing here,
+  and a constraint would enforce on PostgreSQL while reading as a comment on
+  SQLite, which D37's rule is about.
+- **A case holds no match result, no score and no band.** 16.5 to 16.7 compare
+  documents *within* a case and their answers are `tier: crossdoc` flags in
+  Part 16's stream. A case that agrees and a case that disagrees are therefore
+  the same three columns, exactly as a band is a measurement beside a row
+  rather than a decision inside it. **If a later task needs a case-level
+  verdict, it is an event in Part 10's trail, not a column here.**
+
+**Measured, not assumed.** The three defaults this table relies on were each
+broken in place and the new suite re-run: a nullable `label` fails the
+required-ness test, a migration that creates the table under another name fails
+three tests, and removing the `created_at` default fails five. A table that
+round-trips through the ORM proves the mapping, not the migration, so the
+round trip is run against both a `create_all` schema and an `alembic upgrade
+head` one.
+
+**Revisit only if** 24.11 needs to list cases without a name -- an officer
+filtering by case rather than by traveller -- at which point `label` becomes
+nullable and an unnamed case is `None` rather than the empty string.
+## D127 -- A cross-document name key reuses Tier 0's accent map, folds no digraph, and collapses its whitespace last
+
+**Date:** October 3, 2026. **Status:** settled, task 16.3.
+
+**Context.** 16.3 asks for `normalise_name(s)`, and the first cross-document
+comparison in the project rests on it: 16.4's `names_match` compares two keys,
+and every later rule in Part 16 reads a name through this function. Four
+choices inside it were open, and each of them is expensive to reverse once a
+flag has been raised from it -- where the function lives, who owns the accented
+letter map, what order the steps run in, and whether a digraph is folded.
+
+**Decision.**
+
+- **`app/pipeline/crossdoc/` is a package beside `tier0`, `tier1` and `tier2`,
+  and not a fourth stage inside one.** `tasks.md` defines `crossdoc` as a peer
+  of the three tiers rather than a depth within them, and it is the one tier
+  whose input is a *set of documents*: a deep module takes one image and a
+  cross-document rule takes a case. `crossdoc/__init__.py` is 0 bytes, on 1.1's
+  reason -- `tier0`, `tier1` and `tier2` are all empty and adding a docstring
+  here would make this the only one that is not.
+- **The accent map is Tier 0's and this function does not hold a copy of it.**
+  Casing and diacritic removal are reached through
+  `td3.transliterate_names(s.upper(), ())[0]`, which is exactly what
+  `tier1/fields.py::_normalise_name` already does, on the argument that the
+  same accented letters remembered twice is a second place for them to be
+  wrong. **The only step that is this function's own is the whitespace.**
+- **The order is uppercase, then transliterate, then collapse whitespace, and
+  the collapse is last on a measured reason.** Transliteration is the one step
+  that can *empty a token* -- a name of nothing but combining marks has no base
+  letter to keep -- so a string split before it would carry a separator for a
+  token that no longer exists. Measured: a name whose last token is a lone
+  combining mark keys as `'MULLER '`, with a trailing space, under
+  collapse-first, and as `'MULLER'` under the shipped order. Collapsing after
+  means the surviving separators are the ones between tokens that survived.
+- **No digraph is folded.** `normalise_name("Mueller")` is `MUELLER` and
+  `normalise_name("Müller")` is `MULLER`, and those are two keys, not one.
+  `ue`, `ss` and `ph` are spellings rather than diacritics, and tolerance for
+  them is 16.4's `names_match` argument, not this key's. **A key that had
+  already forgiven a misspelling could not be used to decide whether to
+  forgive it** -- the tolerance would be baked into the thing the tolerance is
+  measured against.
+- **A non-string raises `MrzValueError`, and the guard is explicit rather than
+  left to Tier 0.** `s.upper()` runs first, so delegating the check to
+  `transliterate_names` would never reach it: the first version of this function
+  raised `AttributeError` on `None`, which is not a `ValueError` and so breaks
+  the rule every other refusal in the pipeline holds to. The message names the
+  *type* it was given and never the value, on 2.9's rule that this is still the
+  identity data the screening is about; a test asserts a refusal holding
+  `["Müller"]` does not print `Müller`.
+- **`TRANSLITERATIONS`' `ß` entry is unreachable on this path, and that is
+  measured.** `"ß".upper()` is `"SS"` in Python, so the sharp-s entry can never
+  be the character reaching the map here -- upper-casing expands it first.
+  `ø`, `Ł` and `Đ` *are* reachable, because their upper-case forms do not
+  decompose. The entry stays in Tier 0's table because `transliterate_names`
+  still takes names that skipped the previous step.
+- **A character outside the map is carried through unchanged**, so `æ` keys as
+  `Æ` and not `AE`. This is 2.9's recorded cost, restated at the seam where a
+  later task would otherwise be tempted to fix it: **`normalise_name` is not
+  claimed to produce MRZ-alphabet output**, and inventing an `AE` here would be
+  2.14's "parsing must not silently fix it" in the one direction 2.14 did not
+  anticipate.
+
+**Measured, not assumed.** Six mutations of the shipped line were each applied
+in place and the suite re-run: dropping the upper-casing, dropping the
+transliteration, dropping the whitespace collapse, dropping the type guard,
+reversing the first two steps, and collapsing to no separator at all. All six
+fail the suite; reversing the order is caught by the `ø` case rather than by
+the `ß` case, which is the reason that case is in the file. The `ß`-becomes-
+`SS`, upper-case-forms-do-not-decompose and `æ`-is-carried-through facts were
+each run before being written into a test rather than quoted.
+
+**Revisit only if** 16.4's `names_match` turns out to need a fold this key
+cannot supply -- a name differing only by a digraph and nothing else, which no
+tolerance on tokens can express -- at which point the fold belongs in
+`names_match` as a named comparison, not in the key.
+
+---
+
+## D128 -- A name match forgives a digraph, a compound and a token's position, and reports the tokens it forgave
+
+**Date:** October 3, 2026. **Status:** settled, task 16.4.
+
+**Context.** 16.3 built the key and D127 kept three digraphs out of it on the
+argument that a key which had already forgiven a misspelling could not be used
+to decide whether to forgive it, leaving 16.4 to hold them as named
+comparisons. D127 named one revisit condition -- a name differing by a digraph
+and nothing else -- and the three cases `tasks.md` verifies are exactly that:
+`Mueller`/`Müller` and `Muller`/`Mueller` must match, `Rahman`/`Rahmani` must
+not. Nothing in the repository could yet express a tolerance, and a caller
+being told "not the same name" was given no way to learn *which token*.
+
+**Decision.**
+
+- **`names_match(a, b, tolerance)` returns a frozen `NameMatch` of three
+  fields -- `similarity`, `differing`, `tolerance` -- and `matched` is the
+  similarity read against the tolerance asked for.** The threshold is an
+  argument rather than a constant inside the function, so 16.5-16.7 can pick
+  their own and so the record can say which one produced it. A tuple of three
+  numbers was rejected: `differing` is not a number.
+- **Three digraphs are folded, and only those three D127 named:** `UE`→`U`,
+  `SS`→`S`, `PH`→`F`, in one left-to-right non-overlapping pass. `AE` and `OE`
+  were considered and left out -- they merge `ÆTHER` with `AETHER` and
+  `Aaron` with `Eron`, and nothing in the domain asked for it. `ß` reaches the
+  fold already expanded, on D127's recorded reason.
+- **`differing` holds folded-token pairs, one per compared position, with `""`
+  on the side that had nothing to pair**, so a caller can name the token
+  rather than just the verdict. Folded, not printed: those are the tokens the
+  similarity was measured on, and reporting `MUELLER` against `MULLER` as a
+  difference would contradict the `similarity == 1.0` beside it.
+- **Tokens are sorted, and both orders are paired greedily with the higher
+  total winning.** Sorting makes token order structurally unable to reach the
+  answer; the two-sided maximum is what makes `names_match(a, b)` and
+  `names_match(b, a)` answer alike, which one greedy pass does not promise.
+  A shorter name is padded with `""` so no token is dropped and the record can
+  say it had no partner.
+- **A compound edge is a token edge, not a character to delete.** `-`, `.` and
+  `,` each become a space, so `Smith-Jones`, `Smith.Jones` and `SMITH JONES`
+  are three spellings of two tokens. `SMITHJONES` written solid is *not* split,
+  because splitting it needs a surname vocabulary this module does not have.
+- **Similarity is `1 - Levenshtein / max(len)`, averaged over the compared
+  positions.** Measured: `Rahman`/`Rahmani` scores exactly 6/7 = 0.857, and
+  an averaged edit ratio alone would have scored the *rejected* pair higher
+  than `Muller`/`Mueller` -- a suffix is one cheap edit, a digraph is two. The
+  digraph fold is what puts the two cases the right way round; without it the
+  tolerance would have to reject a genuine misspelling to catch a near-match.
+- **`DEFAULT_TOLERANCE` is 0.95, and it refuses a single added letter.**
+  Measured: 6/7 sits below it and 1.0 sits above it, so the default separates
+  the two cases `tasks.md` names with nothing between them. A caller wanting
+  typo tolerance must lower it, which is a risk it is then choosing.
+- **A name with no token in it is refused rather than scored, and so is a
+  tolerance that is not a real number in `[0, 1]`.** Nothing is coerced, on
+  D116's rule -- a clipped or rounded threshold is one nobody chose. An empty
+  name refused rather than answered `1.0`, because two documents that both
+  failed to print a name have agreed about nothing, and D115's rule is that an
+  empty result is not an all-clear. Refusals are `MrzValueError`, Tier 0's,
+  so a caller catching one around its cascade keeps working.
+
+**Measured, not assumed.** Ten mutations of the shipped lines were each applied
+in place and the suite re-run: dropping the `UE`, `SS` or `PH` fold, dropping
+the sort, scoring the edit ratio over the *shorter* token, pairing one order
+instead of two, narrowing the compound separators to `-` alone, dropping the
+tolerance range check, dropping the empty-name refusal, and emptying
+`differing`. All ten fail `test_crossdoc_names_match.py`. A 14,400-permutation
+sample over three-token names built from near-neighbour two-letter tokens found
+the shipped answer symmetric in every case and *no* case where the similarity
+itself moved with token order -- the two-sided maximum was already covering
+both directions, and the sort's measured contribution is to which side an
+unpaired token is reported against.
+
+**Consequences.** `test_crossdoc_names_match.py` holds 50 tests. 16.3's
+`test_the_module_exports_only_the_key` was relaxed to a membership assertion,
+because this task widened the module's exports and an exact-equality pin written
+for the previous task would fail on a change this one was asked to make.
+`normalise_name` still folds nothing, and a test holds that: the digraph is
+forgiven in the comparison and not in the key.
+
+**Revisit only if** a comparison needs a surname vocabulary to split
+`SMITHJONES`, which is a table rather than a rule and would belong to the key's
+own module, or if a caller needs the similarity to be order-*sensitive* -- a
+visa naming a holder's parents, say -- which would mean pairing in printed
+order and giving up both the sort and the symmetry this records.
+
+## D129 -- A cross-reference is an exact match on a filler-free key, and a flag names the rule rather than the number
+
+**Date:** October 3, 2026. **Status:** settled, task 16.5.
+
+**Context.** 16.5 asks for `documents_consistent(documents_in_case)` checking
+the passport-number <-> visa cross-reference. D126 gave the case its grouping
+and settled that it carries no verdict; D127 and D128 built the name key and
+the name comparison beside it. Three things were open, and each is expensive
+to reverse once a flag has been raised from it: what a *document* is when
+`Screening` carries no `case_id` and no `document_role` (16.2, still
+unimplemented), what the number is compared as, and what the answer is when
+there is nothing to compare.
+
+**Decision.**
+
+- **A case document is a `CaseDocument` of this module's own, and not a
+  `Screening` row.** 16.2's `case_id` and `document_role` are not implemented,
+  so the alternative was a module whose input type does not exist. `role` is
+  the three names 16.2 names -- `passport`, `visa`, `id` -- held as
+  :data:`DOCUMENT_ROLES` so a role nobody wrote down is refused rather than
+  compared as something it might be. **16.2 stays outstanding and this does
+  not pre-empt it**: when the columns land, a caller builds a `CaseDocument`
+  from a row rather than the module reading the row itself, so the storage
+  change touches no rule in here.
+
+- **The key is upper-cased, whitespace-dropped and filler-free, and nothing
+  else.** A passport number is printed into two *fixed-width* fields of two
+  different documents, and the widths need not agree, so `AB1234567` and
+  `AB1234567<` are one number and must match. **No digraph is folded**, on
+  D127's and D128's reason: those three folds forgive a misspelling in a
+  *name*, and a number has none to forgive -- `MUELLER1` against `MULLER1` is
+  two different passports and is flagged as such. **No tolerance argument
+  exists**: a cross-reference is exact or it is not, which is why 16.4's
+  `tolerance` does not reappear here.
+
+- **A visa that printed no reference is not compared, and the case answers
+  `not_configured`.** D115's rule is that an empty result is not an all-clear,
+  so this cannot answer `consistent` -- but it cannot be a finding either,
+  because a visa whose reference field was never read has not referenced an
+  unknown passport. Three statuses, on D121's reasoning and with its
+  consequence: **`consistent` is not reachable from a case that compared
+  nothing**, and `compared` is carried on the record so an officer can tell
+  "every visa resolved" from "no visa said anything" without re-reading the
+  case.
+
+- **The flag carries no passport number on any of its fields.**
+  `expected` and `found` are `None`, and `label` and `reason` are one sentence
+  each naming the rule. The only datum that would tell two offending visas
+  apart *is* the number, which is why the two flags are identical and why the
+  answer is one flag per offending visa rather than one per case: an officer
+  sees how many visas failed, and the numbers stay off the dashboard, the log
+  and the officer's screen.
+
+- **`region` is `None`, and `field` is `personal_number`.** A cross-document
+  finding is about two pages, so neither frame locates it and 4.12's boxes
+  have no single image to draw over -- a finding with nowhere to point is
+  still a finding, on the flag record's own rule. The field named is the
+  layout's own name for where a TD3 visa prints the number.
+
+- **One flag per offending visa, in the order the documents were given.** Not
+  one per case: two visas naming two passports that are both absent are two
+  findings an officer is owed, on 6.2 and 6.4's rule. The order is the
+  caller's, so the answer does not depend on a set being ordered.
+
+**Measured, not assumed.** Twelve mutations of the shipped lines were each
+applied in place and `test_crossdoc_documents_consistent.py` re-run: inverting
+the visa filter, emptying the empty-reference skip, inverting the membership
+test, moving the `not_configured` branch behind `compared == 0`, dropping the
+key's upper-case/filler strip, raising the band to `high`, zeroing the
+comparison count, dropping the flag append, dropping the non-visa reference
+refusal, and each of the three refusals in `_case_of`. **Two survived the
+first pass and were answered rather than waived.** The
+`and _number_key(document.document_number)` guard on the passport set was dead
+-- an empty reference is skipped before the set is consulted, so a `""` key
+could never be looked up -- and was deleted. The bare-string refusal survived
+because it only changed *which* message came out, and a test now pins the
+message rather than the exception type alone. All twelve now fail.
+
+**Consequences.** `test_crossdoc_documents_consistent.py` holds 64 tests.
+`documents_consistent` is reachable only from tests today: nothing writes a
+`traveler_cases` row, and DEEP_MODULES is still empty (Gate 15).
+
+**Revisit only if** 16.2 lands and a caller would rather the module read a
+`Screening` row than be handed a `CaseDocument`, which would move the input
+type and nothing else, or if a real visa MRZ turns out to print the passport
+reference somewhere this project has no layout name for.
+
+## D130 -- A validity window is two printed days on the document, the travel date is an argument, and both ends are closed
+
+**Date:** October 3, 2026. **Status:** settled, task 16.6.
+
+**Context.** 16.5 built `CaseDocument` and answered "does a visa name a
+passport the case holds". 16.6 asks the second question -- the visa must cover
+the travel date -- and three things were open before any of it could be
+written: where the travel date comes from, whether the window is closed or
+half-open at each end, and whether this widens `documents_consistent` or sits
+beside it.
+
+**Decision.**
+
+- **The travel date is the second argument of `visa_validity_consistent`, never
+  a field of a document.** A document that carries the day it is checked
+  against can be built wrong in a way nothing catches: the same visa record
+  would read differently for two journeys, and there is no reading of
+  `CaseDocument` that tells you which journey it was built for. Injecting it is
+  also how `app.pipeline.tier0.dates` has taken every reference day since D8,
+  and how a rule that would otherwise answer on the day it happened to run is
+  kept from doing so.
+- **The window is `valid_from` and `valid_until` on `CaseDocument`, both dates
+  or neither.** Every document prints a validity window, so no role is refused
+  one; only *this rule* reads it off visas, because the task is the visa's
+  coverage of a journey. A half window is refused at construction rather than
+  carried as a gap: `CaseDocument` is what a caller hands over, so one end
+  missing is a caller mistake and not a document that printed half a window.
+- **The window is closed at both ends.** `valid_from <= travel <= valid_until`.
+  A visa valid *from* a day is valid on it and one valid *until* a day is valid
+  on it, which is `expiry_result`'s own position in D8 -- a document is valid
+  through the day it expires -- and re-deciding it here would put two rules in
+  this project disagreeing about the same boundary day.
+- **`visa_validity_consistent` sits beside `documents_consistent`, in
+  `crossdoc/validity.py`, and reuses its `CaseConsistency` and its `_case_of`
+  gate.** One flag id per rule is this project's shape (D17), and a second
+  rule inside 16.5's function would have made one function's answer depend on
+  an argument the other rule needs. Widening the function instead would have
+  put two unrelated refusals in one signature. The shared refusal is imported
+  rather than copied, so the two rules cannot disagree about what a case is.
+- **The flag carries the two days, unlike 16.5's flag carrying no number.** A
+  date is not identity data: `expected` is the window as printed
+  (`2026-01-01/2026-06-14`) and `found` is the travel date, both ISO 8601.
+  D129 withheld the passport *number* because it is the datum that would let a
+  flag be linked back to a person; two days cannot be, and an officer cannot
+  act on "the visa does not cover the travel date" without them. `label` and
+  `reason` still name the rule and print neither date, and no document number
+  or passport reference appears on the flag at all.
+
+**Measured, not assumed.** Fourteen mutations of the shipped lines were each
+applied in place and the two crossdoc suites re-run. Thirteen fail. The
+fourteenth replaced `travel.isoformat()` with `str(travel)` and survived,
+because `datetime.date.__str__` *is* `isoformat` in the standard library -- the
+two expressions cannot be distinguished by any input. A test now pins the
+format by round-tripping both fields back through `date.fromisoformat`, which
+holds whichever spelling the module uses.
+
+**Consequences.** `test_crossdoc_visa_validity.py` holds 74 tests, and 16.5's
+`test_the_module_reads_no_clock_and_no_document_image` no longer asserts the
+word `datetime` is absent from `documents.py`: that assertion was a proxy for
+"resolves no day", and widening the record with two printed days fails it on a
+type annotation. It now asserts no call reaches `now`/`today`/`utcnow` and no
+image library is imported, which is what the rule always meant. `crossdoc` is
+three modules now and `__init__.py` is still 0 bytes (D127).
+
+**Revisit only if** a journey can carry more than one date (a return leg makes
+"the travel date" two days, and the rule as written would answer about the
+outbound one), or if a visa form is found that prints an open-ended window --
+"valid until cancelled" -- which the closed reading at both ends cannot express.
+
+## D131 -- A face is read through a record that carries the frame beside the document, the first measurable face is the reference, and a box with no embedder answers `not_configured`
+
+**Date:** October 3, 2026. **Status:** settled, task 16.7.
+
+**Context.** 16.7 asked for `face_consistent(documents_in_case)` over Part 13's
+interfaces, degrading cleanly where no embedder is available, and left two
+things open: where a document's face is held, and whether the degrading path is
+a second status or one status with a detail -- the question D121 settled for
+Tier 2 but which the three cross-document statuses had never been asked.
+
+**Decision.**
+
+- **The face rides beside the document, in `CaseFace`, and not on it.**
+  `CaseDocument` gained no image field. It is a transcription, and 16.5's suite
+  holds a test asserting `documents.py` imports no image library at all; a
+  sixteenth field carrying pixels would have made that guard false for the
+  wrong reason rather than removing it. `CaseFace` is that document *and* the
+  frame 13.14's `photo_region` cut from it, so a face case is a sequence of
+  `CaseFace` and the shared record stays a record of what was printed.
+- **`_case_of`'s shape refusals were lifted into `_sequence_of`** rather than
+  copied. The three rules ask one question of the same first argument, so the
+  answer is one function; the element refusal stays in each module because
+  each module's element is a different record. 16.5 and 16.6 are untouched
+  behaviourally and their suites were re-run rather than edited.
+- **The first measurable face in document order is the reference, and every
+  other measurable face is compared against it.** Not the passport's, not the
+  first *document's*: which document is primary is the caller's to order
+  rather than this rule's to guess from a role, and 16.5 already reads roles
+  as data a caller wrote. Three documents yield two comparisons, not three,
+  and that is the whole of what "cross-document" means here.
+- **Where a photo holds several faces, the most confident one is embedded.**
+  A portrait is one person, and where a detector offers more than one the
+  question "whose face is this document's" is answered by the confidence the
+  detector itself gave, not by the order it happened to return them in. Ties
+  keep the earlier face, so the answer is deterministic.
+- **`not_configured` is the whole of the degrading path -- one status, no
+  detail, no fourth answer.** D121 already forbids reading silence as a
+  verdict and 16.5 and 16.6 answer it as a status; adding a detail field to a
+  record that already carries `status` would be two ways to say one thing.
+  **An unavailable embedder is asked once, before anything is read**, so a box
+  with no face model costs one call and takes no case down.
+- **A detector is never asked whether it is available.** The bar was asked of
+  the embedder and nobody else, because the embedder is the capability the
+  comparison cannot happen without and 13.13 is the seam that answers it.
+  A document that cannot be measured -- no frame, no face in it, landmarks
+  that describe no face, an embedder that declines -- is skipped and is not
+  counted in `compared`, so a case with fewer than two measurable faces
+  answers `not_configured` and never `consistent`.
+- **A pair 13.15 refuses to score is not compared.** A stub's labelled zero and
+  a vector with no direction answer `NO_MATCH` rather than a similarity of
+  zero, so `NullEmbedder` degrades through the same door as a missing one
+  without a second check of its own.
+- **The threshold is checked here as well as in 13.15.** Same predicate, so
+  it can never disagree; the second check is there because a refusal raised
+  from this package is an `MrzValueError` and a caller catching one around its
+  cascade keeps working.
+- **The flag carries the bar and the cosine, and neither face.** `expected` is
+  the threshold and `found` the similarity as four-place decimals, exactly as
+  13.16 prints one. `region` is `None`: two documents' faces are on two
+  frames, so neither can be pointed at. D129 widened -- a face embedding is
+  biometric identity data, and a flag must not become a place it is stored.
+
+**Measured, not assumed.** Each shipped line of this module and of the lifted
+`_sequence_of` was broken in place and the three cross-document suites re-run:
+20 mutations, 20 killed, no survivors. The two worth naming because they are
+the rule's whole content are `max` over the detected faces -- reading the
+first face offered instead fails on a photograph offering two -- and the
+`is_available` gate returning before anything is read, which is the only
+thing separating a degraded answer from a raised one.
+
+**Revisit only if** a case's primary document becomes something the case
+knows rather than something the caller orders, at which point the reference is
+that document's face and the ordering is a rule rather than a convention, or
+if `DEEP_MODULES` gains an entry, which is when these flags reach a screening
+record at all.
+
+## D132 -- A number in a summary is a digit run with no word character directly beside it, kept exactly as written
+
+**Date:** October 3, 2026. **Status:** settled, task 17.1.
+
+**Context.** 17.1 asked for `extract_numbers(text)` and a test proving it finds
+numbers in text and ignores ordinals inside words. The second half of that
+sentence is the whole design question: what counts as a number in prose a model
+wrote, which 17.3 then requires to have been measured.
+
+**Decision.**
+
+- **A number is a digit run with no word character directly beside it**, and
+  one compiled pattern holds that rule rather than a list of words to exclude.
+  `sha256`, `mp3`, `x86_64`, `utf8`, `ISO8601` and `1st` are words no number is
+  read out of: their digits name a format, a codec or a position rather than a
+  measurement. A word list was the alternative and it fails on the next unseen
+  token, while adjacency is a property of the text rather than a vocabulary
+  somebody maintains.
+- **A decimal part is part of the token, and at most one of them.** `0.98` is
+  one token and not `0` followed by `98`, because 17.3 checks a token against
+  the flag data by the characters printed there, and a re-spelt number is not
+  the characters that were measured. At most one, so a version string splits
+  rather than reading as a single measurement.
+- **The token is returned exactly as written, in order, and a repeat is kept.**
+  No float conversion and no rounding, so `0.980` is not `0.98` -- that
+  difference is one of the things 17.4 exists to catch. Order and repeats make
+  the answer a reading of the text rather than a set of its vocabulary.
+- **`app/explain/__init__.py` is a docstring and nothing else** (1.1), so
+  importing the package does not pull the verifier in and a caller says which
+  module it took a name from. **`verifier.py` imports `re` and nothing else**,
+  which is Part 17's claim that the verifier is pure code and needs no model --
+  held by a test reading the module's imports rather than asserted here, and
+  the same reason D7 keeps `flag_ids` import-free for 17.3.
+
+**Measured, not assumed.** Each shipped component was broken in place and the
+new suite re-run: 8 mutations, 8 killed, no survivors. The two worth naming are
+the lookbehind and the lookahead, because either alone is enough to read a
+`256` out of `sha256` or a `1` out of `1st`.
+
+**Revisit only if** a summary is found quoting something that is a number
+inside a word and is expected to be checked -- a document number printed
+without its separators spaced, for instance -- at which point this is a
+tokeniser over document syntax rather than an adjacency test.
+## D133 -- A date is one of two spellings, and a field name is a registry id or a word shaped like an identifier
+
+**Date:** October 3, 2026. **Status:** settled, task 17.2.
+
+**Context.** 17.2 asked for `extract_dates(text)` and `extract_field_names(text)`
+as the other two questions 17.3 will ask of a summary. Neither name is defined by
+the flag data, and the field-name half had a trap in it: the literal reading of
+"capitalised tokens" makes 17.6 impossible, because every sentence begins with a
+capital and no flag data contains the word `The`.
+
+**Decision.**
+
+- **A date is ISO `YYYY-MM-DD` or the slash form with a two- or four-digit
+  year**, under 17.1's adjacency rule, so a date stands alone as written: an ISO
+  timestamp is not read as a date, and a digit run carrying no separator is not
+  one. **The parts are not validated**, so `2024-99-99` is returned as written
+  rather than repaired or dropped -- an impossible date is a claim 17.3 must
+  match against the data, and matching it is what fails.
+- **A field name is a flag id from the registry, or a capitalised word carrying a
+  second signal** -- a digit, an internal capital, or an acronym of two or more
+  capitals. **A capital on its own is a sentence, not a name**, which is why the
+  test reads `ALL_FLAG_IDS` rather than a written-out id, and why `A` and `I` are
+  length-checked before an acronym is claimed. This is the reading of "capitalised
+  token" that survives 17.6: the fallback template opens with `The`.
+- **`verifier.py` now imports `app.risk.flag_ids` and `re`.** The id pattern is
+  built from `ALL_FLAG_IDS` at import time, longest first, word-bounded -- so an
+  id added tomorrow is found by construction and cannot be read out of a longer
+  word, and the capitalised pattern excludes `_` so one id is answered once.
+  Part 17's "pure code, no model" claim is unchanged, because D7 keeps
+  `flag_ids` importing nothing; the 17.1 import test was widened to hold that
+  rather than the older "re and nothing else".
+- **Both return a tuple of tokens in the order written, repeats kept**, like
+  `extract_numbers`, so all three are readings of the text rather than sets of
+  its vocabulary.
+
+**Measured, not assumed.** Twelve mutations were applied in place and the new
+suite re-run; eleven were killed, and the twelfth -- dropping the lookbehind in
+front of a date -- survived, which was a missing assertion rather than a missing
+rule. `issued2024-11-02` is now held as carrying nothing, beside the token that
+follows a space, and the mutation dies with it.
+
+**Revisit only if** a summary is found naming a field the way the flag data
+prints it -- `date_of_expiry` rather than `DATE_EXPIRED` -- at which point a
+snake_case token joins the identifier shapes, and 17.3's comparison decides
+whether the spelling is the matcher's problem or the model's.
+
+## D134 -- A token passes when the text the flag data prints holds it, and a refusal names each missing token once
+
+**Date:** October 3, 2026. **Status:** settled, task 17.3.
+
+**Context.** 17.3 asked for `verify_summary(summary, flag_data)` returning
+pass/fail plus the offending tokens. D132 and D133 settled what a token is and
+that it comes back exactly as written. What was left was the comparison, and it
+had three parts to settle: what the flag data is searched as, what order the
+offences come back in, and whether a repeat is two offences.
+
+**Decision.**
+
+- **A token passes when the text `str(flag_data)` prints contains it.** A
+  substring search and nothing else -- no float conversion, no rounding, no
+  reading of the payload's shape -- so `0.870` is refused where the data prints
+  `0.87`, and a `confidence` of `0.11` settles the `11` inside a printed date.
+  **A walk over mappings and sequences was written, swept and deleted.** For
+  every payload this project builds -- a list of `dataclasses.asdict` flags, a
+  dict payload, an `EvidenceFlag` -- `str()` already carries every value, so the
+  recursion had no observable behaviour and two of its branches survived a
+  mutation sweep as dead code. What `str()` buys is the safe direction: a record
+  whose printed form is ever shortened can only make this verifier refuse more,
+  never accept more.
+- **The offending tokens come back once each, in the order the summary writes
+  them**, rather than the three questions in turn. The extractors keep repeats
+  (D132) because a reading of the text must not lose one; this is a diagnosis
+  rather than a reading, and one unsupported claim quoted three times is one
+  defect to report. The order is by first occurrence, so a reader gets the
+  summary's own sequence; where a number and the date holding it start together,
+  the number is asked first and the tie resolves towards it.
+- **A date the flags never printed offends the numbers written inside it too.**
+  `2029-01-05` is four tokens and not one, because 17.1's adjacency rule reads
+  three of them as numbers. All four are unsupported, so all four are reported.
+- **The answer is a `(bool, tuple[str, ...])` pair and not a record type.** A
+  frozen dataclass would need `dataclasses`, and 17.1's test reads this module's
+  imports to hold Part 17's "pure code, no model" claim exactly; two values do
+  not need a name of their own.
+- **Nothing raises.** The summary is prose from somewhere else, so a refusal has
+  to be a value the caller can act on rather than an exception it must catch.
+
+**Measured, not assumed.** Eight mutations were applied in place and the suite
+re-run: the flag data not printed, each of the three questions not asked, every
+token treated as offending, the dedupe dropped, the verdict flipped, and the
+sort dropped. Eight killed, none survived. The first sweep is what found the dead
+recursion, and the reason it was untestable is recorded above rather than papered
+over with an assertion.
+
+**Revisit only if** the flag data stops being plain JSON-shaped data and a record
+type arrives whose printed form leaves something out -- at which point the
+search needs a walk, and the walk needs a case a `str()` fallback cannot kill.
+## D135 -- A summary is three fixed sentences and one line per flag, and every line is the flag's own `reason`
+
+**Date:** October 3, 2026. **Status:** settled, task 17.5.
+
+**Context.** 17.5 asked for `template_summary(flags, band)` -- the summary an
+officer reads when there is no model text. D132 to D134 settled what a token is
+and what settles one, so two questions were left: what the fixed part says, and
+where the per-flag wording comes from.
+
+**Decision.**
+
+- **The frame is exactly three sentences and does not vary with the flags.** The
+  band, a headline, and a closing that says the band is what the scan read. The
+  task's "2-3 sentences" is read as this frame rather than as the whole output,
+  because "one line per flag" makes the total a function of the flags and a
+  summary that grew a fourth sentence on a five-flag scan would say nothing an
+  officer did not already have.
+- **The headline is the only sentence that branches,** on whether anything was
+  raised at all. **It never counts the flags.** A count needs a number word, and
+  a digit in the frame is a token D132 would have to settle against flag data
+  that never prints it -- the fallback would be the one summary in Part 17 that
+  fails its own verifier.
+- **A flag line is the flag's `id` and the flag's `reason`, and nothing else.**
+  This is what makes the fallback passable by construction rather than by
+  luck: every token on such a line is a substring of what the flag data prints,
+  because the line is built out of the flag's own fields. 17.6 is what proves
+  it against the verifier; the shape here is the reason it holds.
+- **`field` is deliberately never written.** The flag data prints it snake_case
+  (`date_of_expiry`) and D133's extractor does not read snake_case, so writing it
+  would put an unchecked token into prose that looks checked. "Which field" is
+  17.13's question, and its per-flag reason templates can answer it in plain
+  words or in an id.
+- **The template reads `id` and `reason` and stops.** A finding carrying nothing
+  else still narrates, which is pinned by a stub exposing exactly those two, so a
+  future field reaching this module is a test failure rather than a surprise in
+  a summary.
+- **Nothing is sorted.** The lines come in the order the cascade produced the
+  flags, because that order is the one an officer has already seen.
+- **A malformed input refuses loudly.** A band outside the three names, a flag
+  with no `id` or no `reason`, a blank `id` and a `reason` that is not text each
+  raise `FlagValueError`, on `flags.py`'s rule that a malformed field is never
+  coerced into something legal. This is the last thing standing between a scan
+  and an officer, so a refusal is better than half a finding narrated.
+
+**Measured, not assumed.** Sixteen mutations were applied in place and the new
+file re-run: sixteen killed, none survived, and the module was restored
+byte-identical afterwards. Two of them put a number and a field name into the
+frame, which is what shows the two extractor cases are load-bearing rather than
+decorative.
+
+**Revisit only if** a rule's `reason` stops being plain language -- 17.13's
+per-flag templates then own the wording and this module holds only the frame --
+or the band vocabulary grows a fourth name.
+
+## D136 -- One endpoint both servers speak, one budget for the whole exchange, and a failure is an answer
+
+**Date:** October 3, 2026. **Status:** settled, task 17.7.
+
+**Context.** 17.7 asks for a `Summarizer` interface and a self-hosted LLM
+client "speaking the Ollama/llama.cpp HTTP API, with a hard timeout and no
+external fallback -- when it fails it returns `None`, it does not raise".
+D132 to D135 had settled what a summary may say and who checks it, so the
+naming was already settled; four things were left open, and three of them are
+expensive to reverse once a response names a model and an officer reads a
+sentence that came from one: **which endpoint**, **what the timeout bounds**,
+**where the `None`/raise line sits**, and **what the interface carries**.
+
+**Decision.**
+
+- **The client speaks `POST /v1/chat/completions`, the one endpoint Ollama and
+  llama.cpp's server both serve.**  Their native APIs are `/api/generate` and
+  `/completion` respectively, and neither server answers the other's, so
+  aiming at either native path is a client that works on one machine and not
+  on the other.  The OpenAI-shaped path is the intersection, and it is
+  asserted as a literal rather than read back from the constant, so a
+  "harmless" rename of `GENERATE_PATH` cannot quietly move the client onto a
+  path only one of the two serves.
+- **The timeout is one deadline for the whole exchange, re-imposed before
+  every phase and before every chunk of the body, and it is enforced on a
+  socket the module owns.**  `socket.create_connection`'s timeout is per
+  operation, so a server that dribbles a body a byte at a time would hold a
+  client open for as many windows as it liked; and `HTTPConnection.getresponse`
+  closes the socket object when the reply ends the connection, after which
+  `settimeout` answers `OSError` -- so the one place the budget is re-imposed
+  has to hold the socket itself, which is why the request is written and the
+  response parsed on a socket this module opens and closes.
+- **Every failure is `None` and nothing raises -- including a blank prompt, a
+  prompt that is not text, a model that is not configured, an address that
+  names no server, and a budget that is not a positive number.**  Each of
+  those is refused *before the connect*, which is observable: the test stub
+  records an empty request list, so a client that checked afterwards would
+  fail the same test.  A malformed address or a budget of zero is the
+  exception, and it is refused in `config.py` while the configuration is
+  read -- a bad value is a deployment that would answer `None` to every
+  document, which deserves a `ValueError` naming the variable at start-up,
+  the way `DATABASE_URL` and `RATE_LIMIT_PER_MINUTE` are (D36, D78).
+- **`Summarizer` is one abstract `summarize(prompt) -> str | None` and carries
+  `model_name`**, so whatever wrote a summary travels with it for 17.11 to
+  record, and a subclass that omits the method cannot be instantiated.
+
+**Notes.**
+
+- **"Within the timeout" is measured, not assumed, and the measurement is not
+  the same on every host.**  A closed loopback port is refused in
+  milliseconds on most, but on the host this was built on the connection is
+  silently dropped, so the budget is spent before the refusal arrives
+  (measured: 2.03s against a 2s budget).  Both are correct answers -- `None`
+  no later than the budget -- and the case is written against the budget
+  rather than against a millisecond figure.
+- **A base URL may carry a path prefix**, so the same server behind a reverse
+  proxy is reached under the prefix rather than dialling a path that answers
+  404.  It may be a LAN address as well as loopback: `.env.example` says so,
+  and refusing one would refuse the deployment the project describes.
+- **The request is built as UTF-8 bytes** rather than handed to
+  `http.client` as text, which encodes a body as latin-1 -- a prompt quoting a
+  document field can carry any character, and a mangled one would go out
+  silently.
+- **Untested by choice:** whether either server is actually running.  17.7
+  ships a client and a stub; `LOCAL_LLM_MODEL` is blank in `.env.example` and
+  the client answers `None` to everything until an operator names a model.
+
+
+## D137 -- The summariser is not called at all while `LOCAL_LLM_ENABLED` is off, and the switch has no constructor argument
+
+17.7 shipped a client that speaks to whatever `LOCAL_LLM_BASE_URL` names, and
+`.env.example` shipped a master switch nothing read.  Two things were left open
+and both are expensive to reverse once an officer has read a sentence a model
+wrote: **whether "off" means "do not dial" or "dial and discard"**, and
+**whether a caller can turn the switch back on**.
+
+**Decision.**
+
+- **`LOCAL_LLM_ENABLED` gates `summarize` before anything else, and the answer
+  is `None` without a connection.**  The gate is the first statement, ahead of
+  `_prompt`, so a disabled client does not read the flag data it was handed --
+  `None` is what a caller acts on, and every failure 17.7 lists is already
+  refused before the connect, so this one is refused the same way.  It is read
+  in `__init__`, not per call: a client built off is off for its whole life,
+  because a per-call read would follow an operator turning it off mid-process
+  and leave half the documents on the template and half not.
+- **There is deliberately no constructor argument for it.**  The other three
+  settings are tuning values a caller may override for a test, and a switch a
+  constructor could turn back on would not be one.  `LocalLLMClient` is the only
+  reader of the variable, so a deployment that has not asked for the model
+  cannot be talked into calling it.
+- **Unset is off, blank is off, and a value the reader does not recognise is
+  off.**  Nothing here is a `ValueError`, unlike `LOCAL_LLM_BASE_URL` and
+  `LOCAL_LLM_TIMEOUT_SECONDS` (D136).  Those are values a wrong spelling would
+  silently change into a refusal on every document, which deserves naming at
+  start-up; this one has two answers, both ordinary, and only one of them is
+  safe to reach for when the value is not understood.  `false`, `0`, `no`,
+  `off`, `` and whitespace are off; `true`, `1`, `yes` and `on` are on, folded
+  for case and surrounding space.
+- **No request ever leaves the configured local host** is pinned by wrapping
+  `socket.create_connection` and recording every address the client touches on
+  any path, rather than by counting requests on a stub.  17.7 already showed one
+  address and one dial; what was unproven was that a *second* address could not
+  appear, and a stub the client never reaches cannot show that.  The default in
+  `config.py` is a different port, so a fallback to it is a second entry.
+
+**Notes.**
+
+- **The name is part of the contract.**  `LOCAL_LLM_ENABLED=false` is what
+  `.env.example` ships, and the test reads that file rather than comparing the
+  constant to itself -- a rename would otherwise move both sides together and
+  leave a deployment setting a variable nothing reads.
+- **No request leaves the host, but the model server is never named as
+  loopback-only.**  `LOCAL_LLM_BASE_URL` may be a LAN address (D136), and the
+  claim is "the host the operator configured", not "this machine".
+- **17.5's template is what an officer reads while the switch is off**, which
+  is why off is a complete answer and not a degraded one.
+- **Untested by choice:** whether an operator who sets the switch on has a
+  model that answers.  17.7 was proved against a stub on loopback, and
+  17.8's cases are the same stub.
+
+## D138 -- The prompt is a versioned file, and the version is the file's own
+
+**Context.**
+
+The narration question is prose rather than logic, so it belongs in a file. 17.9's
+task was to create `prompts/v1.txt`, a loader, and a test that changing the file
+changes the reported version -- and the interesting part is not the file but the
+"reported version" half, because the repository already had a constant of that
+name.
+
+**Decision.**
+
+- **`app/explain/prompts/v1.txt` carries its own version in its own header, and
+  no version is written beside it in Python.**  The leading run of `#` lines is
+  metadata; one of them declares `prompt_version`, and everything below that run
+  is the prompt.  The loader is the one way in, so a caller holds a frozen
+  `Prompt` and never a path -- the same rule, and the same `D21` argument, as
+  `app.risk.weightsets.loader` beside `v1.yaml`.
+- **`PROMPT_VERSION` is a PEP 562 module `__getattr__`, not a constant.**  This
+  is the load-bearing choice.  Nothing else in the module is cached -- a prompt
+  retuned on disk has to be the one the next load returns -- so a constant named
+  `PROMPT_VERSION` would be a snapshot of a file explicitly allowed to change
+  under it, and the task's own test ("changing the file changes the reported
+  version") would not hold of it.  `app/version.py` still carries a plain
+  `PROMPT_VERSION` because the version API must read one without importing
+  anything; a test holds the two equal rather than letting either be the
+  authority alone.
+- **A file that is absent, names no version, names it twice, or declares one and
+  holds no text is refused with `PromptError`, a `ValueError`.**  Never defaulted:
+  a default prompt is a prompt nobody recorded, and the version beside it would
+  be a version of nothing.  A key written inside a note (`# The prompt_version:
+  line is below`) is a note, not a declaration.
+- **The prompt is read as a package resource**, through
+  `importlib.resources.files` on a named package and never from a path built out
+  of `__file__`, for D15's reason.
+- **The shipped template introduces no token the verifier would reject.**  The
+  frame is fixed and the findings are not, so a number, a date or a field name
+  written into `v1.txt` would be a token D133's extractors find no flag behind,
+  and a hardcoded field name would bias the model toward a claim the flags never
+  made.  The four rules are held by the terms they name rather than by their
+  wording, so a reworded rule passes and a dropped rule does not.
+
+**Notes.**
+
+- **Untested by choice:** the exact prose of the shipped prompt.  A mutation
+  sweep killed 20 of 21 shipped lines; the survivor is a reworded rule in
+  `v1.txt`, which nothing can detect without pinning the prose byte for byte.  A
+  test that failed on every wording change would be a change-detector rather than
+  a claim, and the rules are pinned at the terms they name instead.
+- **Nothing calls the loader yet.**  17.10 builds the payload this prompt will be
+  sent with, and 17.11 is what assembles the two; the version is quotable from
+  the day it is written because a response that reports a summary has to be able
+  to say which prompt wrote it.
+- **`app/explain/prompts/` is a package, not a directory of strings**, so the
+  file ships inside the package under Cloud Run -- `.gcloudignore` excludes only
+  `requirements-dev.txt` among the text files.
+
+## D139 -- The payload is a list of field names, and `region` is not on it
+
+**Context.**
+
+17.10's task was to build the flag data a model is sent -- structured flags,
+the band, the contributions -- with a test asserting the payload carries no
+pixel data.  The question that task does not answer for itself is what *no pixel
+data* is, given that an :class:`app.risk.flags.EvidenceFlag` already
+carries a `region`: a polygon of integer pixel corners.
+
+**Decision.**
+
+- **The payload copies a flag by name, out of `SENT_FIELDS`, and
+  `region` is not in it.**  Eleven of the twelve fields reach the model;
+  the twelfth is the only field on a flag that points at pixels, and it
+  describes an image the model is never shown.  **The copy is a whitelist rather
+  than a deletion**, so a field added to `EvidenceFlag` later is one the
+  payload cannot leak by default, and a test holds the whitelist against the
+  record so the addition fails loudly rather than passing quietly.
+- **The payload is JSON and prints as that same JSON.**  `to_json` is the
+  text a prompt carries and `__str__` is the same text, so
+  :func:`app.explain.verifier.verify_summary` holds a summary to the exact
+  data the model was given.  Two renderings would be two descriptions of one
+  payload, and they could disagree about what was sent.
+- **A contribution row is copied onto a record of its own, and its field names
+  are read off `app.risk.scoring.Contribution` rather than written beside
+  it.**  A payload is therefore detached from the caller's breakdown, and a row
+  cannot gain a field the payload would quietly drop.
+- **No total is held.**  7.11's rows are pre-history, and the score they do
+  not add up to is the officer's number; a total beside them would invite the
+  model to state a score, which `prompts/v1.txt` forbids in prose and the
+  flag data does not support.
+- **A band the registry does not know is refused with `FlagValueError`, as
+  17.5's template refuses it.**  The check is restated rather than shared:
+  `app.explain` re-exports nothing and reaches into no sibling module's
+  private, and widening 17.5's surface for this would couple two contracts
+  with no reason to move together.  Never defaulted -- a payload that named a
+  band the risk package does not have is a claim nothing else can check.
+- **A record missing a field the payload sends is refused, and the message names
+  the field.**  The copy reads each name in turn, so the refusal falls on the
+  first field the record does not carry rather than on whichever field a
+  different reader happened to reach first.
+
+**Notes.**
+
+- **Untested by choice:** the wording of the module and its docstrings.  A
+  mutation sweep killed 21 of 21 shipped lines.  One of them puts `region`
+  back into `SENT_FIELDS`, which is the rule this decision is about, so the
+  task's own no-pixel-data claim is held by a test that fails on its absence
+  rather than on any prose.
+- **Nothing sends the payload yet.**  17.11 assembles a prompt from it, and
+  17.12 feeds poisoned model output back through the same text.
+- **`region` is still on the flag and still reaches the officer's screen.**
+  4.12's highlight and the API response are unchanged; what D139 withholds is
+  the copy handed to a model, not the finding.
+
+## D140 -- A refused summary is discarded rather than repaired, and the record says so in two fields
+
+**Date:** October 3, 2026. **Status:** settled, task 17.11.
+
+**Context.**
+
+D134 settled what the verifier answers: a `(bool, tuple[str, ...])` pair,
+nothing raised, so a refusal is a value the caller acts on. 17.11 is that
+caller, and the task names three things -- discard the model text, use the
+template, record `summary_source` plus `verification: failed`.  What it does
+not settle is the vocabulary those fields carry, and the vocabulary is what an
+officer's screen, an audit and 17.12 will be written against.
+
+**Decision.**
+
+- **A refused summary is thrown away, not repaired.**  The template stands in
+  its place whole, and **the refused text is not held on the record at all** --
+  there is no field it could be read back out of.  Repairing it (stripping the
+  offending sentence, keeping the rest) was the alternative and was refused: a
+  summary an officer reads would then be a sentence nobody wrote, holding a
+  claim the flags do not support, with the removal invisible on the screen.
+- **`summary_source` says who wrote the sentence on the record, so a refusal
+  records `template` beside `verification: failed`.**  The two fields answer
+  two different questions and the pair is the point: the source says what was
+  read, and the verdict says a model wrote something and it did not survive
+  being checked.  Recording `model` beside `failed` would leave an officer
+  looking at prose nobody vouched for and asking which of the two to believe.
+- **There are three verdicts, not two: `passed`, `failed` and `not_checked`.**
+  The shipped deployment answers `not_checked` on **every** document, because
+  `LOCAL_LLM_ENABLED` ships off (D137), so a record claiming `passed` there
+  would be reporting a check that never ran -- and a record claiming `failed`
+  would show an officer an error on a system working exactly as configured.
+  Two verdicts could only tell that lie one way or the other.
+- **`model_name` names who wrote *this* summary, so it is `None` on every
+  template summary** whatever a model was configured to answer with.  A
+  rejected summary was written by a model that did not write the summary, and a
+  record naming it beside the template would credit prose to the wrong author.
+- **`unsupported` is the verifier's own diagnosis, in the summary's own
+  order (D134), and empty whenever nothing was refused.**  It is the record of
+  a rejection rather than the text of one, which is what makes the rejection
+  auditable in 17.12 without holding the sentence that caused it.
+- **`prompt_version` travels with the summary**, for D138's reason: a
+  sentence quoted against the prompt that did not write it is not comparable.
+  It is recorded on all three paths, because the template is also an answer to
+  a prompt-naming question -- "which version would have written this".
+- **The payload is built on every path, including the one with no summariser**,
+  so a finding that cannot be narrated is refused the same way whether or not a
+  model is configured, and so the flag data the verifier searched is the exact
+  text the model was given -- one rendering, on the pass path and the reject
+  path alike (D139).
+- **The template is built before the model is asked.**  It is the answer to
+  every failure, so building it first means a finding the template cannot
+  narrate is refused before anything is sent anywhere rather than after.
+- **The prompt is the loaded text, then the payload JSON, joined by one blank
+  line** and nothing else.  A heading written between them would be prose no
+  decision recorded, and the payload is already the one rendering D139 built.
+- **Nothing here raises on model text.**  17.7's client answers `None`
+  rather than raising and that is its whole failure contract; a refusal is a
+  verdict the record carries, not an exception a caller has to catch.  A
+  `Summarizer` wired wrongly still fails at construction (D136).
+
+**Measured, not assumed.**  Twenty mutations were applied in place and the new
+file re-run: twenty killed, none survived, no anchor skipped, and the module
+was restored byte-identical afterwards.  Two of them -- the given prompt
+ignored, and the payload left out of the prompt -- were **survivors on the first
+sweep and killed only after a writing fault was found** (see `HANDOVER.md`): a
+triple-quote written where two-character `\n\n` was meant had opened a docstring
+that swallowed the last twenty tests of the file, and pytest reported the
+survivors without an error.  A green run is not evidence that the file was read.
+
+**Revisit only if** a summary ever has to be shown beside the text that was
+refused -- at which point the refused text becomes a field with a retention
+rule -- or if the officer-facing screen needs a verdict 23.8 cannot badge.
+
+## D141 -- The guard on model text is exactly a token the verifier reads, and no wider
+
+**Date:** October 3, 2026. **Status:** settled, task 17.12.
+
+**Context.**
+
+17.12 was to prove that deliberately poisoned model output never reaches an
+officer. D134 made the verifier token-based, and D140 discards whatever it
+refuses, so the guarantee holds exactly where the extractor reads something.
+Feeding eight poisons settled where that line falls: six carry a readable
+token and are refused whole; two carry none and are delivered.
+
+**Decision.**
+
+- **The guard is the token, not the intent.**  Any summary carrying a token
+  the flag data never printed is discarded whole and the record reads
+  `template` beside `failed` -- D140's rule read as a property, and now
+  asserted on poisoned answers rather than described.
+- **A refusal repeats the offending tokens in `unsupported` and nothing
+  else.**  That is the audit: what was refused is readable while the prose is
+  unreachable, and a record still carries six fields with no seventh to hold
+  refused text in.
+- **A poison carrying no readable token reaches the response, and that is
+  recorded rather than papered over.**  An underscore hides a token behind a
+  word character (D133), and a verdict flipped in ordinary words carries no
+  token at all.  The test file names both and asserts the boundary exactly:
+  the refused poisons and the readable tokens are one and the same set.
+- **Which tokens a refusal names depends on the payload it was held to.**
+  With no findings, `SIH-2024` is refused for `2024` as well as `SIH`,
+  because nothing else printed a year; so a case covering every scan asserts
+  the names are tokens the poison wrote, not one fixed set.
+
+**Measured, not assumed.**  Sixty-eight new tests, and four mutations of the
+reject branch -- deliver the refused text, name the model as the source,
+record the refusal as passed, drop the diagnosis -- all four killed, with
+`narration.py` restored byte-identical afterwards.
+
+**Revisit only if** an extractor learns underscored identifiers, or a semantic
+check is added beside the token one -- at which point the two unguarded
+poisons become the guarantee and the boundary case is rewritten as one.
+
+## D142 -- Every flag id has one plain-language sentence, written here and never asked for
+
+**Date:** October 3, 2026. **Status:** settled, task 17.13.
+
+**Context.**
+
+17.13 asked for a per-flag reason template, so an officer always has a
+plain-language explanation of a finding. A rule writes its own `reason` once, at
+the moment it fires, and nothing holds it to writing one: 17.5 prints a bare
+machine id when the reason is blank, and an id is not English. An id the
+registry does not know is a caller bug rather than a finding, so there is
+nothing to look a sentence up for.
+
+**Decision.**
+
+- **One sentence per id, keyed by the registry's own constant.**  `REASON_TEMPLATES`
+  is written in :data:`app.risk.flag_ids.ALL_FLAG_IDS` order with `flag_ids.X` as
+  the key, so an id is never retyped in this module and the completeness test has
+  a second table to hold against the registry.
+- **The sentences are fixed prose with no slot to fill.**  Nothing read off a
+  document is written into one, so a template cannot become a place identity data
+  is stored, and no number, date or field name appears in one -- which means
+  `verify_summary` cannot refuse a template whatever the flag data prints.  That
+  is what makes this a floor rather than a claim, and it is asserted on every
+  id rather than reasoned about.
+- **They are the floor beneath a rule's own `reason`, not a replacement for it.**
+  17.5 still narrates each finding in the wording the rule wrote (D135), because a
+  rule knows what it saw and this table does not; these sentences are what the
+  officer has when no rule wrote one.
+- **An id the registry does not know is refused, not invented.**  A sentence
+  about a rule that does not exist is a claim nothing can be traced back to, so
+  `reason_for` raises :exc:`FlagValueError`, naming the registry and never
+  repeating the value.
+- **The table is read-only and the package re-exports nothing**, so the sentences
+  are reached from their own module like every other name in Part 17, and the
+  module imports the registry and the error and nothing else -- a sentence an
+  officer reads must not pull a detector in to be written.
+
+**Measured, not assumed.**  Two hundred and sixty-two new tests, and six
+mutations of the shipped lines -- the membership test inverted, the type check
+shortened, each refusal removed, one entry deleted, the table made writable --
+all six killed, with `reasons.py` restored byte-identical afterwards.
+
+**Revisit only if** a rule's own `reason` ever grows a slot a document can write
+into, or an officer screen needs a line above the summary rather than inside it
+-- at which point the fixed sentence becomes the caption and the id is the line's
+own label.
+
+## D143 -- The decision endpoint takes the officer three choices and writes nothing yet
+
+**Date:** October 3, 2026. **Status:** settled, task 18.1.
+
+**Context.**
+
+Part 10 named the officer three choices and made an override an event of its
+own, but nothing had reached HTTP: there was no address a client could post a
+choice to, so `record_override` had no caller outside its own test. The
+band is stored and the choices stand apart from it (D70), and 8.4 holds
+`screenings` to sixteen columns, none of which is a decision -- so a
+choice has nowhere on the row to go and this task cannot invent one.
+
+**Decision.**
+
+- **One route, three values, and the vocabulary is read rather than retyped.**
+  `record_decision` takes `action`, `remark` and `override`, and
+  the refusal for a spelling outside the three is built from
+  `OFFICER_ACTIONS` itself -- so the message cannot fall behind the
+  vocabulary, and no module but `app.audit.decision` spells the adverse
+  choice. That is the second half of 7.10's walk, which fails a rejection word
+  found anywhere else in `app/`.
+- **A choice is one of three exact words, and the other two values have
+  defaults.** Casing, padding and a fourth spelling are refused rather than
+  normalised, so what the trail will carry is what the officer chose; a
+  remark left out is an empty remark, not a missing one.
+- **The answer is the four values the request named.** No score, no band, no
+  finding, and nothing the upload carried. The remark comes back as it was
+  written, untrimmed, because it is the officer sentence and no service
+  rewrites one.
+- **A live row is what makes the address meaningful**, so a screening id no
+  live row carries answers the same 404 the read beside it answers -- which
+  is also what a soft-deleted row is (8.15).
+- **Nothing is written this task.** 18.2 is where a band refuses a choice,
+  18.3 is where the choice reaches the trail as `decision_recorded` and
+  `override_recorded`, and 18.4 is where a second choice is answered
+  rather than overwriting the first. A route that recorded the choice on the
+  row would need a seventeenth column, which 8.4 refuses.
+
+**Measured, not assumed.** Thirty-two new tests, and nine mutations of the
+shipped lines -- the vocabulary check removed, the refusal code respelled, the
+row never read, the 404 removed, the remark and the flag dropped, the
+documented 422 removed, and each default flipped -- all nine killed, with both
+files restored byte-identical afterwards.
+
+**Revisit only if** 18.3 answers with the event id beside the choice, at which
+point the answer grows a fifth field rather than replacing one of these four.
+
+## D144 -- The band refuses the adverse choice unless the officer claims it
+
+**Date:** October 3, 2026. **Status:** settled, task 18.2.
+
+**Context.** 18.1 took a choice at a URL and wrote it nowhere, which left the
+one combination the abstract cares about unguarded: the officer's own adverse
+choice on a `low` band, where the record holds nothing to show that anyone
+disagreed with anything. The abstract gives the officer the decision on every
+case, it is the adverse outcomes a disputed case turns on, and a service that
+answers 200 to an adverse choice nobody claimed is answering for the system
+rather than for the officer.
+
+**Decision.**
+
+- **The rule is `override_required`, and it lives beside the two orderings
+  it reads.** `app.audit.decision` is the only module that spells the adverse
+  choice (D70, D143), so the route asks that module rather than naming an
+  action itself; `ADVERSE_RANK` is read off `OFFICER_ACTIONS` rather than
+  counted, and the answer is `contradicts_band` asked in one direction only --
+  a band and a choice disagreeing the other way are the officer exercising their
+  own choice and are held to no flag.
+- **The adverse choice needs `override: true` on any band below it** --
+  `low` and `review` -- **and needs none on the band that agrees with
+  it**, so the flag is a claim rather than a formality, and it is the only
+  choice held to one.
+- **The refusal is a 422 in the shared envelope**,
+  `DECISION_OVERRIDE_REQUIRED`, naming the flag to send. **It is a
+  validation error rather than a recorded override**: nothing is written, so
+  there is no event to write until 18.3.
+- **The band is the stored one and never the requested one.** `row.band` is
+  read off the row the choice was made on, a body naming a band is ignored, and
+  a row nothing has scored carries no band and has therefore shown none to go
+  against -- which is why 18.1's fixtures, all unscored, still answer 200.
+- **The id is answered before the band.** An unknown or soft-deleted row is
+  still `SCREENING_NOT_FOUND` (8.15), so the rule never reads a row the
+  endpoint would not have answered about anyway.
+
+**Measured, not assumed.** Twenty-four new cases in
+`backend/tests/api/test_decision_override.py`, the backend suite at 6812, and
+eight mutations of the shipped lines -- the rank read off the tuple turned into
+a constant, the no-band guard dropped, the answer forced to `False`, the
+choice no longer validated, the flag condition inverted, the band replaced by
+`None`, the status respelled and the code respelled -- all eight killed,
+with both files restored byte-identical afterwards.
+
+**Revisit only if** 18.3 records the claim, at which point `override: true` is
+what makes `override_recorded` appear and the two have to move together.
+
+## D145 -- The choice reaches the trail as an event, and the override still follows the band rather than the flag
+
+**Date:** October 3, 2026. **Status:** settled, task 18.3.
+
+**Context.**
+
+18.1 took a choice at a URL and wrote it nowhere, and 18.2 refused the one
+combination the abstract cares about.  Both left the same gap: the officer's
+decision existed only as a 200, so a trail carrying the system's reading of a
+document carried nothing about the person who answered it -- and the
+append-only ledger had no row to point at.  Part 10 had already written both
+event names and one of the two writers; nothing reached them.
+
+**Decision.**
+
+- **The writing lives in `app.audit.decision`, not in the route.**  That module
+  owns the officer's vocabulary (D70, D143) and already owns
+  `record_override`, so `record_officer_decision` sits beside it and the route
+  asks one module for the whole record rather than spelling an event name and
+  a payload of its own.
+- **Every taken choice leaves exactly one `decision_recorded`,** carrying the
+  three values the officer sent and nothing else of theirs -- `officer_action`,
+  `remark` and `override` -- with the remark kept exactly as written and the
+  flag at the value the caller sent, `false` included.  Neither is normalised
+  on the way in (18.1) or on the way into the trail.
+- **The band's own reading is not repeated into the decision event.**  It is
+  already on the trail as `analysis_completed`'s `band`, so copying it would
+  leave two records of one measurement: the officer's event carries the
+  officer, and the system's carries the system.
+- **`override_recorded` still follows `contradicts_band`, not the flag.**
+  10.6 defines that event as the disagreement, in both directions, and it is
+  the only place that defines it -- a release of a `high` band is an override
+  and needs no flag, and a flag sent on a pair that agreed records no
+  override.  **This is D144's revisit clause, half taken and half declined**:
+  the clause triggers on 18.3 recording the claim, and the claim *is* recorded,
+  inside `decision_recorded`, so claim and event sit side by side on one
+  trail without the flag becoming the rule the band was.
+- **A row nothing has scored carries no band, so it has nothing to go
+  against**, and the answer is one decision event and no override -- 18.2's
+  guard read as a fact about the record rather than as a 422.
+- **A refusal writes nothing.**  The write sits after the id, after the
+  vocabulary and after the band, so all three refusals leave the trail exactly
+  as they found it.
+- **The choice is read before either event is written,** so a spelling this
+  project cannot read raises `DecisionError` with no half-decision on the
+  trail -- the ordering 10.6 already holds for the override alone.
+- **The answer keeps its four values.**  D143's revisit clause triggers on an
+  event id being answered beside the choice; this task did not ask for one, and
+  `DecisionResponse` is the contract 18.1 pinned, so no fifth field was added.
+  The events are on the trail, which is where a reader already looks.
+
+**Measured, not assumed.** Twenty-four new cases in
+`backend/tests/api/test_decision_events.py`, the backend suite at 6836, and
+thirteen mutations of the shipped lines -- the name read removed, the no-band
+guard dropped, each of the three payload keys respelled, the flag forced to
+false, the empty override replaced by a second decision event, the decision
+event renamed to the override, and on the route the stored band blanked, the
+choice upper-cased, and the remark, flag, ruleset and model versions each
+replaced -- all thirteen killed, both files restored byte-identical.
+
+**Revisit only if** 18.4 moves a status on the row, at which point the row and
+the trail say the same thing twice and one has to be derived from the other.
+
+## D146 -- A second choice is answered beside the first, and where a choice stands is read off the trail
+
+**Date:** October 3, 2026. **Status:** settled, task 18.4.
+
+**Context.**
+18.3 left the officer's choice on the trail and nothing on the row, which is
+right (8.4 refuses a seventeenth column) and left one gap: a second choice sat
+beside the first with nothing naming which one a reader should act on. The two
+were indistinguishable, so the trail recorded that two people had answered a
+document without recording which answer stood. A retry -- the ordinary reason a
+second choice arrives -- was therefore indistinguishable from a reversal, and
+an officer who reversed themselves left no claim that they had.
+
+**Decision.**
+
+- **A second choice is a second event, never an edit.** `supersedes` is written
+  into the *new* `decision_recorded` and names the event it was taken over
+  from. The first event's id, payload, digest and salt are what they were, and
+  9.17 still rebuilds it: an event is sealed when it is written (8.5), so the
+  link is the only way one choice can name another.
+- **Where a choice stands is a reading, never a column.** `current` is the last
+  decision the trail holds and `superseded` is every earlier one, read in
+  `created_at` then `id` order -- the total order the repository already reads
+  rows in, because two choices can share an instant. `recorded_decisions`
+  derives it; no payload carries a standing, because a standing in a payload
+  would be a claim that has to be rewritten when a later choice lands, and an
+  event cannot be rewritten. 18.4 therefore *changes* the first choice's
+  standing without touching a byte of the first choice.
+- **`supersedes` is written only where a choice was already recorded**, so a
+  screening decided once hashes exactly as 18.3 left it: the three keys of the
+  officer's own, unchanged.
+- **The answer grows by three and replaces nothing.** `decision_id` is the
+  event written, `status` is where it stands and `supersedes` is what it took
+  over from. This is D143's revisit clause, taken: it says the answer "grows a
+  fifth field rather than replacing one of these four", and it grows by three
+  rather than one because an id alone says neither what a choice replaced nor
+  where it stands -- a client retrying a request needs both to tell a
+  superseded answer from a standing one.
+- **The idempotency claim is the four values and the standing, not the id.**
+  The same request sent twice answers with the same choice, the same remark,
+  the same flag and `current` both times, with two sealed records and the
+  second naming the first. Nothing the first wrote is lost and nothing is
+  rewritten, which is what a retry must not disturb.
+- **18.2's guard still comes first, and 18.3's refusals still write nothing**,
+  so a choice nobody may take leaves the one already taken standing.
+- **The reader is beside the writer.** `current_decision` and
+  `recorded_decisions` sit in `app.audit.decision` rather than in
+  `app.audit.trail`, because the standing is a decision vocabulary and
+  `trail.py` holds no vocabulary of its own.
+
+**Measured, not assumed.** Twenty-one new cases in
+`backend/tests/api/test_decision_supersession.py`, and seven mutations of the
+shipped lines -- the link written only where there was no choice to name, the
+standing read off the front of the trail rather than its back,
+`DECISION_STATUSES` reordered, `current_decision` answering the first decision
+rather than the last, the officer's own choice replaced by the empty value, the
+answer's `decision_id` dropped, and `supersedes` answered as nothing -- all
+seven killed, with both files restored byte-identical afterwards. 18.1's,
+18.2's and 18.3's answer-shape cases were updated rather than deleted, and each
+keeps its own claim: none of the four fields 18.1 named is replaced. 11.12's
+`openapi_contract.json` was rewritten with the three added fields and nothing
+else.
+
+**Revisit only if** a screening carries more than one officer at different
+stations, at which point 10.7's `actor` is what says which of them superseded
+which, and the trail's order stops being the whole of the answer.
+
+## D147 -- The delete is a stamp the repository already keeps, reached at last by a URL
+
+**Date:** October 3, 2026. **Status:** settled, task 18.5.
+
+**Context.**
+8.15 wrote ``soft_delete`` and made every read of ``screenings`` skip a row it had
+stamped, so the rule this task needs has been in place since Part 8 and has
+had no caller since: nothing reached it from a URL, and 24.5's confirm-then-
+delete had no endpoint to confirm against. A rule with no route is untested in
+practice and unreachable in the product.
+
+**Decision.**
+
+- **The route is the URL that reaches 8.15's rule, and adds no rule.** No column
+  is added, no read filter is written here, and no second spelling of
+  "deleted" appears in ``app/api/``: the route asks ``ScreeningRepository``, which
+  already carries the one filter every read shares.
+- **The instant is handed in, not read here in the route's own way.**
+  ``soft_delete`` takes ``deleted_at`` rather than reading a clock, so the route
+  passes ``datetime.now(timezone.utc)`` -- an aware instant, which the repository
+  converts, and a naive one is refused before the table is touched.
+- **A second delete is absence, not a second stamp.** ``soft_delete`` finds its
+  row through the same ``deleted_at IS NULL`` every read uses, so an id no row
+  carries and an id already stamped are the same answer: both are 404. When a
+  row was deleted is a fact about the past, and who deleted it is 10.1's event
+  rather than a second reading of a column.
+- **The refusal is the reads' own refusal**: 404, ``SCREENING_NOT_FOUND``, and the
+  same message ``GET /api/screenings/{id}`` gives, so a client that has learned
+  one read's envelope has learned this one's.
+- **The answer is the id and the stamp, and nothing else.** Those two are the
+  whole of what the delete did, since it removed nothing. No score, no band, no
+  finding and no filename: nothing read off a document reaches an answer about
+  deleting it.
+- **It answers 200 with a body rather than 204.** 24.5 confirms and then
+  refreshes, and every other route on this resource answers with a body, so an
+  empty success would be the only such answer here.
+- **CORS now allows ``DELETE``.** A route a browser may not call is not a route,
+  and 24.5 calls it from a page served on another origin.
+- **``screening_deleted`` is still unemitted.** 18.1 took the decision endpoint
+  and wrote nothing, and 18.3 emitted the events as its own task; this follows
+  the same split rather than folding a second behaviour into one task.
+
+**What this forbids**
+
+- A hard delete, or any statement that removes a ``screenings`` row.
+- A second stamp on a row that already carries one.
+- An error code of this route's own, or a body carrying anything read off the
+  document.
+
+**Measured, not asserted** -- 14 cases in
+``backend/tests/api/test_screening_delete_api.py`` through the real app, 6871
+backend tests (was 6857), and seven mutations of the shipped lines -- a naive
+stamp, the ``None`` check dropped, a fresh uuid answered in place of the row's, each
+of the two answer keys dropped, a different code in the refusal, and ``DELETE``
+removed from the CORS allowlist -- all seven killed, with both files restored
+byte-identical afterwards. 11.12's ``openapi_contract.json`` was rewritten with the
+added operation and 94 lines gained, none removed.
+
+**What this leaves.** The row is stamped and every read refuses it, but nothing
+records *that* it was deleted: ``screening_deleted`` has been a name in the
+vocabulary since 10.1 with no writer. D148 is the test that the trail survives
+the delete, and no task yet emits the delete's own event.
+
+## D148 -- A delete leaves the trail where it was, and surviving means still walking it
+
+**Date:** October 3, 2026. **Status:** settled, task 18.6.
+
+**Context.**
+D147 shipped a delete that removes nothing and named 18.6 as the test of the
+clause it left open: the ledger entry and the audit events survive it. 8.5 had
+already argued that structurally, since ``AuditEvent.screening_id`` declares
+no foreign key and an event therefore outlives the row it names -- but an
+argument about the schema is not a guarantee about what the delete issues, and
+nothing held the claim through the endpoint.
+
+**Decision.**
+- **Surviving is proved by walking the trail, not by counting it.** Every case
+  anchors the screening's real events through 9.16 (root, sign, append, stamp),
+  takes the delete through the real endpoint, and then asks 9.17 for each
+  event's answer. The claim asserted is ``verified``, because rows that outlive
+  the delete but no longer reach their root would satisfy a count and fail this.
+- **Events are compared as records, not as numbers.** Each stored row's type,
+  actor, payload, digest, salt, batch id and position are read back before and
+  after, so a row rewritten in place fails rather than passing.
+- **The delete is watched at the statement level.** One case holds every
+  statement the engine issues during the request and asserts that none names
+  ``audit_events`` or ``ledger_entries``: no cascade, no key and no second write
+  can erase a trail that no statement touches.
+- **The absence of the key is asserted off the schema** -- in the metadata and
+  in the created SQLite table -- so a future migration that adds one fails a
+  test rather than a production cascade.
+- **The officer's choice is included**, since a recorded decision is the part of
+  the trail an erase would do most damage to, and a second screening's trail is
+  held beside the first so a delete is proved to take nothing else with it.
+- **A run anchored after the delete is proved too**: a sweep that reaches the
+  trail once the row is stamped still commits to the anchored root and still
+  walks to it, so a backstop running later cannot fail on a screening no read
+  can reach.
+
+**Measured, not asserted** -- 11 cases in
+``backend/tests/api/test_delete_keeps_audit_api.py`` through the real app and
+the real log, 6882 backend tests (was 6871), and three mutations of
+``soft_delete`` -- the delete erasing the trail, the delete purging the log, and
+the delete removing the row outright -- all three killed, with the file restored
+byte-identical afterwards.
+
+**What this forbids.**
+- Any statement, cascade or key that removes or amends an ``audit_events`` row
+  or a ``ledger_entries`` row as a consequence of deleting a screening.
+- A foreign key from ``audit_events`` to ``screenings``.
+- Asserting survival by a row count rather than by the verifier's answer.
+
+**What this leaves.** ``screening_deleted`` is still a name in the vocabulary
+with no writer, so a deleted screening's trail still says nothing about the
+delete itself. D147 records the split; no task claims the event.
+## D149 -- A verify endpoint that names the checks it made, and only those
+
+**Date:** October 3, 2026. **Status:** settled, task 18.7.
+
+**Context.**
+11.1 hands an officer an ``audit_id`` beside every screening, and 9.17 can say
+whether the event it names is still the record the log committed to -- but
+nothing carried that answer over HTTP, and what 9.17 answered with was one
+word and no evidence.  A word a reader cannot check is a word they have to take
+on trust, which is the opposite of what a trail is for.
+
+**Decision.**
+- **The walk is written once.** 9.17 now answers with a ``Verification``
+  record: the three words, the batch reached, the root as the log spells it,
+  the length of the walked proof, and the names of the checks that completed.
+  ``verify_event`` is that record's ``status`` and is unchanged, and 18.7's
+  route asks the record.  No second walk, and no second spelling of the three
+  answers in the route or beside it.
+- **Only a check that ran is named.** ``checked`` is the steps that completed,
+  in walk order, so a 200 can be read for what it is: a clearance, or an answer
+  that stopped before it compared anything.  ``unknown`` naming nothing at all
+  is how "nothing could be compared" is reported -- which is also the answer
+  for an id no row carries, and a 200 rather than a 404, since the question
+  was answerable.
+- **The two numbers come out of the database, not off the object.** The batch
+  root is D57's verbatim column as the log holds it, and the proof length is
+  the path the tree really cuts for that row's own position -- both rebuilt in
+  the cases from the stored digests rather than read off the answer.
+- **One sentence per check, in one table keyed by 9.17's own constants.** A
+  step is never retyped and never named twice, and a step added to the walk
+  without a sentence fails a test rather than reaching an officer unexplained.
+- **The moved commitment is this task's vector; the moved record is 18.8's.**
+  The case here rewrites a ledger entry's root, so the record still hashes and
+  only the walk answers. The payload is left for 18.8 to move.
+- **The read spends nothing and writes nothing.** No statement naming
+  ``audit_events``, ``ledger_entries`` or ``screenings`` is issued, no analysis
+  budget is spent, and this route has no error code of its own: 422 is the
+  envelope's and 500 is the service's.
+
+**Measured, not asserted** -- 21 cases in
+``backend/tests/api/test_audit_verify_api.py`` through the real app and the real
+log, 6903 backend tests (was 6882), and eighteen mutations of the shipped lines
+-- each of the three ``checked`` appends dropped, the root and the proof length
+dropped, the status and the batch root not carried over, the sentence table
+bypassed, the trail read by the wrong column, the log built over another
+database, the response model's vocabulary narrowed, the path parameter loosened
+and ``verify_event`` answering a constant -- all eighteen killed, with every
+file restored byte-identical afterwards. 11.12's ``openapi_contract.json`` was
+rewritten with the added operation and 145 lines gained, none removed.
+
+**What this forbids.**
+- A second walk of the log, or a second spelling of the three answers, in the
+  route or in ``app.audit.verify``.
+- Naming a check that did not complete, or reporting ``verified`` for an event
+  no root was walked to.
+- A 404, or an error code of this route's own, for an id no row carries.
+- Any value read off a document in the answer: no payload, no finding, no
+  score, no filename.
+
+**What this leaves.** The entry's signature is not checked here: this route
+proves the root is the batch's own and not that the signature over it is sound,
+and ``app.ledger.signing.verify_signature`` still has no caller outside its own
+tests. And ``unknown`` names what ran rather than why it stopped, so a caller
+that needs the reason must read the log beside it. 18.8 moves the other vector.
+
+## D150 -- The report is one self-contained page built from the row, and the route only reads it
+
+**Context.**
+An officer has three ways to read a screening: the JSON 11.2 answers with, the
+screen the frontend draws, and -- since nothing built it -- a printable
+record.  A filed record is the one that has to survive the deployment it was
+made on: it must open on a machine with no network, print without a
+stylesheet the browser cannot fetch, and still say what was found.  Two
+answers about one row would also have been a hazard, so the question is
+where the page is built and what it may carry.
+
+**Decision.**
+- **One module builds the page and the route reads it.**
+  ``app.reporting`` turns a row and an audit id into the document;
+  ``GET /api/screenings/{id}/report`` reads the row, reads the audit id
+  through ``app.audit.trail`` and answers with what it is handed.  The
+  route holds no markup and the module holds no session, so neither half
+  can drift from the other.
+- **The page references no external asset, and a case says so against the
+  spellings rather than against one example.**  The stylesheet is inline,
+  there is no link, script, image, frame, object or import, and no url()
+  beside it -- so a printer, an offline machine and a reader in ten years
+  all see the same page.  The ban is held against a page that really does
+  reference one, so a checker matching nothing cannot pass it.
+- **Everything printed is read off the row.**  The band and the score are
+  the columns a stage wrote rather than a fresh reading of one beside the
+  other, the findings are the stored evidence rather than a re-run of the
+  cascade, and the audit id is the one ``analysis_completed`` event 11.1
+  answered with -- which is the id 18.7's verify endpoint takes, so a
+  printed record names the record it can be checked against.
+- **A value the row never received prints as a sentence.**  A row no stage
+  has scored carries no score and no band, and a cascade that raised leaves
+  no completed event beside it; each prints as ``NOT_RECORDED`` rather than
+  as an empty cell, so a reader cannot mistake an unanswered question for an
+  answer that said nothing.
+- **Every value is escaped on the way out**, because a label, a reason and a
+  document type are all text a rule or a caller wrote, and a report is
+  printed from exactly what they wrote.
+- **Nothing read off the document is printed, and neither is the upload's
+  name.**  A finding prints as its id, label, tier, module, weight band, its
+  two numbers and the reason its own rule wrote; no expected or found value,
+  no region polygon, no image, and no filename -- caller-supplied text a
+  filed record does not carry.  The reason floor in ``app.explain.reasons``
+  is deliberately *not* reached: wiring it to an officer's screen is 23.8's,
+  and reaching it here would have written two owners for one sentence.
+- **The one HTML route names the error envelope by pointer.**  FastAPI takes
+  an additional response's media type from the route's own response class,
+  so the ``{"model": ErrorResponse}`` spelling the other routes use would
+  document this JSON envelope as a page of HTML; 11.4's own case holds the
+  pointer instead.
+
+**Measured, not asserted** -- 13 cases in
+``backend/tests/api/test_screening_report_api.py`` through the real app and
+the real cascade, the full backend suite, and 22 mutations of the shipped
+lines -- every fact row, every finding column, the doctype, the inline
+stylesheet, the finding row's own class, the escaping, the missing-value
+sentence, the audit id, the response class, the envelope's media type and
+pointer, and the route's answer -- all 22 killed, with every file restored
+byte-identical afterwards.  Two of them survived the first pass, because
+this fixture scores value and confidence alike and a case asserting one
+number appeared was answered by the other's cell; the case now reads the
+two as an ordered run.  11.12's ``openapi_contract.json`` was rewritten with
+the added operation.
+
+**What this forbids.**
+- A second place that builds this page, or markup written in the route.
+- Any external reference on it, including a stylesheet fetched by a URL or
+  a font loaded by a name.
+- A score or band computed here, or a band derived from the score beside it.
+- A filename, a field value read off the document, or an image on the page.
+- A 200 that carries an error envelope, or an id no live row carries
+  answered with a page.
+
+**What this leaves.**  The page is a read and prints nothing an officer has
+to act on: it names no officer's choice, and the decision 18.1 records
+lives on the trail beside the row rather than in this document, so a filed
+record shows what was found and not what was decided about it.  23.8 is
+where a reason template and a decision reach a screen together.
+
+## D151 -- Progress is what a finished run recorded, and a frame carries a name, not a value
+
+**Date:** October 3, 2026. **Status:** settled, task 18.10.
+
+**Context.**
+An officer waiting on a screening is watching nothing: ``POST /api/screenings``
+runs the cascade inline and answers with its two ids only once the run has
+finished, so there is no id to open a stream on while the work is in flight.
+Part 18 asks for a server-sent stream reporting per-tier and per-module
+progress, and the honest reading of that against the architecture this
+repository actually has is **a replay of what the run recorded**, not a live
+feed.  A background-job redesign would be a different decision with a
+different cost, and no task in ``tasks.md`` claims it.
+
+**Decision.**
+- **``app.progress`` owns the sequence; the route only reads and hands over.**
+  A step is a unit, a state, a tier and a module; the module builds the
+  frames and the JSON object on each, so 18.11's polling route can answer
+  from the same model without a second spelling of either.
+- **A tier is ``completed`` and a module is ``reported``, and those are not
+  the same word.**  A tier completed because the trail wrote a
+  ``tier_completed`` event naming it.  A module reported because a stored
+  finding names it as the module that made that finding -- which is the only
+  record this repository keeps of a module having run.  **A module that ran
+  and found nothing therefore carries no step**, and the sequence says so by
+  omission rather than by claiming the module did not run.
+- **A tier is stepped once per ``tier_completed`` event, in the order the
+  trail stamped them**, ordered by the event's own instant and then its id,
+  because the trail keeps no position of its own.  An event whose payload
+  names no tier is skipped: the payload is the record, and a record carrying
+  no name names no tier.
+- **A tier that only a finding names is walked after every tier the trail
+  recorded**, never ordered into the middle of the cascade on a finding's
+  word alone.
+- **Both reads finish before the first byte is written.**  An id no live row
+  carries is a 404 in the shared envelope rather than an error pushed down a
+  stream a caller has already started reading, and no session is held open
+  for as long as a caller reads.
+- **The stream ends on one ``done`` event**, carrying the number of steps
+  that preceded it.  A reader that stops there holds the whole sequence, and
+  the response ends on its own rather than waiting on a caller to hang up.
+- **A frame is exactly a name line, one sorted JSON object and a blank line.**
+  Sorted so the same step is the same bytes on every run, and held byte for
+  byte by a case because a client reading a stream with a hand-written parser
+  is reading the bytes.
+- **Nothing read off the document is in a frame**: no finding id, no expected
+  or found value, no region, no score, no band and no filename.  A frame
+  carries tier names, module names, states and counts, which are this
+  repository's own words.
+- **``app.screening.TIER_KEY`` is the one spelling of the payload key**, so
+  the writer and the reader of that key cannot drift apart.
+
+**The two spellings of a tier are left unreconciled, deliberately.**  The
+trail names a tier ``tier_0`` and a finding names the same tier ``0``; there
+is no crosswalk in this repository and inventing one here would be a mapping
+D151 did not design.  A frame therefore says what the record it was read from
+said, and a client sees both rather than a merge nobody checked.  A case holds
+the two apart on purpose, so a later task that does join them has to change
+it.
+
+**Measured, not asserted** -- 24 cases in
+``backend/tests/api/test_screening_progress_stream_api.py`` through the real
+app and a real cascade, the full backend suite, and 24 mutations of the
+shipped lines -- every constant as it crosses the socket, the payload key as
+the trail actually stored it, the frame's exact bytes, both units and both
+states, the stamped-instant order against events written the other way round,
+the unknown tier reached from a nameless and from a boolean one, a damaged
+JSON column, the 404, the stream ending on its own, and a caller hanging up
+part way through -- 23 killed, with every file restored byte-identical
+afterwards.  The twenty-fourth is an equivalent mutant: rewriting
+``{TIER_KEY: name}`` as ``{"tier": name}`` is the constant's own value, and
+the wire key it protects is held by its own case.  11.12's
+``openapi_contract.json`` was rewritten with the added operation, whose 200
+is documented as ``text/event-stream``; its error responses need no
+D150-style pointer, because ``StreamingResponse`` carries no media type of
+its own for FastAPI to read them off.
+
+**What this forbids.**
+- A second place that builds this sequence or spells a frame.
+- ``completed`` on a module, or ``reported`` on a tier.
+- A step for a module no stored finding names.
+- A crosswalk between the trail's tier spelling and a finding's.
+- A finding id, a field value, a score, a band or a filename in a frame.
+- A session held open while a caller reads, or a 404 sent down a stream.
+
+**What this leaves.**  A stream an officer opens shows a run that has already
+finished, and a clean module leaves no trace in it.  Both are limits of what
+the run records rather than of the transport: a live feed needs the cascade
+off the request thread and its progress stored, which no task claims yet.
+18.11's polling route answers from this same model and must report state
+identical to these frames.
+
+
+## D152 -- A poller and a subscriber read one state, because one read is behind both
+
+**Date:** October 3, 2026. **Status:** settled, task 18.11.
+
+**Context.**
+18.10 shipped one route over a run's recorded progress: a server-sent stream,
+one frame per step, ending on a single ``done``.  A caller that cannot hold a
+connection open cannot read it -- a proxy that buffers a response, a network
+that drops a long-lived one, a client with no event stream at all.  The
+obvious answer is a second route, and the obvious way to build one is to walk
+the trail a second time and answer with the same steps, which is how two
+routes come to disagree about one run.
+
+**Decision.**
+``GET /api/screenings/{id}/progress`` answers with that same sequence as one
+JSON document -- ``screening_id``, ``units`` and ``events``.  Both routes go
+through :func:`build_progress`, so ``ProgressReport.frames()`` and
+``ProgressReport.snapshot()`` are two transports over one walk: every step is
+``ProgressEvent.payload``, and ``units`` is the count the ``done`` frame
+already reports.  Neither answer is derived from the other.
+
+**One refusal, made once.**  ``_screening_or_404`` reads the row for both
+routes, so the two cannot answer one id differently -- the same 404, in the
+same envelope, under the same code.
+
+**Three keys, and no completeness flag.**  A flag saying the sequence had
+finished would be a claim the stored records cannot support: screening is
+synchronous, so a row read here is a run that has already ended, and nothing
+in the trail tells a run still going from one that has.  A poller is answered
+the whole sequence or not at all.
+
+**Measured, not asserted** -- 13 cases in
+``backend/tests/api/test_screening_progress_poll_api.py`` through the real
+app and a real cascade, holding the comparison against four rows: one with
+findings, one nothing ran on, one a further tier completed after it, and one
+whose findings name a tier nothing else does -- beside the exact key sets,
+two polls of one row answering the same bytes, the 404 the stream route also
+answers, and the document carrying no finding, no value and no filename.  The
+two sides are read by two different parsers, the frame reader knowing nothing
+about the document, so a change to either shape cannot be read the same way
+by both.  12 mutations of the shipped lines, 12 killed, every file restored
+byte-identical afterwards.  11.12's ``openapi_contract.json`` was rewritten
+with the added operation, whose 200 is the document's own schema.
+
+**What this forbids.**
+- A second place that walks the trail or spells a step.
+- A document derived from the frames, or a frame derived from the document.
+- A route reading a screening without ``_screening_or_404``.
+- The two routes answering one id differently.
+- A finding id, a field value, a score, a band or a filename in the document.
+
+**What this leaves.**  Both routes answer about a run that has already
+finished, as D151 recorded: a poller cannot watch a run either, only read the
+one that ended.  A caller waiting for steps still to arrive is waiting for
+progress nothing stores yet.
+
+
+## D153 -- A stage's cost is the window the trail recorded, and the whole is read rather than summed
+
+**Date:** October 3, 2026. **Status:** settled, task 18.12.
+
+**Context.**
+An officer's screen is built from ``GET /api/screenings/{id}``, and D151 and
+D152 gave a caller the run's steps -- which tiers completed and which modules
+reported. Neither route could say where the time went, and task 18.12 asks
+for the stage trace and the per-stage timings on that response.
+
+The obvious instrument already exists: ``orchestrator.StageTrace`` records
+``started`` and ``elapsed`` per stage. **It is not the one that runs.**  The
+shipped flow is ``app.screening._run_cascade``, and that is the other cascade
+recorded as a known gap, so building this on ``run_cascade`` would trace a
+cascade no screening runs.  A stopwatch in either is also gone by the time a
+second reader asks: nothing outlives the request but the trail, so a timing
+worth answering from has to be read back out of what the run recorded.
+
+**Decision.**
+``ScreeningResultResponse`` gains ``stage_trace``: ``total_ms`` beside
+``stages``, and each stage is ``tier``, ``recorded_at`` and ``elapsed_ms``.
+``build_stage_trace`` builds it in ``app.progress``, off the same
+``_run_events`` walk ``build_progress`` already uses.
+
+- **A stage is a ``tier_completed`` event.**  A stored finding is not an event
+  and carries no instant, so a module has no timing and no row here -- the
+  same limit D151 recorded, that a clean module leaves no trace at all.
+- **A cost is a window between two recorded instants**, opening on the
+  instant recorded before the stage and closing on the stage's own.  Not a
+  stopwatch: the window carries the writes and the work between the two
+  events, and is an upper bound on the stage rather than a measurement of it.
+- **The whole is read, not summed.**  ``total_ms`` is ``analysis_completed``
+  less ``screening_created``, which is more than the stages add up to, because
+  the scoring and the store after the last tier are charged to no stage.
+- **Only the run's own three events are read.**  A decision is written by an
+  officer afterwards, so walking the trail whole would bill an officer's
+  pause to a stage.
+- **Whole milliseconds; ``None`` for an absence.**  A stage with nothing
+  recorded before it reports ``None`` rather than zero, and a row nothing ran
+  on carries no stage and a ``None`` total.  A wall clock that steps backwards
+  reads as 0 ms and never as a negative cost.
+- **Two reads answer the same bytes**, because the numbers come off stored
+  instants rather than off a clock.
+
+**Measured, not asserted** -- 17 cases in
+``backend/tests/api/test_screening_stage_trace_api.py`` through the real app
+and a real cascade: the stages against the trail's own payloads, each instant
+against the trail's own column, a later stage charged from the stage before it
+rather than from the start of the run, whole milliseconds that are never
+negative, the parts fitting inside the whole, the whole against the run's own
+first and last stamps, the trace and the stream counting the same stages, a
+row nothing ran on, a stage with nothing before it, a nameless payload on both
+routes at once, a later stage appearing in the next answer, an officer's
+decision costing nothing, a clock stepped backwards reading zero, the exact key
+sets, two reads answering one trace, and the trace carrying no finding, no
+value and no upload name.  15 mutations of the shipped lines, 14 killed, the
+fifteenth an equivalent one (``round(max(0, x))`` is ``max(0, round(x))``),
+every file restored byte-identical afterwards.  11.12's
+``openapi_contract.json`` was rewritten with the added field.
+
+**What this forbids.**
+- A stage no ``tier_completed`` event named, or a cost measured by a clock of
+  this module's own.
+- ``total_ms`` summed from the stages' windows.
+- A decision charged to a stage, or a module given a timing.
+- ``0`` standing in for a window that was never measured.
+- A finding id, a field value, a score, a band or a filename in a stage.
+
+**What this leaves.**
+- The gap between the last stage's window and ``total_ms`` is the scoring and
+  the store, stated rather than closed: the trail records no instant between
+  ``tier_completed`` and ``analysis_completed`` to charge it to.
+- A cascade that raised leaves no ``tier_completed`` event, so it has no row
+  here at all.  The trail's record of what ran is the only record of what
+  cost anything.
+- A module's cost is nothing, and says nothing.  Timing one needs the same
+  stored instants, which no task claims.
+- Nothing under ``frontend/`` reads the trace, as D151 and D152 recorded for
+  the two progress routes.
+
+## D154 -- the evidence master key is loaded, generated in development, and refused in production
+
+**The decision.** ``EVIDENCE_ENCRYPTION_KEY`` holds the AES-256 key every
+evidence blob is wrapped under, as ``MASTER_KEY_BYTES`` (32) of standard
+base64. :func:`app.config.get_evidence_encryption_key` is the only reader of
+that variable and :func:`app.config.get_app_env` the only reader of the mode;
+:func:`app.storage.master_key.load_master_key` is handed what those two
+answered and answers a ``MasterKey``. **A missing key is generated in
+development and refused in production, and there is no third answer and no
+constant.**
+
+- **``APP_ENV`` is a mode, not a flag** -- ``development`` or ``production``,
+  folded and trimmed, unset meaning ``development``. A flag would have a third
+  position; 19.1 has exactly two answers to give, and a third setting would
+  only ever be a misspelling of one of them.
+- **An unrecognised mode is refused, not read as development**, deliberately
+  not :func:`app.config.get_local_llm_enabled``'s "off is safe" (D137). This is
+  the one variable that decides whether a fallback is allowed at all, so a
+  typo stops the start-up rather than choosing on the operator's behalf.
+- **A generated key is generated per call and held nowhere**, on
+  :mod:`app.ledger.salts``'s reasoning that a reused secret is not one: two
+  callers handed ``None`` in one process hold two different keys, and a blob
+  written under one cannot be read back with the other. ``MasterKey.generated``
+  is the flag a caller has in order to tell a key worth persisting from one
+  that is not.
+- **One width, pinned at 32**, because AES-GCM is driven at AES-256 here. A
+  width a caller could ask for is a width a caller could ask for too small.
+- **Nothing in ``app/`` ships a fallback key.** The claim is held against the
+  modules and not only against the loader: every value :mod:`app.config` and
+  :mod:`app.storage.master_key` ship is swept for one that could serve as a
+  key -- key-width bytes, or a string that base64-decodes to them -- and 256
+  generated draws are asserted distinct. A ``DEV_KEY`` written beside the
+  loader is a failure of this decision, not a style note.
+- **A key that cannot be read is refused in both modes**, never replaced by a
+  generated one: a store that quietly wrote under a fresh key would leave
+  evidence nobody can open.
+- **A refusal quotes nothing**, on ``app.ledger.signing```'s reasoning: the
+  configured value is the key itself, so every message names the variable or
+  the type. The one value a refusal echoes is the mode name, which is not a
+  secret and is what makes it actionable.
+- **The loader reads no environment.** Both arguments are required rather than
+  defaulted, so a caller cannot store evidence under a key or a mode it never
+  asked for.
+
+**Measured, not asserted** -- 43 cases in
+``backend/tests/unit/test_master_key.py``: a key configured through
+``EVIDENCE_ENCRYPTION_KEY`` is the bytes the operator wrote in either mode;
+unset, blank and whitespace are a refusal in production and a fresh key in
+development; the mode is folded and trimmed by both readers and an unknown one
+is refused by both; a key of the wrong width, a prose key, a hex key, a PEM
+and a half-width key are all refused in development too; a ``MasterKey``
+refuses a non-bytes key, the wrong width, a mode it does not know and a
+non-bool ``generated``; a ``bytearray`` key is copied; ``repr`` carries no key
+in any of its three spellings; nothing either module ships is key-width; and
+256 generated draws are all distinct.  24 mutations of the shipped lines, 24
+killed, every file restored byte-identical afterwards.
+
+**What this forbids.**
+- A fallback key, in any module, in any mode.
+- Reading an unrecognised mode as ``development``.
+- Replacing a malformed or wrongly sized key with a generated one.
+- A ``MasterKey`` naming a mode the loader would have refused.
+- Any part of the configured value in a refusal or in a ``repr``.
+
+**What this leaves.**
+- **Nothing loads a key yet.** 19.1 is the loader alone, so the production
+  refusal fires the first time something asks for a key rather than at
+  start-up. 19.6 is what puts the store in the screening flow, so a deployment
+  running ``APP_ENV=production`` with no key keeps serving until it does.
+- **A generated development key is written nowhere**, so evidence written under
+  it is unreadable after a restart. That is the ledger key consequence (9.13)
+  accepted rather than designed away, and it is why the key is not generated
+  in production at all.
+- **``APP_ENV`` unset means development**, so a deployment that forgets it is a
+  development deployment: the refusal is one variable away, and no task claims
+  reading that variable back out of a deployment.
+
+## D155 -- a run's own trail is its timeline, and a stamp older than that is walked last
+
+**Date:** October 3, 2026. **Status:** settled, task 19.1's verification.
+
+**Context.**
+18.10's case ``test_tiers_come_out_ordered_by_the_instant_they_were_stamped``
+files two ``tier_completed`` events against a real cascade with instants of their
+own, writes them in the opposite order to those instants, and answers ``tier_0``,
+``tier_early``, ``tier_late``.  D151's ordering bullet -- the event's own instant
+and then its id -- puts the cascade's own ``tier_0`` last the moment the wall
+clock passes the instants that case names, so it stopped passing at 09:00 UTC
+on October 3, 2026 and stayed broken.  **The answer was a claim about when the
+suite ran rather than about how a trail is walked**, and only an instant before
+the case's own makes ``tier_0`` the earliest row.
+
+**Decision.**
+- **A run's timeline opens at the instant its ``screening_created`` event
+  carries**, which is the same instant ``app.progress._trace`` already charges
+  the first stage from.  An event stamped before that instant cannot be placed
+  on the run -- a clock that moved backwards, or a row a writer backdated --
+  and is walked last.
+- **Each group keeps D151's order**, the instant and then the id.  A run whose
+  clock never moved is therefore in the order it was written in, unchanged: a
+  rule about a damaged trail, not a reordering of a healthy one.
+- **A run that opened with no ``screening_created`` event of its own has no
+  instant to be behind**, and is left as the trail holds it, so 18.12's case
+  for a stage with nothing before it still reports no window at all.
+- **``app.progress._run_events`` is the one place it happens**, because both
+  readers walk that one tuple -- the sequence 18.10 and 18.11 answer from and
+  the windows 18.12 charges -- and neither grows a second order.
+- **The window over such a stamp still reads as zero**, which is
+  ``app.progress._elapsed_ms``'s existing rule (D153) and is now the order's too.
+
+**Measured, not asserted** -- 18.10's ordering case, 18.11's case that the two
+routes agree after a further tier, and 18.12's backwards-clock case, all green;
+the full backend suite 7023 passed and ``scripts/check-all.ps1`` exits 0; six
+mutations of the shipped lines, six killed, the file restored byte-identical.
+
+**What this forbids.**
+- Ordering a run's events by the stamped instant alone, so that a stamp older
+  than the run's opening instant can lead the sequence.
+- A second ordering anywhere but ``app.progress._run_events``.
+- Dropping or rewriting a backdated event rather than ordering it.
+
+**What this leaves.**
+- **A backdated stamp is ordered, not corrected.**  The stage row still carries
+  the instant the trail holds, which may precede the run, so the trace reports
+  an instant before the run began beside a zero window.
+- **The rule is the reader's and is not written back.**  A trail stamped by one
+  clock and read by another is ordered by whichever clock opened it.
+## D156 -- a per-blob data key is drawn per blob and wrapped under the master key
+
+**Date:** October 3, 2026. **Status:** settled, task 19.2.
+
+**The decision.** :mod:`app.storage.data_key` owns the envelope.
+:func:`~app.storage.data_key.generate_data_key` draws ``DATA_KEY_BYTES`` (32)
+from the OS CSPRNG; :func:`~app.storage.data_key.wrap_data_key` encrypts that
+key under the ``MasterKey`` D154 loaded with AES-GCM, under a nonce drawn per
+wrap; and :func:`~app.storage.data_key.unwrap_data_key` opens it. **A blob is
+therefore readable only by a holder of the master key, and one blob's key is
+worthless for any other blob.**
+
+- **A data key is drawn per blob and held nowhere**, on
+  :mod:`app.ledger.salts`' reasoning that a reused secret is not one. It is
+  never derived from the master key either: a derived key would leave every
+  blob recoverable from the master key alone, which is the property the wrap
+  exists to prevent.
+- **A nonce is drawn, not counted.** AES-GCM leaks its authentication key
+  outright when one nonce repeats under one key, so the nonce comes from the
+  CSPRNG on every wrap. ``DATA_KEY_NONCE_BYTES`` is 12, the width AES-GCM is
+  specified at, and the library accepts any other -- so that width is pinned
+  by a case rather than by the round trip.
+- **The wrapped form has one width.** A ``WrappedDataKey`` is a 12-byte nonce
+  beside ``DATA_KEY_BYTES + DATA_KEY_TAG_BYTES`` (48) of ciphertext, and
+  :meth:`~app.storage.data_key.WrappedDataKey.__post_init__` refuses any other
+  before any cryptography runs. A truncated or padded wrapped value is a
+  refusal rather than a decrypt, and the length a decrypt would have produced
+  is pinned at the same place.
+- **A wrapped key that does not open is refused, never returned.** A wrong
+  master key and an altered wrapped value are one answer from AES-GCM and one
+  answer here: ``DataKeyError`` names both readings and quotes neither key,
+  and it is raised ``from None`` so a traceback carries this module's message
+  and not the library's.
+- **Only a ``MasterKey`` may wrap or open, and only a ``WrappedDataKey`` may
+  be opened.** Raw ``MasterKey.key`` bytes handed to either are a ``TypeError``
+  naming the type, so the attribute is not the API and the width checks cannot
+  be skipped by unwrapping the dataclass.
+- **The module reads no environment.** :func:`~app.storage.master_key.load_master_key` answers the master
+  key and this module is handed one, on
+  D154's reasoning that a key is not read where it is used.
+- **The mode is metadata.** A ``MasterKey`` carrying the same bytes under the
+  other mode opens the same wrapped key: only the bytes decide.
+
+**Measured, not asserted** -- 33 cases in
+``backend/tests/unit/test_data_key.py``: sixty-four generated keys through
+wrap and unwrap and back byte for byte; 256 draws all distinct and none equal
+to the master key they would be wrapped under; one key wrapped twice
+answering two different wrapped forms, both opening to the same key; the
+wrapped form holding neither the data key nor the master key in the clear; the
+widths pinned; a wrong master key, a key of the other mode's spelling and a
+``MasterKey`` handed where a non-``MasterKey`` was refused; a ``bytearray``
+data key and a ``bytearray`` field both copied; a ``repr`` carrying no key in
+hex, base64 or ``repr``; the refusal suppressing its context; and no value
+the module ships being key-width. 23 mutations of the shipped lines, 23
+killed, every file restored byte-identical afterwards -- three survived the
+first pass and the three cases that close them are the ``DATA_KEY_NONCE_BYTES``
+pin, the ``from None`` assertion and the naming of which refusal answered a
+short data key.
+
+**What this forbids.**
+- A data key derived from the master key, held in a module global, or reused
+  between blobs.
+- A nonce that is counted, fixed or reused under one master key.
+- A wrapped form of any other width, or a wrapped value handed to AES-GCM
+  before it is checked.
+- Returning anything at all when the wrapped key did not open.
+- ``MasterKey.key`` bytes, or any value but a ``WrappedDataKey``, as an
+  argument to either half.
+- Reading the environment, or loading a key, from this module.
+
+**What this leaves.**
+- **Nothing wraps a blob yet.** 19.2 is the envelope alone, so the store is
+  still unwritten: 19.3 puts bytes under a data key and 19.6 puts the store in
+  the screening flow.
+- **The wrapped form has no spelling to persist.** ``WrappedDataKey`` is a pair
+  of byte fields and nothing assembles them for storage; 19.3 or 19.6 owns
+  that column or filename, and neither exists yet.
+- **The wrap is bound to nothing but its nonce.** AES-GCM is called with
+  ``None`` as associated data, so a wrapped key is not yet tied to the blob or
+  the hash it belongs to; moving one is not detected. Binding it is a decision
+  about the reference format, which 19.3 designs.
+- **A wrong key and a tampered wrap are indistinguishable here**, deliberately:
+  AES-GCM cannot separate them and a store that tried would be claiming a
+  distinction the primitive does not make.

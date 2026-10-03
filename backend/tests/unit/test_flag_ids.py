@@ -4,7 +4,7 @@ Task 5.3 asks for a module holding a constant for every flag id the system
 uses, and for a test that it exposes no duplicates.  The rest of this file is
 the rest of that claim: that each constant is named after the id it holds, that
 the set the weightset is checked against holds every constant and nothing
-else, that the eight prefixes are the only families, and that no id collides
+else, that the named prefixes are the only families, and that no id collides
 with a name the pipeline already uses -- ``MRZ_LAYOUTS`` and ``DATE_LENGTH``
 are the two that would otherwise be one refactor away from a silent clash.
 
@@ -21,9 +21,11 @@ import pytest
 
 from app.risk import flag_ids, flags
 
-#: The eight families the module is required to hold, stated here rather than
-#: read from ``PREFIXES`` so that widening the list is a deliberate act.
+#: The nine families the module is required to hold, stated here rather than
+#: read from ``PREFIXES`` so that widening the list is a deliberate act.  14.3
+#: opened ``QUALITY``, the capture gate that runs as stage 0.
 NAMED_PREFIXES = (
+    "QUALITY",
     "MRZ",
     "DATE",
     "WATCHLIST",
@@ -126,8 +128,8 @@ def test_the_public_names_are_the_ordered_tuple_and_the_three_tables():
     )
 
 
-def test_the_eight_named_prefixes_are_the_ones_the_module_holds():
-    """A ninth family is a decision about this list, not a string in a module."""
+def test_the_named_prefixes_are_the_ones_the_module_holds():
+    """A family is a decision about this list, not a string in a module."""
     assert tuple(flag_ids.PREFIXES) == NAMED_PREFIXES
 
 

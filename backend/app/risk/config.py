@@ -43,11 +43,16 @@ restated beside one another.
 __all__ = ["LOW_MAX", "REVIEW_MAX"]
 
 #: The highest score still in ``low``.  A score above it is ``review`` or
-#: ``high``, and 7.9 is what draws that line.  **Above any pile of the two
-#: ``low`` rows the vocabulary has** -- they weigh 15 each, so two confirmed
-#: low findings at full strength are 30 and stay low, and a third crosses.
-#: A ``low`` row may therefore never weigh more than this, which is the rule
-#: the test file holds against ``v1.yaml``.
+#: ``high``, and 7.9 is what draws that line.  **Above the pile of the two
+#: tier-1 ``low`` rows the vocabulary has** -- they weigh 15 each, so two
+#: confirmed low findings at full strength are 30 and stay low, and a third
+#: crosses.  A ``low`` row may therefore never weigh more than this, which is
+#: the rule the test file holds against ``v1.yaml``.
+#: **The nine quality rows 14.3 added weigh 5 each, so a pile of ``low`` rows
+#: is no longer one number.**  A capture failing three of the nine checks is
+#: 15 and stays low, and one failing all nine is 45 and reads ``review``: a
+#: capture nothing can be read out of is a screening no officer can clear, and
+#: 34 is not moved here to hide that.
 LOW_MAX = 34.0
 
 #: The highest score still in ``review``.  **One point clear of the heaviest

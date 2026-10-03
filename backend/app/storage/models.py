@@ -2,7 +2,8 @@
 
 Task 8.4 asks for the declarative base and the ``Screening`` row, 8.5 asks
 for the ``AuditEvent`` beside it, and 8.6 for the ``LedgerEntry`` beside
-that, so this module is all three.  :mod:`app.storage.db` holds the engine
+that, and 16.1 for the ``TravelerCase`` beside those, so this module is all
+four.  :mod:`app.storage.db` holds the engine
 and the session factory and nothing else, so a migration (8.8) has one
 module to import and a repository (8.10) has one module to ask for its
 mapped classes.
@@ -56,7 +57,7 @@ over every row rather than over one, so each carries an index.  Neither is
 unique and neither is written by this module: ``band`` is ``None`` on a
 row nothing has scored and two screenings can share an instant, so a
 unique index on either column would refuse rows this table can hold.  The
-other two tables are read by id, which the primary key already serves.
+other three tables are read by id, which the primary key already serves.
 
 **The two names come from :data:`NAMING_CONVENTION` and are not written
 out here.**  ``ix_screenings_created_at`` and ``ix_screenings_band`` fall
@@ -86,6 +87,8 @@ that walk exists to protect.
   ``batch_index`` 10.2 added, then ``created_at``.
 - ``ledger_entries`` carries exactly the five columns the task names, in the
   order it names them, and ``sequence`` is its primary key.
+- ``traveler_cases`` carries exactly the three columns the task names, in the
+  order it names them, and all three of them are required.
 - A row can be written before the analysis has produced anything: only
   ``document_type``, ``filename``, ``image_width`` and ``image_height`` are
   required, and the nine result columns and ``deleted_at`` read back
@@ -120,7 +123,8 @@ that walk exists to protect.
 - No column holds image bytes, and no column is written by anything in this
   module other than the defaults declared above: ``id``, ``created_at`` and
   ``status`` on ``screenings``, ``id`` and ``created_at`` on ``audit_events``,
-  and ``sequence`` and ``anchored_at`` on ``ledger_entries``.
+  ``sequence`` and ``anchored_at`` on ``ledger_entries``, and ``id`` and
+  ``created_at`` on ``traveler_cases``.
 """
 
 import uuid
@@ -143,6 +147,8 @@ __all__ = [
     "SCREENING_STATUSES",
     "SCREENING_TABLE_NAME",
     "Screening",
+    "TRAVELER_CASE_TABLE_NAME",
+    "TravelerCase",
 ]
 
 
@@ -158,6 +164,9 @@ AUDIT_EVENT_TABLE_NAME = "audit_events"
 #: The table the log lives in, under the name 9.12's triggers and 9.16's
 #: ``append_batch`` both name explicitly.
 LEDGER_ENTRY_TABLE_NAME = "ledger_entries"
+
+#: The table a traveler's set of documents lives in, named the same way.
+TRAVELER_CASE_TABLE_NAME = "traveler_cases"
 
 #: Deterministic constraint names, so that 8.7's indexes and 8.8's migration
 #: name the same object on both backends and a ``downgrade`` can find what an
@@ -570,3 +579,38 @@ def _refuse_to_remove_a_ledger_entry(
         f"{LEDGER_ENTRY_TABLE_NAME} is append-only: entry "
         f"{target.sequence} cannot be deleted"
     )
+
+
+class TravelerCase(Base):
+    """One traveler's set of documents, named by the officer who grouped them.
+
+    :param id: an opaque token, defaulted by the ORM.
+    :param created_at: a UTC stamp, defaulted by the ORM.
+    :param label: what the officer called the group; required.
+
+    Carries no match result and no verdict: those are ``crossdoc`` flags in
+    Part 16's stream, so a case that agrees and a case that disagrees are the
+    same three columns.
+    """
+
+    __tablename__ = TRAVELER_CASE_TABLE_NAME
+
+    #: An opaque token, on :attr:`Screening.id`'s reasoning: a case id is
+    #: named beside a screening, and neither should be a counter a stranger
+    #: can walk up.  Stored as a native ``UUID`` where the backend has one and
+    #: as 32 hex characters where it does not.
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+
+    #: When the case was opened, in UTC, on the same clock as the other three
+    #: tables' stamps.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utc_now
+    )
+
+    #: What the officer called this group of documents.  Required, so that a
+    #: case is always findable by name, and never a maximum length: a limit
+    #: written on the column is a limit on PostgreSQL and a decoration on
+    #: SQLite.  Caller-supplied text, so -- like
+    #: :attr:`Screening.filename` -- it is never indexed and never leaves this
+    #: table for a log or a ledger.
+    label: Mapped[str] = mapped_column()

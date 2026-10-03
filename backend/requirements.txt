@@ -4,6 +4,11 @@ python-multipart>=0.0.9,<1
 numpy>=1.24,<3
 opencv-python-headless>=4.8,<5
 Pillow>=10,<13
+# tier 2 fits the per-document IsolationForest on a committed feature fixture
+# (app.pipeline.tier2.anomaly)
+scikit-learn>=1.3,<2
+# tier 1 reads the 2D barcode off a document (app.pipeline.tier1.barcode)
+zxing-cpp>=2.3,<4
 # the risk engine reads its weightsets from YAML (app.risk.weightsets.loader)
 pyyaml>=6,<7
 # persistence: the ORM and its migration tool (app.storage, Part 8)

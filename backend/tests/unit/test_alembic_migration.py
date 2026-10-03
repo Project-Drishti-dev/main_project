@@ -48,6 +48,7 @@ from app.storage.models import (
     LEDGER_ENTRY_TABLE_NAME,
     NAMING_CONVENTION,
     SCREENING_TABLE_NAME,
+    TRAVELER_CASE_TABLE_NAME,
     Base,
     Screening,
 )
@@ -66,7 +67,12 @@ VERSIONS_DIR = ALEMBIC_INI.parent / "alembic" / "versions"
 #: The three tables 8.4 to 8.7 mapped, against the one alembic keeps of its
 #: own, so "the schema is here" is a set rather than three remembered names.
 APPLICATION_TABLES = frozenset(
-    {SCREENING_TABLE_NAME, AUDIT_EVENT_TABLE_NAME, LEDGER_ENTRY_TABLE_NAME}
+    {
+        SCREENING_TABLE_NAME,
+        AUDIT_EVENT_TABLE_NAME,
+        LEDGER_ENTRY_TABLE_NAME,
+        TRAVELER_CASE_TABLE_NAME,
+    }
 )
 
 
@@ -207,6 +213,7 @@ def test_upgrade_head_is_idempotent(fresh_database: pathlib.Path) -> None:
             SCREENING_TABLE_NAME,
             AUDIT_EVENT_TABLE_NAME,
             LEDGER_ENTRY_TABLE_NAME,
+            TRAVELER_CASE_TABLE_NAME,
             "alembic_version",
         }
     finally:
@@ -245,6 +252,7 @@ def test_the_migrated_schema_matches_the_models(
         (SCREENING_TABLE_NAME, 16),
         (AUDIT_EVENT_TABLE_NAME, 10),
         (LEDGER_ENTRY_TABLE_NAME, 5),
+        (TRAVELER_CASE_TABLE_NAME, 3),
     ],
 )
 def test_every_table_lands_with_the_columns_its_model_declares(

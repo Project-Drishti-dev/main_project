@@ -10,7 +10,7 @@ MIN_COVERAGE = 0.25
 MAX_COVERAGE = 0.95
 
 
-def _order(pts):
+def order_card_corners(pts):
     pts = np.array(pts, dtype=np.float32).reshape(4, 2)
     s, d = pts.sum(1), np.diff(pts, axis=1).ravel()
     return np.array([pts[np.argmin(s)], pts[np.argmin(d)], pts[np.argmax(s)], pts[np.argmax(d)]], np.float32)
@@ -45,7 +45,7 @@ def find_card(img, min_area_frac=0.03):
         pts, method = approx.reshape(4, 2), "quad"
     else:
         pts, method = cv2.boxPoints(cv2.minAreaRect(best)), "rect"
-    pts_full = _order(pts / scale)
+    pts_full = order_card_corners(pts / scale)
     mg = 0.005
     touches = bool(((pts_full[:, 0] < mg * w) | (pts_full[:, 0] > (1 - mg) * w) |
                     (pts_full[:, 1] < mg * h) | (pts_full[:, 1] > (1 - mg) * h)).any())

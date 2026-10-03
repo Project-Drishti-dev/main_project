@@ -55,6 +55,7 @@ THE_ANSWER_FIELDS = (
     "summary",
     "flags",
     "contributions",
+    "stage_trace",
 )
 
 #: The twelve a stored finding carries, as 5.2's own record holds them.

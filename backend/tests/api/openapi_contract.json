@@ -1,0 +1,1954 @@
+{
+  "/api/analyze": {
+    "post": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "image": {
+                  "properties": {
+                    "height": {
+                      "title": "Height",
+                      "type": "integer"
+                    },
+                    "width": {
+                      "title": "Width",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "width",
+                    "height"
+                  ],
+                  "title": "ImageDimensions",
+                  "type": "object"
+                },
+                "mode": {
+                  "enum": [
+                    "photo",
+                    "scan"
+                  ],
+                  "title": "Mode",
+                  "type": "string"
+                },
+                "modules": {
+                  "items": {
+                    "properties": {
+                      "details": {
+                        "additionalProperties": true,
+                        "title": "Details",
+                        "type": "object"
+                      },
+                      "label": {
+                        "title": "Label",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "photo",
+                          "scan"
+                        ],
+                        "title": "Mode",
+                        "type": "string"
+                      },
+                      "module": {
+                        "title": "Module",
+                        "type": "string"
+                      },
+                      "passed": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Passed"
+                      },
+                      "reasons": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "title": "Reasons",
+                        "type": "array"
+                      },
+                      "rule": {
+                        "title": "Rule",
+                        "type": "string"
+                      },
+                      "score": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Score"
+                      },
+                      "unit": {
+                        "title": "Unit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "module",
+                      "label",
+                      "score",
+                      "unit",
+                      "passed",
+                      "rule",
+                      "reasons",
+                      "details",
+                      "mode"
+                    ],
+                    "title": "ModuleResult",
+                    "type": "object"
+                  },
+                  "title": "Modules",
+                  "type": "array"
+                },
+                "overall_pass": {
+                  "title": "Overall Pass",
+                  "type": "boolean"
+                },
+                "trim_box": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "integer"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Trim Box"
+                }
+              },
+              "required": [
+                "mode",
+                "image",
+                "trim_box",
+                "overall_pass",
+                "modules"
+              ],
+              "title": "AnalysisResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "413": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "415": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/audit/{audit_id}/verify": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "audit_id": {
+                  "format": "uuid",
+                  "title": "Audit Id",
+                  "type": "string"
+                },
+                "batch_id": {
+                  "anyOf": [
+                    {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Batch Id"
+                },
+                "batch_root": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Batch Root"
+                },
+                "checked": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Checked",
+                  "type": "array"
+                },
+                "proof_length": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Proof Length"
+                },
+                "status": {
+                  "enum": [
+                    "verified",
+                    "altered",
+                    "unknown"
+                  ],
+                  "title": "Status",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "audit_id",
+                "status",
+                "batch_id",
+                "batch_root",
+                "proof_length",
+                "checked"
+              ],
+              "title": "AuditVerificationResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "items": {
+                  "items": {
+                    "properties": {
+                      "band": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Band"
+                      },
+                      "created_at": {
+                        "format": "date-time",
+                        "title": "Created At",
+                        "type": "string"
+                      },
+                      "document_type": {
+                        "title": "Document Type",
+                        "type": "string"
+                      },
+                      "score": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Score"
+                      },
+                      "screening_id": {
+                        "format": "uuid",
+                        "title": "Screening Id",
+                        "type": "string"
+                      },
+                      "status": {
+                        "title": "Status",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "screening_id",
+                      "status",
+                      "document_type",
+                      "created_at",
+                      "score",
+                      "band"
+                    ],
+                    "title": "ScreeningListItemResponse",
+                    "type": "object"
+                  },
+                  "title": "Items",
+                  "type": "array"
+                },
+                "limit": {
+                  "title": "Limit",
+                  "type": "integer"
+                },
+                "offset": {
+                  "title": "Offset",
+                  "type": "integer"
+                },
+                "total": {
+                  "title": "Total",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "items",
+                "total",
+                "offset",
+                "limit"
+              ],
+              "title": "ScreeningListResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "post": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "audit_id": {
+                  "format": "uuid",
+                  "title": "Audit Id",
+                  "type": "string"
+                },
+                "screening_id": {
+                  "format": "uuid",
+                  "title": "Screening Id",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "screening_id",
+                "audit_id"
+              ],
+              "title": "ScreeningCreatedResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "413": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "415": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings/{screening_id}": {
+    "delete": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "deleted_at": {
+                  "format": "date-time",
+                  "title": "Deleted At",
+                  "type": "string"
+                },
+                "screening_id": {
+                  "format": "uuid",
+                  "title": "Screening Id",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "screening_id",
+                "deleted_at"
+              ],
+              "title": "ScreeningDeletedResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "band": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Band"
+                },
+                "contributions": {
+                  "items": {
+                    "properties": {
+                      "contribution": {
+                        "title": "Contribution",
+                        "type": "number"
+                      },
+                      "id": {
+                        "title": "Id",
+                        "type": "string"
+                      },
+                      "value": {
+                        "title": "Value",
+                        "type": "number"
+                      },
+                      "weight": {
+                        "title": "Weight",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "weight",
+                      "value",
+                      "contribution"
+                    ],
+                    "title": "ScreeningContributionResponse",
+                    "type": "object"
+                  },
+                  "title": "Contributions",
+                  "type": "array"
+                },
+                "created_at": {
+                  "format": "date-time",
+                  "title": "Created At",
+                  "type": "string"
+                },
+                "document_type": {
+                  "title": "Document Type",
+                  "type": "string"
+                },
+                "flags": {
+                  "items": {
+                    "properties": {
+                      "confidence": {
+                        "title": "Confidence",
+                        "type": "number"
+                      },
+                      "expected": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Expected"
+                      },
+                      "field": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Field"
+                      },
+                      "found": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Found"
+                      },
+                      "id": {
+                        "title": "Id",
+                        "type": "string"
+                      },
+                      "label": {
+                        "title": "Label",
+                        "type": "string"
+                      },
+                      "reason": {
+                        "title": "Reason",
+                        "type": "string"
+                      },
+                      "region": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "items": {
+                                "type": "integer"
+                              },
+                              "type": "array"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Region"
+                      },
+                      "source_module": {
+                        "title": "Source Module",
+                        "type": "string"
+                      },
+                      "tier": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ],
+                        "title": "Tier"
+                      },
+                      "value": {
+                        "title": "Value",
+                        "type": "number"
+                      },
+                      "weight_band": {
+                        "title": "Weight Band",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "tier",
+                      "label",
+                      "weight_band",
+                      "value",
+                      "confidence",
+                      "region",
+                      "expected",
+                      "found",
+                      "reason",
+                      "source_module",
+                      "field"
+                    ],
+                    "title": "ScreeningFlagResponse",
+                    "type": "object"
+                  },
+                  "title": "Flags",
+                  "type": "array"
+                },
+                "image": {
+                  "properties": {
+                    "height": {
+                      "title": "Height",
+                      "type": "integer"
+                    },
+                    "width": {
+                      "title": "Width",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "width",
+                    "height"
+                  ],
+                  "title": "ImageDimensions",
+                  "type": "object"
+                },
+                "model_versions": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Model Versions"
+                },
+                "ruleset_version": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Ruleset Version"
+                },
+                "score": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Score"
+                },
+                "screening_id": {
+                  "format": "uuid",
+                  "title": "Screening Id",
+                  "type": "string"
+                },
+                "stage_trace": {
+                  "properties": {
+                    "stages": {
+                      "items": {
+                        "properties": {
+                          "elapsed_ms": {
+                            "anyOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "title": "Elapsed Ms"
+                          },
+                          "recorded_at": {
+                            "format": "date-time",
+                            "title": "Recorded At",
+                            "type": "string"
+                          },
+                          "tier": {
+                            "title": "Tier",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tier",
+                          "recorded_at",
+                          "elapsed_ms"
+                        ],
+                        "title": "ScreeningStageTimingResponse",
+                        "type": "object"
+                      },
+                      "title": "Stages",
+                      "type": "array"
+                    },
+                    "total_ms": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "title": "Total Ms"
+                    }
+                  },
+                  "required": [
+                    "total_ms",
+                    "stages"
+                  ],
+                  "title": "ScreeningStageTraceResponse",
+                  "type": "object"
+                },
+                "status": {
+                  "title": "Status",
+                  "type": "string"
+                },
+                "summary": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Summary"
+                }
+              },
+              "required": [
+                "screening_id",
+                "status",
+                "document_type",
+                "created_at",
+                "image",
+                "score",
+                "band",
+                "ruleset_version",
+                "model_versions",
+                "summary",
+                "flags",
+                "contributions",
+                "stage_trace"
+              ],
+              "title": "ScreeningResultResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings/{screening_id}/decision": {
+    "post": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "action": {
+                  "title": "Action",
+                  "type": "string"
+                },
+                "decision_id": {
+                  "format": "uuid",
+                  "title": "Decision Id",
+                  "type": "string"
+                },
+                "override": {
+                  "title": "Override",
+                  "type": "boolean"
+                },
+                "remark": {
+                  "title": "Remark",
+                  "type": "string"
+                },
+                "screening_id": {
+                  "format": "uuid",
+                  "title": "Screening Id",
+                  "type": "string"
+                },
+                "status": {
+                  "title": "Status",
+                  "type": "string"
+                },
+                "supersedes": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Supersedes"
+                }
+              },
+              "required": [
+                "screening_id",
+                "action",
+                "remark",
+                "override",
+                "decision_id",
+                "status",
+                "supersedes"
+              ],
+              "title": "DecisionResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings/{screening_id}/progress": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "events": {
+                  "items": {
+                    "properties": {
+                      "module": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Module"
+                      },
+                      "screening_id": {
+                        "format": "uuid",
+                        "title": "Screening Id",
+                        "type": "string"
+                      },
+                      "state": {
+                        "title": "State",
+                        "type": "string"
+                      },
+                      "tier": {
+                        "title": "Tier",
+                        "type": "string"
+                      },
+                      "unit": {
+                        "title": "Unit",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "screening_id",
+                      "unit",
+                      "state",
+                      "tier",
+                      "module"
+                    ],
+                    "title": "ProgressStepResponse",
+                    "type": "object"
+                  },
+                  "title": "Events",
+                  "type": "array"
+                },
+                "screening_id": {
+                  "format": "uuid",
+                  "title": "Screening Id",
+                  "type": "string"
+                },
+                "units": {
+                  "title": "Units",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "screening_id",
+                "units",
+                "events"
+              ],
+              "title": "ScreeningProgressResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings/{screening_id}/progress/stream": {
+    "get": {
+      "200": {
+        "content": {
+          "text/event-stream": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "500": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/screenings/{screening_id}/report": {
+    "get": {
+      "200": {
+        "content": {
+          "text/html": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/api/version": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "app_version": {
+                  "title": "App Version",
+                  "type": "string"
+                },
+                "model_versions": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Model Versions",
+                  "type": "object"
+                },
+                "prompt_version": {
+                  "title": "Prompt Version",
+                  "type": "string"
+                },
+                "ruleset_version": {
+                  "title": "Ruleset Version",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "app_version",
+                "ruleset_version",
+                "model_versions",
+                "prompt_version"
+              ],
+              "title": "VersionResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/health": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "status": {
+                  "const": "ok",
+                  "title": "Status",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "title": "HealthResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  },
+  "/ready": {
+    "get": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "checks": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Checks",
+                  "type": "array"
+                },
+                "status": {
+                  "const": "ready",
+                  "title": "Status",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "checks"
+              ],
+              "title": "ReadinessResponse",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "properties": {
+                "error": {
+                  "properties": {
+                    "code": {
+                      "title": "Code",
+                      "type": "string"
+                    },
+                    "message": {
+                      "title": "Message",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "title": "ErrorDetail",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "error"
+              ],
+              "title": "ErrorResponse",
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  }
+}

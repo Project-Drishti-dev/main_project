@@ -8,10 +8,11 @@ somewhere: the constant is named after the id it holds, so reading
 the same lookup and cannot drift apart.
 
 :data:`FLAG_IDS` is the set 7.1's weightset completeness test is written
-against, and :data:`PREFIXES` is the list of the eight families those ids are
+against, and :data:`PREFIXES` is the list of the nine families those ids are
 named in.  **The prefixes are the only source of truth for the families**, so a
-ninth family -- a barcode finding, a quality-gate finding -- is a change to
-this list rather than a string somebody typed in a module and hoped for.
+tenth family is a change to this list rather than a string somebody typed in a
+module and hoped for.  14.3 opened the ninth: the quality gate's nine checks
+run as stage 0, and a check that failed is a finding of its own.
 
 **An id names a rule, not a condition and not a field.**  The four date rules of
 5.4 to 5.7 hold four ids however many ways each can fire, and one printed
@@ -25,10 +26,48 @@ frontend payload all read this list, and none of them should have to import
 OpenCV to learn what a flag may be called.
 """
 
-#: The eight families, in the order the tiers run: tier 0, tier 1, tier 2,
-#: then the cross-document rules.  Ordered rather than a set because the order
-#: is the cascade, and a test reads the ids back against it.
-PREFIXES = ("MRZ", "DATE", "WATCHLIST", "OCR", "LAYOUT", "FACE", "TAMPER", "CROSSDOC")
+#: The nine families, in the order the cascade runs them: the quality gate
+#: first, then tier 0, tier 1, tier 2, then the cross-document rules.  Ordered
+#: rather than a set because the order is the cascade, and a test reads the ids
+#: back against it.
+PREFIXES = (
+    "QUALITY",
+    "MRZ",
+    "DATE",
+    "WATCHLIST",
+    "OCR",
+    "LAYOUT",
+    "FACE",
+    "TAMPER",
+    "CROSSDOC",
+)
+
+# --- QUALITY: the capture gate's nine checks, which run as stage 0 (14.3) ---
+
+#: The capture is too blurred to read, against the sharpness module's own floor.
+#: **A statement about the photograph rather than about the document**, and
+#: weighted as one: it says this image of the page cannot be judged, never that
+#: the page is forged.
+QUALITY_BLUR = "QUALITY_BLUR"
+#: The capture carries sensor noise above the noise module's own ceiling.
+QUALITY_NOISE = "QUALITY_NOISE"
+#: The capture is under- or over-exposed against the exposure module's band.
+QUALITY_EXPOSURE = "QUALITY_EXPOSURE"
+#: The page is lit unevenly enough that one part of it reads darker than the
+#: rest, so a field's ink is judged against a background that moved.
+QUALITY_UNEVEN_LIGHTING = "QUALITY_UNEVEN_LIGHTING"
+#: A reflection covers enough of the card to hide what is underneath it.
+QUALITY_GLARE = "QUALITY_GLARE"
+#: The capture resolves fewer pixels per inch than the page is read at.
+QUALITY_LOW_RESOLUTION = "QUALITY_LOW_RESOLUTION"
+#: The page is photographed or scanned far off its own plane, so its lines run
+#: at an angle no reading of it expects.
+QUALITY_SKEW = "QUALITY_SKEW"
+#: The card fills too little of the frame to be read out of what was captured.
+QUALITY_LOW_COVERAGE = "QUALITY_LOW_COVERAGE"
+#: An edge of the card is cut off, so part of the page is not in the frame at
+#: all rather than merely hard to see.
+QUALITY_CROPPED = "QUALITY_CROPPED"
 
 # --- MRZ: the printed check digits, one id per digit the standard defines ---
 
@@ -132,6 +171,15 @@ CROSSDOC_FACE_MISMATCH = "CROSSDOC_FACE_MISMATCH"
 #: a new id is one constant above and one name here, and
 #: ``test_flag_ids.py`` holds the two apart.
 ALL_FLAG_IDS = (
+    QUALITY_BLUR,
+    QUALITY_NOISE,
+    QUALITY_EXPOSURE,
+    QUALITY_UNEVEN_LIGHTING,
+    QUALITY_GLARE,
+    QUALITY_LOW_RESOLUTION,
+    QUALITY_SKEW,
+    QUALITY_LOW_COVERAGE,
+    QUALITY_CROPPED,
     MRZ_DOCUMENT_NUMBER_CHECK_DIGIT_MISMATCH,
     MRZ_DOB_CHECK_DIGIT_MISMATCH,
     MRZ_EXPIRY_CHECK_DIGIT_MISMATCH,

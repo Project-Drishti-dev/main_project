@@ -882,32 +882,42 @@ result, and every event is independently verifiable.
   test asserting a 404 body matches the existing `{error:{code,message}}` shape.
   Verify: the new test passes.
       — verified: 20 new cases hold every refusal of the three new endpoints to one `{"error":{"code","message"}}` body, and an app-level handler answers a fault no route caught in it too (D74); 4104 backend (was 4084), check-all.ps1 exits 0.
-- [ ] **11.5** Add request-id middleware that stamps every request and returns
+- [x] **11.5** Add request-id middleware that stamps every request and returns
   the id in a response header, with a test.
   Verify: the new test passes.
-- [ ] **11.6** Convert the API logging to structured JSON including the request
+      — verified: 30 new cases stamp all four answers, adopt a caller's id and refuse one that is not id-shaped; 4134 backend (was 4104), check-all.ps1 exits 0 (D75).
+- [x] **11.6** Convert the API logging to structured JSON including the request
   id and elapsed time, with a test asserting a log line parses as JSON.
   Verify: the new test passes.
-- [ ] **11.7** Add a test asserting no log line ever contains image bytes, an
+      — verified: `app/logging_config.py` (JSON formatter, ambient request id, `log_event`) and `app/api/request_logging.py` (one timed line per request), all five prose log sites converted; `LOG_LEVEL` read by `app/config.py`. 32 new cases; removing the middleware turns 11 red, dropping the id 5, pinning `elapsed_ms` to zero 1. 4166 backend tests (was 4134); `check-all.ps1` exits 0. `D76`.
+- [x] **11.7** Add a test asserting no log line ever contains image bytes, an
   OCR string, or an embedding.
-  Verify: the new test passes.
-- [ ] **11.8** Add per-IP rate limiting to the analysis endpoints with a
+  -- verified: 9 new cases pass; check-all.ps1 exits 0 (4175 backend tests)
+- [x] **11.8** Add per-IP rate limiting to the analysis endpoints with a
   configurable limit, and a test that the N+1th request in a window is
   rejected with the standard error envelope.
   Verify: the new test passes.
-- [ ] **11.9** Keep and re-verify the existing upload size and pixel caps on the
+      — verified: 31 new cases; taking either guard off, refusing at N rather than N+1, keying on a forwarded-for header, or freezing the window each turns tests red; 4206 backend tests (was 4175), check-all.ps1 exits 0 (D78).
+- [x] **11.9** Keep and re-verify the existing upload size and pixel caps on the
   new endpoint, with a test for each.
   Verify: the new tests pass.
-- [ ] **11.10** Add `GET /api/version` returning app, ruleset, model and prompt
+        — verified: 10 new cases in `backend/tests/api/test_upload_caps_api.py` hold both caps at their edges on `POST /api/screenings`; writing either as `>=`, moving either, dropping either, or capping a side instead of the area turns tests red; 4216 backend tests (was 4206), check-all.ps1 exits 0.
+- [x] **11.10** Add `GET /api/version` returning app, ruleset, model and prompt
   versions from `version.py`, with a test.
   Verify: the new test passes.
-- [ ] **11.11** Split liveness (`/health`) from readiness (`/ready`, which
+        — verified: 7 new cases in `backend/tests/api/test_version_api.py` hold each key to its own constant; swapping two, binding at import, answering a literal, spending the rate-limit budget or dropping the models turns tests red; `MODEL_VERSIONS` added to `version.py` (D79); 4224 backend tests (was 4216), check-all.ps1 exits 0.
+- [x] **11.11** Split liveness (`/health`) from readiness (`/ready`, which
   checks the database and ledger), with a test that `/ready` fails when the
   database is unreachable.
   Verify: the new test passes.
-- [ ] **11.12** Write the OpenAPI contract test that snapshots the response
+        — verified: 6 new cases in `backend/tests/api/test_health_api.py`; `/health` answers 200 while the database is unopenable and `/ready` answers 503 naming the check that failed -- for an unreachable database and for a reachable one
+        whose ledger table is gone; dropping the ledger check, letting the driver fault through, answering 500,
+        naming the wrong check, bypassing `get_sessions` or giving `/health` a session each turns them red; `routes_health.py` holds both;
+        4229 backend tests (was 4224), check-all.ps1 exits 0.
+- [x] **11.12** Write the OpenAPI contract test that snapshots the response
   schemas of all endpoints, so an unplanned shape change fails the suite.
   Verify: the new test passes, and fails if you add a field without updating it.
+    -- verified: 3 cases in `backend/tests/api/test_openapi_contract.py` against the committed `openapi_contract.json`; adding a field to `ImageDimensions` or dropping `/ready`'s 503 turns it red with a diff.
 
 **Gate 11:** Tier 0 is reachable over HTTP, rate-limited, logged without
 identity data, and its contract is pinned by a test.
@@ -916,61 +926,80 @@ identity data, and its contract is pinned by a test.
 
 # Part 12 — Tier 1: OCR and field extraction
 
-- [ ] **12.1** Create `backend/app/pipeline/tier1/__init__.py` and
+- [x] **12.1** Create `backend/app/pipeline/tier1/__init__.py` and
   `ocr.py` with an `OcrWord` model (text, bbox, confidence) and an `OcrResult`
   model (words, mean confidence), with a test constructing both.
   Verify: the new test passes.
-- [ ] **12.2** Define the `OcrEngine` interface with a `read(image) -> OcrResult`
+  — verified: the module was absent when 12.2 began and was restored with this test; test_ocr.py passes.
+- [x] **12.2** Define the `OcrEngine` interface with a `read(image) -> OcrResult`
   method, and a test asserting a stub satisfies it.
   Verify: the new test passes.
-- [ ] **12.3** Implement `TesseractEngine` behind the interface, reporting
+  — verified: 17 tests in `backend/tests/unit/test_ocr.py` pass; check-all.ps1 exits 0.
+- [x] **12.3** Implement `TesseractEngine` behind the interface, reporting
   itself unavailable rather than raising when the binary is missing.
   Verify: the availability test passes on a machine with and without Tesseract.
-- [ ] **12.4** Implement `EasyOcrEngine` behind the same interface with the
+      — verified: 31 tests pass with neither `tesseract` nor `pytesseract` installed, and pass again with both simulated on PATH/PYTHONPATH; 5 mutations each fail a named test; `check-all.ps1` exits 0 (4280 backend, 45 frontend, build).
+- [x] **12.4** Implement `EasyOcrEngine` behind the same interface with the
   same unavailable-rather-than-raising behaviour.
   Verify: the new test passes.
-- [ ] **12.5** Write `select_engine(preference)` that honours an explicit
+      — verified: 35 tests in backend/tests/unit/test_easyocr_engine.py pass; 8 mutations each fail a named test; check-all.ps1 exits 0 (4315 backend, 45 frontend, build).
+- [x] **12.5** Write `select_engine(preference)` that honours an explicit
   preference, otherwise picks the first available engine, and returns `None`
   when none is available.
   Verify: tests for explicit-unavailable, first-available, and none-available.
-- [ ] **12.6** Add a test asserting Tier 1 degrades to "ocr unavailable" and the
+      — verified: 41 tests in `backend/tests/unit/test_selection.py` cover the three cases, the order, non-substitution and the refusals; 9 mutations each fail a named test; `selection.py` added and D85 settled; `check-all.ps1` exits 0 (4356 backend, 45 frontend, build).
+- [x] **12.6** Add a test asserting Tier 1 degrades to "ocr unavailable" and the
   screening still completes — a missing OCR engine must not fail the document.
   Verify: the new test passes.
-- [ ] **12.7** Build a synthetic document image fixture that renders known field
+      — verified: 22 tests in backend/tests/unit/test_tier1_runner.py over the new run_tier1; 10 mutations each fail a named test; 
+unner.py + D86 added; check-all.ps1 exits 0 (4378 backend, 45 frontend, build).
+- [x] **12.7** Build a synthetic document image fixture that renders known field
   labels and values (name, passport number, DOB, expiry) at a known size, for
   use by every OCR test in this part.
   Verify: the fixture renders and its own test confirms the expected text is
   present in the source description.
-- [ ] **12.8** Write `re_read_field(image, region, engine)` that crops to the
+      — verified: 32 tests in backend/tests/unit/test_document_images.py over the new document_images fixture; 10 mutations each fail a named test; D87 settled; check-all.ps1 exits 0 (4410 backend, 45 frontend, build).
+
+- [x] **12.8** Write `re_read_field(image, region, engine)` that crops to the
   field region, upscales, re-thresholds, and re-runs OCR on just that region.
   Verify: a test asserting a small field reads correctly after re-read.
-- [ ] **12.9** Write the confidence gate: below `OCR_CONFIDENCE_THRESHOLD`, re-read
+      — `reread.py` held only a placeholder and was replaced; 22 of the 37 cases in `test_reread.py` pin the field's own `value_box`, the 3x enlargement, the Otsu re-threshold, the three-channel hand-back and thirteen refused regions.
+- [x] **12.9** Write the confidence gate: below `OCR_CONFIDENCE_THRESHOLD`, re-read
   once, then try the fallback engine, and only then report low confidence.
   Verify: a test with a deliberately blurred field asserts the re-read path is
   taken.
-- [ ] **12.10** Add the anti-false-alarm test that the abstract requires: a field
+      — the same file's other 15 cases; `gate_field` pins `>=` at the boundary, re-read once, the fallback on the *same* crop, and `low_confidence` only after both; 11 mutations across both files each fail a named test; D88 settled.
+- [x] **12.10** Add the anti-false-alarm test that the abstract requires: a field
   which is merely misread must be re-read correctly and must **not** produce a
   flag.
   Verify: the new test passes — this is the most important test in Part 12.
-- [ ] **12.11** Define the per-document-type anchor-word and regex table for
+      — 13 tests in `test_false_alarm.py`; "no flag" is pinned as the gate owing nothing plus the module holding no `app.risk` import, since 12.15 has not been written; a gate that keeps the page read fails 8 tests across the two files.
+- [x] **12.11** Define the per-document-type anchor-word and regex table for
   visible-text field extraction (label text → field), starting with passport.
   Verify: a test extracting all four fields from the fixture.
-- [ ] **12.12** Add the same table for visa and for national ID, with a test each.
+      — verified: 70 tests in test_fields.py extract all four fields off the fixture page; 9 of 11 mutants of fields.py each fail a named test; check-all.ps1 exits 0 (4530 backend, 45 frontend, build).
+- [x] **12.12** Add the same table for visa and for national ID, with a test each.
+      — verified: 4563 backend tests, check-all.ps1 exits 0.
   Verify: the new tests pass.
-- [ ] **12.13** Normalise extracted values per field type — dates to ISO, names
+- [x] **12.13** Normalise extracted values per field type — dates to ISO, names
   uppercased and transliterated, numbers stripped of spaces — with a test per
   type.
   Verify: the new tests pass.
-- [ ] **12.14** Return every extracted field with the image region it came from,
+      — verified: 62 new cases in `test_fields.py` (165 in the file, was 103) and 4625 backend tests (was 4563); 13 of 14 mutants of the three normalisers each fail a named test, the 14th being equivalent (`str(date)` is `isoformat()`); `check-all.ps1` exits 0 (4625 backend, 45 frontend, build).
+- [x] **12.14** Return every extracted field with the image region it came from,
   so a later mismatch can be pointed at.
   Verify: a test asserting each field's region is non-null.
-- [ ] **12.15** Write `compare_to_mrz(ocr_fields, mrz_document, tolerance)` that
+      — verified: ExtractedFields carries a required `regions`, non-null for every field a printed page carries; 26 new cases in test_fields.py (191 in the file, was 165) over all three tables; 6 of 6 mutants of the new code each fail a named test; D92 settled.
+- [x] **12.15** Write `compare_to_mrz(ocr_fields, mrz_document, tolerance)` that
   emits one flag per mismatched field, each carrying the OCR field's region and
   expected/found values, with transliteration tolerance for names.
   Verify: a test altering the printed DOB yields exactly one mismatch flag.
-- [ ] **12.16** Add a test that a name differing only by diacritics or spacing
+        — verified: `mismatch.compare_to_mrz` in 52 new cases in test_mismatch.py;
+4703 backend tests (was 4651); 18 of 18 mutants of the new code killed, the 2 first-sweep survivors
+answered by real fixes; D93 settled.
+- [x] **12.16** Add a test that a name differing only by diacritics or spacing
   does **not** produce a mismatch flag.
-  Verify: the new test passes.
+  — verified: 3 tests (2 net new); check-all.ps1 exits 0, 4705 backend tests.
 
 **Gate 12:** a printed-field alteration is caught with a region, and a
 low-confidence misread is re-read instead of being flagged.
@@ -979,57 +1008,74 @@ low-confidence misread is re-read instead of being flagged.
 
 # Part 13 — Tier 1: barcode, template, layout, face
 
-- [ ] **13.1** Define the `BarcodeDecoder` interface and implement it with
+- [x] **13.1** Define the `BarcodeDecoder` interface and implement it with
   `zxing-cpp` (or `pyzbar` if already present), reporting unavailability rather
   than raising.
   Verify: an availability test passes.
-- [ ] **13.2** Generate a QR containing a known payload in a test, decode it, and
+      — **this box had no barcode code at all when 13.3 asked for one**, so the tick above was written with nothing behind it; `tier1/barcode.py` and `test_barcode.py` are new here, `zxing-cpp` is declared in `requirements.txt`, and no new decision was needed because `D82`/`D83` already hold the shape. 13 tests, `check-all.ps1` exits 0 (4747 backend).
+- [x] **13.2** Generate a QR containing a known payload in a test, decode it, and
   assert the payload round-trips.
   Verify: the new test passes.
-- [ ] **13.3** Compare the decoded barcode payload against the printed field it
+      — a QR carrying the TD3 specimen is drawn by the same binding that decodes it and read back whole, whitespace and newline included; part of `test_barcode.py`'s 13 tests.
+- [x] **13.3** Compare the decoded barcode payload against the printed field it
   is expected to match, and emit a flag on disagreement.
   Verify: a test with a deliberately mismatched QR passes.
-- [ ] **13.4** Define a template as a reference image plus field rectangles in a
+      — `mismatch.compare_to_barcode` reads the payload as a TD3 zone and answers one `OCR_BARCODE_MISMATCH` per disagreeing field; 45 new tests (38 to 83), 12 of 12 mutants killed, `check-all.ps1` exits 0.
+- [x] **13.4** Define a template as a reference image plus field rectangles in a
   JSON file, and write a loader that reads `backend/app/pipeline/tier1/templates/`.
   Verify: a test loads a committed template.
-- [ ] **13.5** Add a test that adding a new document type requires only a new
+      -- `templates/loader.py` reads the shipped `passport_td3.json` and its own
+      `passport_td3.png` as package resources and takes the frame off the image
+      rather than off the file; 39 new tests, `check-all.ps1` exits 0 (4786).
+- [x] **13.5** Add a test that adding a new document type requires only a new
   JSON file, with no Python change.
   Verify: the new test passes.
-- [ ] **13.6** Implement document corner detection and corner ordering, with a
+      -- an invented type loads through `load_template` with nothing under `app/` naming it or its fields; both tests confirmed to fail under a registry and under a name table; `check-all.ps1` exits 0 (4788).
+- [x] **13.6** Implement document corner detection and corner ordering, with a
   test on a synthetic quadrilateral document.
   Verify: the new test passes.
-- [ ] **13.7** Compute a homography from the detected corners to the template's
+        -- the search is `m8_coverage.find_card` called rather than copied, and its
+        fitted rectangle reads as no corners; 12 new tests, `check-all.ps1` exits 0 (4800).
+- [x] **13.7** Compute a homography from the detected corners to the template's
   corners and warp the document into template space, with a test on a rotated
   synthetic document.
   Verify: the new test passes and the warped result is close to the template.
-- [ ] **13.8** Store the per-document field tolerances (position, size, rotation
+      -- verified: 12 new tests in `test_align.py`, `check-all.ps1` exits 0 (4812 backend tests, was 4800); 7 of 8 mutants killed, the filter named in `D97` and deliberately unpinned.
+- [x] **13.8** Store the per-document field tolerances (position, size, rotation
   allowed) in the template JSON, with a test asserting every field has one.
   Verify: the new test passes.
-- [ ] **13.9** Score per-field position deviation in aligned space and emit a
+      -- verified: 3 new tests in `test_template_loader.py`, `check-all.ps1` exits 0 (4815 backend tests, was 4812); all three fail when the tolerances are stripped from the file.
+- [x] **13.9** Score per-field position deviation in aligned space and emit a
   `LAYOUT_DEVIATION` flag with the field's region when it exceeds tolerance.
-  Verify: a test with a deliberately shifted field passes.
-- [ ] **13.10** Add a font-style proxy metric (stroke density, glyph height
+      — verified: 20 tests, `check-all.ps1` exits 0 (4835 backend); `layout.py` and `test_layout.py` are new and `D99` records the measurement, but only `photo` is measurable on the committed reference because the four text rectangles are blank paper in it.
+- [x] **13.10** Add a font-style proxy metric (stroke density, glyph height
   variance) and include it in the layout score, with a test.
   Verify: the new test passes.
-- [ ] **13.11** Add a test that an unaligned document produces a lower layout
+      — verified: 8 new tests in `test_layout.py`, `check-all.ps1` exits 0 (4843 backend tests, was 4835); `font_style`, `font_deviation` and `layout_score` are new and `D100` records the measurement; 4 of 4 mutants killed.
+- [x] **13.11** Add a test that an unaligned document produces a lower layout
   score than an aligned one, so the metric is not constant.
   Verify: the new test passes.
-- [ ] **13.12** Define the `FaceDetector` and `Embedder` interfaces, plus
+      — verified: 2 new tests in `test_layout.py`, `check-all.ps1` exits 0 (4845 backend tests, was 4843); one capture put into template space by corners turned 4 degrees scores 0.03 where the detector's own corners score 0.92, the one measurable field 24 px off its rectangle against 2 px.
+- [x] **13.12** Define the `FaceDetector` and `Embedder` interfaces, plus
   `NullEmbedder`, which returns a deterministic zero vector and reports
   `is_stub: true`.
   Verify: a test asserting the null embedder is labelled as a stub.
-- [ ] **13.13** Implement `InsightFaceEmbedder` (or FaceNet) behind the
+      — verified: 41 new tests in `test_face.py`, `check-all.ps1` exits 0 (4886 backend tests, was 4845); `face.py` is new and `D101` records the seam, 14 of 14 mutants killed.
+- [x] **13.13** Implement `InsightFaceEmbedder` (or FaceNet) behind the
   interface, reporting unavailability when the model is absent.
   Verify: an availability test passes either way.
-- [ ] **13.14** Implement face detection and alignment (landmark-based
+- [x] **13.14** Implement face detection and alignment (landmark-based
   similarity transform to a canonical crop) in the photo region, with a test
   on a synthetic face-like fixture.
   Verify: the new test passes.
-- [ ] **13.15** Write `match_score(embedding_a, embedding_b, threshold)` using
+      — verified: 26 new tests in `test_face_align.py`, `check-all.ps1` exits 0
+      (4913 backend tests, was 4886); `face_align.py` is new, `D102` records the
+      seam, 8 of 8 mutants killed.
+- [x] **13.15** Write `match_score(embedding_a, embedding_b, threshold)` using
   cosine similarity, with tests for identical, orthogonal, and below-threshold
   inputs.
-  Verify: the new tests pass.
-- [ ] **13.16** Emit `FACE_LOW_SIMILARITY` carrying the similarity and the
+      -- verified: 44 new tests in `test_face_match.py`, `check-all.ps1` exits 0 (4957 backend tests, was 4913); `D103` records the refusal and the clamp, 6 of 6 mutants killed.
+- [x] **13.16** Emit `FACE_LOW_SIMILARITY` carrying the similarity and the
   threshold, and reproduce worked example B: similarity 0.41 against a
   threshold of 0.55 routes the case to Tier 2.
   Verify: the new test passes.
@@ -1042,43 +1088,53 @@ screening.
 
 # Part 14 — Orchestrator and escalation
 
-- [ ] **14.1** Create `backend/app/pipeline/orchestrator.py` with a
+- [x] **14.1** Create `backend/app/pipeline/orchestrator.py` with a
   `ScreeningContext` model (screening id, document type, image, reference date,
   flags so far, stage trace, mode).
   Verify: a test constructs a context.
-- [ ] **14.2** Write a stage registry mapping stage name → callable, and a test
+      — verified: 16 new tests pass and the full backend suite is 4973 passed.
+- [x] **14.2** Write a stage registry mapping stage name → callable, and a test
   asserting an unknown stage name raises a clear error.
-  Verify: the new test passes.
-- [ ] **14.3** Run the existing quality gate as stage 0 and merge its failed
+  — verified: 22 new tests pass; backend suite 4995 passed.
+- [x] **14.3** Run the existing quality gate as stage 0 and merge its failed
   checks into the flag stream as `quality` tier flags.
   Verify: a test with a blurred image produces a quality flag.
-- [ ] **14.4** Run Tier 0 and stop immediately on a hard fail, with a test
+      — verified: 32 new tests pass and check-all.ps1 exits 0.
+- [x] **14.4** Run Tier 0 and stop immediately on a hard fail, with a test
   asserting Tier 1 and Tier 2 never ran.
   Verify: the new test passes.
-- [ ] **14.5** Run Tier 1 and compute the partial score `R1` from its flags.
+      — verified: 10 new tests pass, backend suite 5074 passed.
+- [x] **14.5** Run Tier 1 and compute the partial score `R1` from its flags.
   Verify: a test asserts `R1` is present in the context after Tier 1.
-- [ ] **14.6** Implement the ambiguity check: `R1` inside a configurable band
+  — verified: 10 new tests pass, backend suite 5084 passed.
+- [x] **14.6** Implement the ambiguity check: `R1` inside a configurable band
   escalates, with tests for inside, at each edge, and outside.
   Verify: the new tests pass.
-- [ ] **14.7** Implement the high-risk-profile check (document type or issuing
+      — verified: 36 new tests pass, backend suite 5120 passed.
+- [x] **14.7** Implement the high-risk-profile check (document type or issuing
   state on a configurable watchlist escalates), with a test.
   Verify: the new test passes.
-- [ ] **14.8** Implement the randomised deep audit draw as
+  — verified: 31 new tests pass, backend suite 5151 passed.
+- [x] **14.8** Implement the randomised deep audit draw as
   `HMAC(server_secret, screening_id) < rate`, with a test that the same id
   always draws the same outcome and that the distribution over 10 000 ids
   matches the configured rate.
   Verify: the new test passes.
-- [ ] **14.9** Implement the full-depth mode flag that always escalates, with a
+      — verified: 30 new tests pass, backend suite 5181 passed, check-all.ps1 exits 0.
+- [x] **14.9** Implement the full-depth mode flag that always escalates, with a
   test.
   Verify: the new test passes.
-- [ ] **14.10** Record a stage trace (stage, started, elapsed, flags added,
+      — verified: 23 new tests pass, backend suite 5204 passed.
+- [x] **14.10** Record a stage trace (stage, started, elapsed, flags added,
   escalated?) on the context and return it in the response, with a test
   asserting the trace order is tier 0 → tier 1 → tier 2.
   Verify: the new test passes.
-- [ ] **14.11** Add a test asserting an individual module failure is recorded in
+    — verified: 20 new tests pass, backend suite 5224 passed.
+- [x] **14.11** Add a test asserting an individual module failure is recorded in
   the trace as failed and does not abort the remaining modules — one broken
   check must not lose the whole screening.
   Verify: the new test passes.
+    — verified: 15 new tests pass, backend suite 5239 passed.
 
 **Gate 11 continued:** the cascade runs end to end, and each of the four
 escalation triggers is independently tested.
@@ -1090,58 +1146,71 @@ escalation triggers is independently tested.
 Every task here ships an interface plus an honest, labelled stand-in. None may
 be described as a validated detector.
 
-- [ ] **15.1** Create `backend/app/pipeline/tier2/__init__.py` and `base.py`
+- [x] **15.1** Create `backend/app/pipeline/tier2/__init__.py` and `base.py`
   with a `DeepModule` interface (`run(context) -> DeepResult`) and a registry.
   Verify: a test asserting a registry with zero modules still returns a valid
   result.
-- [ ] **15.2** Define `DeepResult` (score, heatmap, regions, module name,
+      — verified: 8 new tests in `test_tier2_base.py`; backend suite 5247 (was 5239), `check-all.ps1` exits 0.
+- [x] **15.2** Define `DeepResult` (score, heatmap, regions, module name,
   `is_stub`, `model_version`, detail), with a test asserting a stub result
   carries `is_stub: true` and a non-empty `model_version`.
   Verify: the new test passes.
-- [ ] **15.3** Implement ELA: re-encode the image at several JPEG qualities and
+      — verified: 15 new tests in `test_tier2_result.py`; backend suite 5262 (was 5247), `check-all.ps1` exits 0.
+- [x] **15.3** Implement ELA: re-encode the image at several JPEG qualities and
   measure per-block discrepancy, producing a normalised heatmap, with a test
   asserting a re-compressed region lights up.
   Verify: the new test passes.
-- [ ] **15.4** Implement noise-residual analysis (high-pass residual, local
+      — verified: 21 new tests in `test_tier2_ela.py`; backend suite 5283 (was 5262), `check-all.ps1` exits 0.
+- [x] **15.4** Implement noise-residual analysis (high-pass residual, local
   variance map) and a score, with a test asserting an edited region shows
   anomalous variance.
   Verify: the new test passes.
-- [ ] **15.5** Implement copy-move detection via self-similarity matching on
+      — verified: 34 new tests in `test_tier2_noise_residual.py`; backend suite 5317 (was 5283), `check-all.ps1` exits 0.
+- [x] **15.5** Implement copy-move detection via self-similarity matching on
   SIFT/ORB blocks, with a test asserting a duplicated region inside the document
   is localised.
   Verify: the new test passes.
-- [ ] **15.6** Fuse ELA, noise-residual and copy-move into one tamper score and
+      — verified: 46 new tests in `test_tier2_copy_move.py`; backend suite 5363 (was 5317), `check-all.ps1` exits 0.
+- [x] **15.6** Fuse ELA, noise-residual and copy-move into one tamper score and
   one overlay mask, naming every contributing module, with a test asserting the
   contributors are listed.
   Verify: the new test passes.
-- [ ] **15.7** Add a test that a clean synthetic document scores near zero, so
+- [x] **15.7** Add a test that a clean synthetic document scores near zero, so
   the tamper score is not trivially high.
   Verify: the new test passes.
-- [ ] **15.8** Create a stamp template registry and implement stamp detection +
+- [x] **15.8** Create a stamp template registry and implement stamp detection +
   template matching, with a test.
   Verify: the new test passes.
-- [ ] **15.9** Make a missing stamp template report `not_configured` rather than
+      — verified: 49 new tests in `test_tier2_stamp.py`; backend suite 5412 (was 5363), `check-all.ps1` exits 0.
+- [x] **15.9** Make a missing stamp template report `not_configured` rather than
   `clean`, with a test asserting the distinction — silence must never read as
   a pass.
   Verify: the new test passes.
-- [ ] **15.10** Define the `MorphClassifier` interface and a clearly labelled
+      — verified: 22 new tests in `test_tier2_stamp_config.py`; backend suite 5434 (was 5412), `check-all.ps1` exits 0.
+- [x] **15.10** Define the `MorphClassifier` interface and a clearly labelled
+
   heuristic stand-in (frequency + boundary irregularity cues at the photo
   region) with `model_version: heuristic-v0`.
   Verify: a test asserting `is_stub` and the version string.
-- [ ] **15.11** Define the `DeepfakeClassifier` interface and a labelled
+        -- verified: 28 new tests in `test_tier2_morph.py`; backend suite 5462 (was 5434), `check-all.ps1` exits 0.
+- [x] **15.11** Define the `DeepfakeClassifier` interface and a labelled
   heuristic stand-in, with the same stub test.
   Verify: the new test passes.
-- [ ] **15.12** Build a per-document feature vector (ELA stats, noise stats,
+      — verified: 26 new tests in `test_tier2_deepfake.py`; backend suite 5488 (was 5462).
+- [x] **15.12** Build a per-document feature vector (ELA stats, noise stats,
   histogram, edge density, field geometry) and fit an IsolationForest on a
   committed feature fixture, with a test asserting an out-of-distribution
   synthetic document scores above the in-distribution ones.
   Verify: the new test passes.
-- [ ] **15.13** Convert each Tier 2 result into flags with heatmap-derived
+        -- verified: 39 new tests in `test_tier2_anomaly.py`; backend suite 5527 (was 5488), `check-all.ps1` exits 0.
+- [x] **15.13** Convert each Tier 2 result into flags with heatmap-derived
   regions, so Tier 2 findings are as locatable as Tier 0's.
   Verify: a test asserting a tampered-region flag carries a non-null region.
-- [ ] **15.14** Add a test asserting every Tier 2 flag id exists in
+      -- verified: 34 new tests in `test_tier2_flags.py`; backend suite 5561 (was 5527), `check-all.ps1` exits 0.
+- [x] **15.14** Add a test asserting every Tier 2 flag id exists in
   `weightsets/v1.yaml` (the weightset-completeness test must not regress).
   Verify: the new test passes.
+      -- verified: 3 new tests in `test_tier2_flag_weightset.py`; backend suite 5564 (was 5561), `check-all.ps1` exits 0.
 
 **Gate 15:** a tampered document produces located tamper flags from labelled
 modules, a clean document does not, and a missing template is never reported
@@ -1151,33 +1220,39 @@ as clean.
 
 # Part 16 — Cross-document verification
 
-- [ ] **16.1** Add a `TravelerCase` model and table (id, created_at, label) and a
+- [x] **16.1** Add a `TravelerCase` model and table (id, created_at, label) and a
   migration, with a test round-triping a case.
   Verify: the new test passes.
-- [ ] **16.2** Add a `case_id` and `document_role` (passport / visa / ID) to
+      — verified: 9 new tests in `test_traveler_case.py` round-trip a case through both a `create_all` and an `alembic upgrade head` schema; 3 in-place mutations each fail; `check-all.ps1` exits 0 (5574 backend, 45 frontend, build).
+- [x] **16.2** Add a `case_id` and `document_role` (passport / visa / ID) to
   `Screening`, with a test asserting two screenings can share a case.
   Verify: the new test passes.
-- [ ] **16.3** Write `normalise_name(s)` — uppercase, strip diacritics,
+- [x] **16.3** Write `normalise_name(s)` — uppercase, strip diacritics,
   transliterate, collapse whitespace — with tests for `Müller` and `MÜLLER`
   producing the same key.
   Verify: the new tests pass.
-- [ ] **16.4** Write `names_match(a, b, tolerance)` with transliteration,
+      — verified: 35 new tests in `test_crossdoc_names.py`; new `app/pipeline/crossdoc/` package, accent map delegated to Tier 0 and no digraph folded (D127); 6 in-place mutations each fail; `check-all.ps1` exits 0 (5609 backend, 45 frontend, build).
+- [x] **16.4** Write `names_match(a, b, tolerance)` with transliteration,
   `Ph`/`F`, compound-surname and token-ordering tolerance, returning a
   similarity plus the differing tokens.
   Verify: tests for `Mueller`/`Müller` (match), `Muller`/`Mueller` (match),
   `Rahman`/`Rahmani` (no match).
-- [ ] **16.5** Write `documents_consistent(documents_in_case)` checking
+    — verified: 50 new tests in `test_crossdoc_names_match.py`; `names_match` returns a frozen `NameMatch` (similarity, differing, tolerance) and folds UE/SS/PH only, never in the key (D128); 10 in-place mutations each fail; `check-all.ps1` exits 0 (5659 backend, 45 frontend, build).
+- [x] **16.5** Write `documents_consistent(documents_in_case)` checking
   passport-number ↔ visa cross-reference, with a test that a visa referencing an
   unknown passport raises a flag.
   Verify: the new test passes.
-- [ ] **16.6** Add validity-window consistency (the visa must cover the travel
+    — verified: 64 new tests in `test_crossdoc_documents_consistent.py`; exact filler-free key with no digraph fold and no tolerance, and a case that compared nothing answers `not_configured` (D129); 12 in-place mutations each fail; `check-all.ps1` exits 0 (5723 backend, 45 frontend, build).
+- [x] **16.6** Add validity-window consistency (the visa must cover the travel
   date) with a test.
   Verify: the new test passes.
-- [ ] **16.7** Write `face_consistent(documents_in_case)` using the Part 13
+    - verified: 74 new tests in `test_crossdoc_visa_validity.py`; travel date is an argument and the window is `valid_from`/`valid_until` on `CaseDocument`, closed at both ends (D130); 13 of 14 in-place mutations fail, the surviving one is `str(travel)`, which is `isoformat()` by definition; `check-all.ps1` exits 0 (5797 backend, 45 frontend, build).
+- [x] **16.7** Write `face_consistent(documents_in_case)` using the Part 13
   interfaces, degrading cleanly when no embedder is available, with a test for
   both paths.
-  Verify: the new tests pass.
-- [ ] **16.8** Emit cross-document flags into the same `EvidenceFlag` stream with
+  — verified: 74 new tests pass; full backend suite 5871 passes, check-all.ps1
+  exits 0; 20 mutations, 20 killed.
+- [x] **16.8** Emit cross-document flags into the same `EvidenceFlag` stream with
   `tier: crossdoc`, and add a test that they aggregate into the same risk score
   as Tier 0/1/2 flags.
   Verify: the new test passes.
@@ -1192,54 +1267,75 @@ and moves the score.
 The verifier is pure code and needs no model. It is the cheapest part of the
 "the model narrates and never decides" claim, so build it before the LLM client.
 
-- [ ] **17.1** Create `backend/app/explain/__init__.py` and
+- [x] **17.1** Create `backend/app/explain/__init__.py` and
   `verifier.py` with `extract_numbers(text)`, and a test proving it finds
   numbers in text and ignores ordinals inside words.
   Verify: the new test passes.
-- [ ] **17.2** Add `extract_dates(text)` and `extract_field_names(text)`
+  — verified: 19 new tests pass; full backend suite 5890 passes, check-all.ps1
+  exits 0; 8 mutations, 8 killed. Decision recorded as `D132`.
+- [x] **17.2** Add `extract_dates(text)` and `extract_field_names(text)`
   (capitalised tokens and known flag ids), with a test each.
   Verify: the new tests pass.
-- [ ] **17.3** Write `verify_summary(summary, flag_data)` returning pass/fail
+  — verified: 55 new tests pass; full backend suite 5945 passes, check-all.ps1
+  exits 0; 12 mutations, 12 killed. Decision recorded as `D133`.
+- [x] **17.3** Write `verify_summary(summary, flag_data)` returning pass/fail
   plus the offending tokens, requiring every extracted number, date and field
   name to appear in the flag data.
   Verify: the new test passes.
-- [ ] **17.4** Add a negative test: a summary containing `0.98` or a flag id not
+  — verified: 57 new tests pass; full backend suite 6002 collected, check-all.ps1 exits 0; 8 mutations, 8 killed. Decision recorded as `D134`.
+- [x] **17.4** Add a negative test: a summary containing `0.98` or a flag id not
   present in the flag data is rejected.
   Verify: the new test passes.
-- [ ] **17.5** Write `template_summary(flags, band)` producing 2–3 sentences
+  — verified: 41 new tests pass (98 in file); full backend suite 6043 passes, check-all.ps1 exits 0; 4 mutations, 4 killed.
+- [x] **17.5** Write `template_summary(flags, band)` producing 2–3 sentences
   with one line per flag, in plain language, with a test.
   Verify: the new test passes.
-- [ ] **17.6** Add a test that the template summary passes the verifier from
+  — verified: 81 new tests pass; full backend suite 6124 passes, check-all.ps1 exits 0; 16 mutations, 16 killed. Decision recorded as `D135`.
+- [x] **17.6** Add a test that the template summary passes the verifier from
   17.3 — the fallback must satisfy the same contract as the model output.
   Verify: the new test passes.
-- [ ] **17.7** Create the `Summarizer` interface and a self-hosted LLM client
+  — verified: 72 new tests pass; full backend suite 6196 passes, check-all.ps1 exits 0; 6 mutations, 6 killed.
+- [x] **17.7** Create the `Summarizer` interface and a self-hosted LLM client
   speaking the Ollama/llama.cpp HTTP API, with a hard timeout and no external
   fallback — when it fails it returns `None`, it does not raise.
   Verify: a test against a non-existent endpoint returns `None` within the
   timeout.
-- [ ] **17.8** Add a test asserting the client is never called when
+    — verified: 87 new tests pass; full backend suite 6283 passes, check-all.ps1
+    exits 0; 31 mutations, 31 killed. Decision recorded as `D136`.
+- [x] **17.8** Add a test asserting the client is never called when
   `LOCAL_LLM_ENABLED=false`, and that no request ever leaves the configured
   local host.
   Verify: the new test passes.
-- [ ] **17.9** Create the versioned prompt template `prompts/v1.txt` and a
+    — verified: 24 new tests pass; full backend suite 6307 passes, check-all.ps1
+    exits 0; 13 mutations, 13 killed. Decision recorded as `D137`.
+- [x] **17.9** Create the versioned prompt template `prompts/v1.txt` and a
   loader exposing `PROMPT_VERSION`, with a test that changing the file changes
   the reported version.
   Verify: the new test passes.
-- [ ] **17.10** Build the flag-data payload sent to the model (structured flags,
+    — verified: 24 new tests pass; full backend suite 6331 passes,
+    check-all.ps1 exits 0; 21 mutations, 20 killed (one prose survivor,
+    untested by choice). Decision recorded as `D138`.
+- [x] **17.10** Build the flag-data payload sent to the model (structured flags,
   band, contributions, no image data), with a test asserting the payload
   contains no pixel data.
   Verify: the new test passes.
-- [ ] **17.11** Wire the reject-and-fallback path: verifier failure discards the
+    — verified: 25 new tests pass; full backend suite 6356 passes, check-all.ps1 exits 0; 21 mutations, 21 killed. Recorded as `D139`.
+- [x] **17.11** Wire the reject-and-fallback path: verifier failure discards the
   model text, uses the template summary, and records `summary_source` plus
   `verification: failed` in the response.
   Verify: the new test passes.
-- [ ] **17.12** Add a test feeding deliberately poisoned model output and
+    — verified: 70 new tests pass; full backend suite 6426 passes, check-all.ps1
+    exits 0; 20 mutations, 20 killed. Recorded as `D140`.
+- [x] **17.12** Add a test feeding deliberately poisoned model output and
   asserting it never reaches the response and the rejection is auditable.
   Verify: the new test passes.
-- [ ] **17.13** Add model-free per-flag reason templates so the officer always
+    — verified: 68 new tests pass; full backend suite 6494 passes, check-all.ps1
+    exits 0; 4 mutations of the reject branch, 4 killed. Recorded as `D141`.
+- [x] **17.13** Add model-free per-flag reason templates so the officer always
   has a plain-language explanation, with a test asserting every flag id in
   `flag_ids.py` has a reason template.
   Verify: the new test passes.
+    — verified: 262 new tests pass; full backend suite 6756 passes, check-all.ps1 exits 0; 6 mutations, 6 killed. Recorded as `D142`.
 
 **Gate 17:** a summary can only reach the officer if every number, date and
 field name in it exists in the flag data, and the model-free fallback satisfies
@@ -1249,45 +1345,57 @@ the same rule.
 
 # Part 18 — Remaining API surface
 
-- [ ] **18.1** Add `POST /api/screenings/{id}/decision` accepting
+- [x] **18.1** Add `POST /api/screenings/{id}/decision` accepting
   `allow` / `further_inspection` / `reject`, a remark, and an `override` flag,
   with a test per action value.
   Verify: the new tests pass.
-- [ ] **18.2** Reject a `reject` on a `low` band without `override: true`, with a
+    — verified: 32 new tests pass; full backend suite 6788 passes; 9 mutations, 9 killed. Recorded as `D143`.
+- [x] **18.2** Reject a `reject` on a `low` band without `override: true`, with a
   test proving the rejection is a validation error, not a silent accept.
   Verify: the new test passes.
-- [ ] **18.3** Emit the `decision_recorded` and `override_recorded` audit events
+    — verified: 24 new tests pass; full backend suite 6812 passes; 8 mutations, 8 killed. Recorded as `D144`.
+- [x] **18.3** Emit the `decision_recorded` and `override_recorded` audit events
   from the decision endpoint, with a test asserting both appear.
   Verify: the new test passes.
-- [ ] **18.4** Make the decision endpoint idempotent-safe: a second decision
+    — verified: 24 new tests pass; full backend suite 6836 passes, check-all.ps1 exits 0; 13 mutations, 13 killed. Recorded as `D145`.
+- [x] **18.4** Make the decision endpoint idempotent-safe: a second decision
   changes status and emits a new event rather than overwriting, with a test.
   Verify: the new test passes.
-- [ ] **18.5** Add `DELETE /api/screenings/{id}` doing a soft delete, with a test
+  — verified: 21 new tests pass; full backend suite 6857 passes, check-all.ps1 exits 0; 7 mutations, 7 killed. Recorded as `D146`.
+- [x] **18.5** Add `DELETE /api/screenings/{id}` doing a soft delete, with a test
   asserting the screening disappears from reads.
   Verify: the new test passes.
-- [ ] **18.6** Add a test asserting the ledger entry and audit events survive
+    — verified: 14 new tests pass; full backend suite 6871 passes, check-all.ps1 exits 0; 7 mutations, 7 killed. Recorded as `D147`.
+- [x] **18.6** Add a test asserting the ledger entry and audit events survive
   the delete — deleting a screening must not erase the audit trail.
   Verify: the new test passes.
-- [ ] **18.7** Add `GET /api/audit/{audit_id}/verify` returning
+    — verified: 11 new tests pass; full backend suite 6882 passes, check-all.ps1 exits 0; 3 mutations, 3 killed. Proves the clause D147 left open; recorded as D148.
+- [x] **18.7** Add `GET /api/audit/{audit_id}/verify` returning
   `verified` / `altered` / `unknown` with the batch root and proof length, and a
   plain-language explanation of what was checked.
   Verify: the new test passes.
-- [ ] **18.8** Add a test that tampering with a stored screening payload in the
+    — verified: 21 new tests pass; full backend suite 6903 passes, check-all.ps1 exits 0; 18 mutations, 18 killed. Recorded as `D149`.
+- [x] **18.8** Add a test that tampering with a stored screening payload in the
   database flips the verify endpoint to `altered`.
   Verify: the new test passes.
-- [ ] **18.9** Add `GET /api/screenings/{id}/report` returning standalone
+    — verified: 10 new tests pass; full backend suite 6913 passes, check-all.ps1 exits 0; 7 mutations, 7 killed. Closes the record-mismatch vector of `D149`.
+- [x] **18.9** Add `GET /api/screenings/{id}/report` returning standalone
   printable HTML with bands, flags, reasons and the audit id, and a test
   asserting it references no external asset.
   Verify: the new test passes.
-- [ ] **18.10** Add an SSE stream endpoint reporting per-tier and per-module
+    — verified: 13 new tests pass; full backend suite 6926 passes, check-all.ps1 exits 0; 22 mutations, 22 killed. Recorded as `D150`.
+- [x] **18.10** Add an SSE stream endpoint reporting per-tier and per-module
   progress, with a test asserting the event shape and a clean disconnect.
   Verify: the new test passes.
-- [ ] **18.11** Add a polling fallback endpoint returning the same progress
+    — verified: 24 new tests pass; full backend suite 6950 passes, check-all.ps1 exits 0; 24 mutations, 23 killed, 1 equivalent. Recorded as `D151`.
+- [x] **18.11** Add a polling fallback endpoint returning the same progress
   state, with a test asserting both routes report identical state.
   Verify: the new test passes.
-- [ ] **18.12** Return the stage trace and per-stage timings on the screening
+    — verified: 13 new tests pass; full backend suite 6963 passes, check-all.ps1 exits 0; 12 mutations, 12 killed. Recorded as `D152`.
+- [x] **18.12** Return the stage trace and per-stage timings on the screening
   response so the UI can show where time went, with a test.
   Verify: the new test passes.
+    — verified: 17 new tests pass; full backend suite 6980 passes, check-all.ps1 exits 0; 15 mutations, 14 killed, 1 equivalent. Recorded as `D153`.
 
 **Gate 18:** the officer can record a decision, the decision is in the audit
 trail, and any event can be independently verified.
@@ -1296,13 +1404,15 @@ trail, and any event can be independently verified.
 
 # Part 19 — Encrypted evidence store and retention
 
-- [ ] **19.1** Load a master key from the environment, generating a dev key when
+- [x] **19.1** Load a master key from the environment, generating a dev key when
   absent, with a test asserting a missing key never silently becomes a known
   constant in production mode.
   Verify: the new test passes.
-- [ ] **19.2** Generate a per-blob data key and wrap it with the master key
+    — verified: 43 new tests pass; full backend suite 7023 passes, check-all.ps1 exits 0; 24 mutations of D154's lines and 6 of D155's, all killed. Recorded as D154.
+- [x] **19.2** Generate a per-blob data key and wrap it with the master key
   (AES-GCM), with a round-trip test.
   Verify: the new test passes.
+    — verified: 33 new cases pass; full backend suite 7056 passes, check-all.ps1 exits 0; 23 mutations of the shipped lines, all killed. Recorded as D156.
 - [ ] **19.3** Implement `put(bytes) -> blob_ref` writing AES-GCM ciphertext
   under a content-addressed filename, with a round-trip test.
   Verify: the new test passes.

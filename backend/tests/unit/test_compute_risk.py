@@ -648,6 +648,15 @@ def test_a_hard_fail_cannot_be_outvoted_by_many_soft_flags(size):
     it equals it.  A pile heavier than 90 reads heavier -- "a hard fail cannot
     make a heavier document read safer" -- and one answer is the clamp's, not
     the floor's.
+
+    **The expected number is the engine's own composition rather than a second
+    rule** -- ``min(MAX, max(floor, sum))``, with the overriding flag's own
+    weight inside the sum.  7.6 is a ``max`` applied above the sum, so a pile
+    too light to reach the floor reads the floor and nothing more.  14.3 put
+    nine five-point rows at the head of the vocabulary, which is what made a
+    light pile reachable here at all; the formula this replaces read as
+    ``min(MAX, floor + pile)``, agreed with it only because every size it was
+    given clamped to 100 (D106).
     """
     soft = [
         flag_id
@@ -662,7 +671,11 @@ def test_a_hard_fail_cannot_be_outvoted_by_many_soft_flags(size):
     assert len(result.contributions) == size + 1
     assert result.score == min(
         MAX_SCORE,
-        DEFAULT_HARD_FAIL_FLOOR + math.fsum(_weight(soft[i % len(soft)]) for i in range(size)),
+        max(
+            DEFAULT_HARD_FAIL_FLOOR,
+            _weight(flag_ids.WATCHLIST_HIT)
+            + math.fsum(_weight(soft[i % len(soft)]) for i in range(size)),
+        ),
     )
 
 

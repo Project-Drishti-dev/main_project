@@ -20,9 +20,44 @@
 # The keys are app.risk.flag_ids.FLAG_IDS in ALL_FLAG_IDS order, which is the
 # cascade's own order: tier 0 first, then tier 1, tier 2, cross-document.
 
-ruleset_version: "0.1.0"
+ruleset_version: "0.2.0"
 
 flags:
+  # --- QUALITY: the capture gate's nine checks, which run as stage 0 (14.3) ---
+  # One weight for all nine, because they are one gate and nine uncalibrated
+  # figures would pretend to know which of them matters most.  Five is chosen so
+  # a capture failing three checks weighs what one unreadable field weighs, and
+  # so a document is never sent to review by its photograph alone.  All nine
+  # failing is 45 and reads review: a capture nothing can be read out of is a
+  # screening no officer can clear.
+  QUALITY_BLUR:
+    weight: 5
+    band: low
+  QUALITY_NOISE:
+    weight: 5
+    band: low
+  QUALITY_EXPOSURE:
+    weight: 5
+    band: low
+  QUALITY_UNEVEN_LIGHTING:
+    weight: 5
+    band: low
+  QUALITY_GLARE:
+    weight: 5
+    band: low
+  QUALITY_LOW_RESOLUTION:
+    weight: 5
+    band: low
+  QUALITY_SKEW:
+    weight: 5
+    band: low
+  QUALITY_LOW_COVERAGE:
+    weight: 5
+    band: low
+  QUALITY_CROPPED:
+    weight: 5
+    band: low
+
   # --- MRZ: a failed printed check digit, all five of them hard fails (6.5) ---
   MRZ_DOCUMENT_NUMBER_CHECK_DIGIT_MISMATCH:
     weight: 65

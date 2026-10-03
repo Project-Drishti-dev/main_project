@@ -50,6 +50,7 @@ __all__ = [
     "COMPLETED_STATUS",
     "HARD_FAIL_IDS",
     "SCORE_BP_KEY",
+    "TIER_KEY",
     "TIERS_RUN_KEY",
     "run_screening",
     "screening_contributions",
@@ -78,6 +79,11 @@ HARD_FAIL_IDS = frozenset(runner._HARD_FAIL_IDS)
 #: scale, because ``D48`` refuses a float in a payload and ``D66`` says a
 #: score goes into one as text or as a scaled integer.
 SCORE_BP_KEY = "score_bp"
+
+#: The payload key a ``tier_completed`` event names its tier under, so the
+#: spelling 18.10's progress stream reads is written down once here rather
+#: than guessed at by every reader of that event.
+TIER_KEY = "tier"
 
 #: The payload key naming which tiers ran, on ``analysis_completed`` -- so a
 #: reader who comes to the trail at its end can tell a cascade that stopped
@@ -248,7 +254,7 @@ def _tier_payload(name: str, tier: runner.TierResult) -> dict[str, Any]:
     that did not.  The 6.6 stage timings stay off the trail for the same
     reason a score arrives scaled (``D48``).
     """
-    return {"tier": name, **_tier_facts(tier)}
+    return {TIER_KEY: name, **_tier_facts(tier)}
 
 
 def _tier_facts(tier: runner.TierResult) -> dict[str, Any]:

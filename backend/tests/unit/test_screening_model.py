@@ -44,6 +44,7 @@ from app.storage.models import (
     SCREENING_MODES,
     SCREENING_STATUSES,
     SCREENING_TABLE_NAME,
+    TRAVELER_CASE_TABLE_NAME,
     Base,
     Screening,
 )
@@ -261,12 +262,15 @@ def test_the_table_carries_exactly_the_columns_the_task_names() -> None:
 def test_the_table_is_named_for_the_table_the_task_and_routes_use() -> None:
     """8.5 added ``audit_events`` beside this one, on the same base, and the
     claim is now that the schema holds exactly the tables the tasks name --
-    8.6 added ``ledger_entries`` and the claim is unchanged by it."""
+    8.6 added ``ledger_entries`` and 16.1 added ``traveler_cases``, and the
+    claim is unchanged by either.  It is a claim about *no* fifth table, so a
+    table added without a task fails here rather than arriving quietly."""
     assert SCREENING_TABLE_NAME == "screenings"
     assert list(Base.metadata.tables) == [
         SCREENING_TABLE_NAME,
         "audit_events",
         "ledger_entries",
+        TRAVELER_CASE_TABLE_NAME,
     ]
     assert Screening.__table__.metadata is Base.metadata
 

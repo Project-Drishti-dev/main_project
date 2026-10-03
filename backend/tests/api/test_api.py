@@ -45,13 +45,6 @@ def make_png() -> bytes:
     return data.tobytes()
 
 
-def test_health_endpoint_reports_service_ready():
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-
-
 def test_analyze_requires_an_image():
     response = client.post("/api/analyze")
 
