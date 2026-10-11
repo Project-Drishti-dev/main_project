@@ -4,7 +4,14 @@
   "version": "1.0.0",
   "scripts": {
     "build": "node build.cjs",
-    "test": "node --test"
+    "check-artefacts": "node scripts/check-artefacts.cjs",
+    
+    "deployed-check": "node scripts/deployed-check.cjs",
+    "preview": "node scripts/preview.cjs",
+    "private-check": "node scripts/private-check.cjs",
+    "shots": "node scripts/viewport-shots.cjs",
+    "test": "node --test",
+    "theme-shots": "node scripts/theme-shots.cjs"
   },
   "dependencies": {
     "ux4g-web-components": "2.1.0"

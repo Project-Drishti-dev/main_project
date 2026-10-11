@@ -118,13 +118,17 @@ function Select-FailureDetail($text, $maxLines) {
 
     return Get-Tail $text $maxLines
 }
-
+function Stop-OrphanedProcesses {
+    # Force-terminate background Node runners that hold ports or stdio handles open
+    Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
 function Invoke-Verification {
     if (-not (Test-Path $checkScript)) {
         Write-Host "check-all.ps1 not found; skipping verification." -ForegroundColor Yellow
         return @{ Exit = 0; Output = "" }
     }
     Write-Host "Running verification via check-all.ps1..." -ForegroundColor Gray
+    Stop-OrphanedProcesses
     $out = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $checkScript 2>&1
     $code = $LASTEXITCODE
     foreach ($l in $out) { Write-Host $l }
@@ -196,6 +200,7 @@ try {
         $usageError = $false
 
         for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            Stop-OrphanedProcesses
             $prompt = "Follow AGENTS.md and execute this task from tasks.md:`n`n" +
             $taskBlock
 
@@ -279,4 +284,5 @@ try {
 }
 finally {
     Remove-Item $promptFile -Force -ErrorAction SilentlyContinue
+    Stop-OrphanedProcesses
 }

@@ -34,8 +34,13 @@ factory rather than a rule enforced here, and it is stated because a caller
 handing a plain ``sessionmaker()`` gets a detached, unreadable row rather
 than an error.
 
-**``create`` writes the four columns an upload carried and nothing else.**
-``mode``, ``ruleset_version``, ``model_versions``, ``quality`` and ``flags``
+**``create`` writes what an upload carried and nothing else.**  The four
+columns above, plus 19.6's ``image_blob_ref`` -- the address the document
+itself was stored at, which arrived with the upload as surely as the other
+four did -- and since 26.8 the ``request_id`` of the request that asked for
+the row, which arrived with it for the same reason.  Nothing else: ``mode``,
+``ruleset_version``, ``model_versions``,
+``quality`` and ``flags``
 are the columns a stage fills in once it has run, and 11.1 asks this method
 for an id *before* the analysis has happened; taking them as arguments now
 would be a call shape written for a caller that does not exist yet.  The
@@ -326,6 +331,8 @@ class ScreeningRepository:
         filename: str,
         image_width: int,
         image_height: int,
+        image_blob_ref: str | None = None,
+        request_id: str | None = None,
     ) -> Screening:
         """Write the row an upload carried, and return it once it is stored.
 
@@ -333,6 +340,16 @@ class ScreeningRepository:
         :param filename: the name the upload arrived under.
         :param image_width: the pixel width of the uploaded image.
         :param image_height: the pixel height of the uploaded image.
+        :param image_blob_ref: the one token
+            :meth:`app.storage.blob_store.BlobRef.to_wire` writes, naming the
+            encrypted blob the document was stored as, or ``None`` for a
+            screening written with no store wired (19.6).  Not checked here:
+            this module stores what it is handed.
+        :param request_id: the correlation id of the request this screening
+            answers, as :func:`app.api.request_id.resolve_request_id` spelled
+            it, or ``None`` for a screening run outside any request (26.8).
+            Stored, not derived: nothing here reads the id back off the log
+            it was also written to, so the two could not disagree quietly.
         :returns: the committed row, carrying the ``id``, ``created_at`` and
             ``status`` its ORM defaults stamped and no result at all.
         :raises ~sqlalchemy.exc.IntegrityError: when the row cannot be stored.
@@ -343,6 +360,8 @@ class ScreeningRepository:
             filename=filename,
             image_width=image_width,
             image_height=image_height,
+            image_blob_ref=image_blob_ref,
+            request_id=request_id,
         )
         with self._sessions() as session:
             session.add(row)

@@ -6,9 +6,13 @@ through a second store over the same directory, because a reference that
 only answers on the object that wrote it is not a reference.
 
 The other half of the claim is what is written down.  A file named by the
-SHA-256 of the plaintext, whose bytes carry neither the document nor the
-master key, and which does not open once it has been moved under another
-address -- the binding D156 left to this task.
+SHA-256 of the plaintext, whose bytes carry neither the document, nor the
+file header it began with, nor the master key, and which does not open once
+it has been moved under another address -- the binding D156 left to this task.
+
+**A wrong key fails closed** (19.5): a store opened under a master key that
+did not wrap a blob refuses every reference it is handed, names which key is
+not the one, and quotes no byte of the document.
 """
 
 import base64
@@ -25,6 +29,7 @@ from app.storage import blob_store
 from app.storage.blob_store import (
     BLOB_DIGEST_BYTES,
     BLOB_DIGEST_HEX_CHARS,
+    BLOB_FORMAT_TAG,
     BLOB_HEADER_BYTES,
     BLOB_NONCE_BYTES,
     BLOB_SUFFIX,
@@ -39,14 +44,25 @@ from app.storage.data_key import (
     DATA_KEY_BYTES,
     DATA_KEY_NONCE_BYTES,
     DATA_KEY_TAG_BYTES,
+    WrappedDataKey,
     generate_data_key,
+    unwrap_data_key,
     wrap_data_key,
 )
-from app.storage.master_key import MASTER_KEY_BYTES, MasterKey
+from app.storage.master_key import MASTER_KEY_BYTES, MasterKey, load_master_key
 
 #: One master key to write under, so a case is about the store alone.
 MASTER = MasterKey(
     key=bytes(range(MASTER_KEY_BYTES)), environment=ENV_DEVELOPMENT, generated=False
+)
+
+#: Another master key, equal in every way but in its bytes -- what a
+#: deployment that rotated or lost its key holds, and what 19.5 opens a
+#: blob with.
+OTHER_MASTER = MasterKey(
+    key=bytes(MASTER_KEY_BYTES),
+    environment=ENV_DEVELOPMENT,
+    generated=False,
 )
 
 #: A document with no file header and no shape a reader has to understand:
@@ -55,6 +71,19 @@ DOCUMENT = bytes(range(256)) * 4
 
 #: Where the wrapped key sits inside the header, beside its nonce.
 _WRAPPED_KEY_END = DATA_KEY_NONCE_BYTES + DATA_KEY_BYTES + DATA_KEY_TAG_BYTES
+
+
+#: The first bytes of the file formats evidence arrives in, named by what
+#: they are: a stored blob carrying any of them is carrying the document in
+#: the clear, whatever the round trip said about it.
+FILE_HEADERS = {
+    "pdf": b"%PDF-1.7",
+    "png": b"\x89PNG\r\n\x1a\n",
+    "jpeg": b"\xff\xd8\xff\xe0",
+    "gif": b"GIF89a",
+    "zip": b"PK\x03\x04",
+    "elf": b"\x7fELF",
+}
 
 
 def _store(root: pathlib.Path) -> EvidenceStore:
@@ -67,20 +96,41 @@ def _message_of(refusal: Exception) -> str:
     return str(refusal)
 
 
-def _written_by_hand(root: pathlib.Path, digest: str, payload: bytes) -> None:
+def _written_by_hand(
+    root: pathlib.Path,
+    digest: str,
+    payload: bytes,
+    associated: bytes | None = None,
+) -> None:
     """A file at digest that opens, and is not the document digest names.
 
     The one thing the store itself will not write: its own put always
     seals under the digest it names, so a blob that opens to something else
-    has to be assembled here out of the published parts.
+    has to be assembled here out of the published parts.  An associated of
+    None seals under this module own rules; anything else seals under rules
+    the store did not use, which is what another format would be.
     """
-    associated = blob_store._associated_data(bytes.fromhex(digest))
+    if associated is None:
+        associated = blob_store._associated_data(bytes.fromhex(digest))
     data_key = generate_data_key()
     wrapped = wrap_data_key(MASTER, data_key, associated)
     nonce = secrets.token_bytes(BLOB_NONCE_BYTES)
     sealed = AESGCM(data_key).encrypt(nonce, payload, associated)
     (root / (digest + BLOB_SUFFIX)).write_bytes(
         wrapped.nonce + wrapped.ciphertext + nonce + sealed
+    )
+
+
+def _data_key_of(store: EvidenceStore, reference: BlobRef) -> bytes:
+    """The key one stored blob is sealed under, opened with the master key."""
+    stored = store.path_of(reference).read_bytes()
+    return unwrap_data_key(
+        MASTER,
+        WrappedDataKey(
+            nonce=stored[:DATA_KEY_NONCE_BYTES],
+            ciphertext=stored[DATA_KEY_NONCE_BYTES:_WRAPPED_KEY_END],
+        ),
+        blob_store._associated_data(bytes.fromhex(reference.digest)),
     )
 
 
@@ -114,6 +164,12 @@ def test_the_widths_are_pinned() -> None:
     assert BLOB_HEADER_BYTES == 72
 
 
+def test_the_suffix_and_the_format_tag_are_pinned() -> None:
+    """Nothing in the primitive holds these two, so a case has to spell them."""
+    assert BLOB_SUFFIX == ".blob"
+    assert BLOB_FORMAT_TAG == b"drishti/evidence/v1"
+
+
 def test_a_blob_is_named_by_the_sha256_of_the_plaintext(tmp_path: pathlib.Path) -> None:
     """The name is the address, so a blob is found rather than guessed at."""
     store = _store(tmp_path)
@@ -145,6 +201,41 @@ def test_what_is_written_is_not_the_plaintext(tmp_path: pathlib.Path) -> None:
     assert len(stored) == BLOB_HEADER_BYTES + len(DOCUMENT) + BLOB_TAG_BYTES
 
 
+@pytest.mark.parametrize(
+    "file_header", list(FILE_HEADERS.values()), ids=list(FILE_HEADERS)
+)
+def test_the_stored_ciphertext_carries_no_file_header(
+    tmp_path: pathlib.Path, file_header: bytes
+) -> None:
+    """A file type is read off a header without a key, so none is stored."""
+    store = _store(tmp_path)
+    document = file_header + DOCUMENT
+
+    reference = store.put(document)
+    stored = store.path_of(reference).read_bytes()
+
+    assert file_header in document
+    assert file_header not in stored[BLOB_HEADER_BYTES:]
+    assert file_header not in stored
+    assert store.get(reference) == document
+
+
+def test_a_document_that_is_only_a_header_hides_it(
+    tmp_path: pathlib.Path,
+) -> None:
+    """There is no clear-text prefix: the ciphertext is the whole of the rest."""
+    store = _store(tmp_path)
+    document = FILE_HEADERS["pdf"]
+
+    reference = store.put(document)
+    stored = store.path_of(reference).read_bytes()
+
+    assert len(stored) == BLOB_HEADER_BYTES + len(document) + BLOB_TAG_BYTES
+    assert document not in stored
+    assert FILE_HEADERS["pdf"] not in stored
+    assert store.get(reference) == document
+
+
 def test_the_header_is_three_parts_at_fixed_widths(tmp_path: pathlib.Path) -> None:
     """A reader slices it by offset, so it parses no format at all."""
     store = _store(tmp_path)
@@ -172,6 +263,19 @@ def test_a_blob_carries_neither_the_document_nor_the_master_key(
     assert DOCUMENT not in stored
     assert MASTER.key not in stored
     assert base64.b64encode(MASTER.key) not in stored
+
+
+def test_a_blob_is_sealed_under_a_key_of_its_own(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The envelope is the claim: the key is drawn, and it is not the master."""
+    store = _store(tmp_path)
+
+    first = _data_key_of(store, store.put(DOCUMENT))
+    second = _data_key_of(store, store.put(b"a second document"))
+
+    assert len(first) == len(second) == DATA_KEY_BYTES
+    assert first not in (MASTER.key, second)
 
 
 def test_a_blob_round_trips_byte_for_byte(tmp_path: pathlib.Path) -> None:
@@ -303,6 +407,55 @@ def test_a_file_shorter_than_the_header_is_refused(tmp_path: pathlib.Path) -> No
         store.get(reference)
 
     assert "header" in _message_of(refusal.value)
+
+
+def test_a_file_exactly_a_header_long_is_a_blob_not_a_header(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The header is whole, so what is missing is the document and not the header."""
+    store = _store(tmp_path)
+    reference = store.put(DOCUMENT)
+    store.path_of(reference).write_bytes(bytes(BLOB_HEADER_BYTES))
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        store.get(reference)
+
+    message = _message_of(refusal.value)
+    assert "did not open" in message
+    assert "header" not in message
+
+
+def test_a_blob_sealed_under_another_format_does_not_open(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The format tag is sealed in, so other rules do not open under these."""
+    digest = hashlib.sha256(DOCUMENT).hexdigest()
+    store = _store(tmp_path)
+    _written_by_hand(
+        tmp_path,
+        digest,
+        DOCUMENT,
+        associated=b"drishti/evidence/v2" + bytes.fromhex(digest),
+    )
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        store.get(BlobRef(digest=digest, size=len(DOCUMENT)))
+
+    assert "did not open" in _message_of(refusal.value)
+
+
+def test_a_blob_sealed_under_the_address_alone_does_not_open(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The tag is part of what is sealed, so the address alone is not enough."""
+    digest = hashlib.sha256(DOCUMENT).hexdigest()
+    store = _store(tmp_path)
+    _written_by_hand(tmp_path, digest, DOCUMENT, associated=bytes.fromhex(digest))
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        store.get(BlobRef(digest=digest, size=len(DOCUMENT)))
+
+    assert "did not open" in _message_of(refusal.value)
 
 
 def test_an_address_the_store_holds_nothing_at_is_refused(
@@ -533,3 +686,127 @@ def test_the_module_reads_no_environment_of_its_own() -> None:
 
     assert "getenv" not in source
     assert "environ[" not in source
+
+
+def test_a_blob_does_not_open_under_another_master_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The wrong key fails closed: a refusal, never a document of no key."""
+    store = _store(tmp_path)
+    reference = store.put(DOCUMENT)
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        EvidenceStore(tmp_path, OTHER_MASTER).get(reference)
+
+    message = _message_of(refusal.value)
+    assert "did not open" in message
+    assert "master key" in message
+    assert store.get(reference) == DOCUMENT
+
+
+def test_a_refusal_for_a_wrong_key_names_both_readings_and_quotes_nothing(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A deployment has to read this, and nothing in it may be a secret."""
+    store = _store(tmp_path)
+    reference = store.put(DOCUMENT)
+    stored = store.path_of(reference).read_bytes()
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        EvidenceStore(tmp_path, OTHER_MASTER).get(reference)
+
+    message = _message_of(refusal.value)
+    assert "master key" in message
+    assert "altered" in message
+    assert isinstance(refusal.value, BlobStoreError)
+    assert refusal.value.__suppress_context__ is True
+    assert MASTER.key.hex() not in message
+    assert OTHER_MASTER.key.hex() not in message
+    assert stored.hex() not in message
+    assert DOCUMENT.decode("latin-1") not in message
+    assert str(len(DOCUMENT)) not in message
+
+
+@pytest.mark.parametrize(
+    "width",
+    [0, 1, 15, 16, 1024],
+    ids=["empty", "one-byte", "a-block", "a-tag", "a-kilobyte"],
+)
+def test_a_wrong_key_returns_no_document_of_any_width(
+    tmp_path: pathlib.Path, width: int
+) -> None:
+    """Garbage would be empty, short or whole; only a refusal is allowed."""
+    payload = secrets.token_bytes(width)
+    reference = _store(tmp_path).put(payload)
+
+    with pytest.raises(BlobUnreadable) as refusal:
+        EvidenceStore(tmp_path, OTHER_MASTER).get(reference)
+
+    assert "did not open" in _message_of(refusal.value)
+
+
+def test_a_wrong_key_refuses_every_blob_the_directory_holds(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Fails closed store-wide: a key that opens one opens none, or is right."""
+    store = _store(tmp_path)
+    references = [store.put(f"document {n}".encode("ascii")) for n in range(5)]
+    wrong = EvidenceStore(tmp_path, OTHER_MASTER)
+
+    for reference in references:
+        with pytest.raises(BlobUnreadable):
+            wrong.get(reference)
+
+    assert [store.get(reference) for reference in references] == [
+        f"document {n}".encode("ascii") for n in range(5)
+    ]
+
+
+def test_one_document_addressed_by_two_keys_is_opened_by_one_of_them(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The digest addresses the bytes; only the key that sealed them opens them."""
+    first = _store(tmp_path)
+    second = EvidenceStore(tmp_path, OTHER_MASTER)
+
+    under_first = first.put(DOCUMENT)
+    under_second = second.put(DOCUMENT)
+
+    assert under_first == under_second
+    assert len(list(tmp_path.iterdir())) == 1
+    with pytest.raises(BlobUnreadable):
+        second.get(under_second)
+    assert first.get(under_first) == DOCUMENT
+
+
+def test_a_key_generated_again_does_not_open_what_the_first_one_wrote(
+    tmp_path: pathlib.Path,
+) -> None:
+    """D154 draws one per call, so a restart holds a key that opens nothing."""
+    before_restart = load_master_key(None, ENV_DEVELOPMENT)
+    reference = EvidenceStore(tmp_path, before_restart).put(DOCUMENT)
+
+    after_restart = load_master_key(None, ENV_DEVELOPMENT)
+
+    assert before_restart.key != after_restart.key
+    with pytest.raises(BlobUnreadable) as refusal:
+        EvidenceStore(tmp_path, after_restart).get(reference)
+
+    assert "master key" in _message_of(refusal.value)
+    assert EvidenceStore(tmp_path, before_restart).get(reference) == DOCUMENT
+
+
+def test_a_refused_read_leaves_the_stored_blob_exactly_as_it_was(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A refusal is a read: a wrong key never rewrites or removes evidence."""
+    store = _store(tmp_path)
+    reference = store.put(DOCUMENT)
+    path = store.path_of(reference)
+    before = path.read_bytes()
+
+    with pytest.raises(BlobUnreadable):
+        EvidenceStore(tmp_path, OTHER_MASTER).get(reference)
+
+    assert path.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == [reference.digest + BLOB_SUFFIX]

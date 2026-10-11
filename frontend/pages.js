@@ -110,8 +110,7 @@
     const count = document.getElementById("result-count");
     const emptyState = document.getElementById("screenings-empty");
     const clearButton = document.getElementById("clear-filters");
-    const exportButton = document.getElementById("export-screenings");
-    const notice = document.getElementById("screenings-notice");
+
     const sortButton = document.getElementById("sort-checked");
     if (!body) return;
 
@@ -201,49 +200,11 @@
       });
     }
 
-    body.addEventListener("click", (event) => {
-      const button = event.target?.closest?.("[data-row-action]");
-      if (!button) return;
-      const row = button.closest("tr");
-      const id = row?.querySelector(".cell-primary strong")?.textContent ?? "record";
+    // 24.5: the row actions belong to screenings-list.js, which owns the
+    // rows. Its redraw announces itself so this filter is re-applied over
+    // the rows that replaced the ones it had hidden.
+    document.addEventListener("drishti:screenings-changed", render);
 
-      if (button.dataset.rowAction === "delete") {
-        row?.remove();
-        render();
-        if (notice) {
-          notice.textContent = `${id} removed from this view. Nothing was deleted on a server.`;
-        }
-        return;
-      }
-
-      if (notice) {
-        notice.textContent =
-          `Opening ${id} is not available yet. Screening history needs a backend record store.`;
-      }
-    });
-
-    if (exportButton) {
-      exportButton.addEventListener("click", () => {
-        const header = ["Screening", "Checked", "Mode", "Score", "Result"];
-        const data = visibleRows().map((row) =>
-          Array.from(row.querySelectorAll("td"))
-            .slice(0, 5)
-            .map((cell) => cell.textContent.trim()),
-        );
-        const csv = [header, ...data]
-          .map((line) =>
-            line
-              .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
-              .join(","),
-          )
-          .join("\r\n");
-        downloadFile(
-          "drishti-screenings.csv",
-          `${csv}\r\n`,
-          "text/csv;charset=utf-8",
-        );
-      });
-    }
 
     render();
   }
@@ -397,6 +358,11 @@
     link.remove();
     URL.revokeObjectURL(url);
   }
+
+  // Saving a file is browser plumbing rather than a page's own behaviour, so
+  // it is published rather than kept: the history export asks for this instead
+  // of writing its own.
+  window.DRISHTI_DOWNLOAD = downloadFile;
 
   initSettings();
   initAccordions();

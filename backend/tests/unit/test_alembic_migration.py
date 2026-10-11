@@ -249,7 +249,7 @@ def test_the_migrated_schema_matches_the_models(
 @pytest.mark.parametrize(
     ("table_name", "column_count"),
     [
-        (SCREENING_TABLE_NAME, 16),
+        (SCREENING_TABLE_NAME, 18),
         (AUDIT_EVENT_TABLE_NAME, 10),
         (LEDGER_ENTRY_TABLE_NAME, 5),
         (TRAVELER_CASE_TABLE_NAME, 3),

@@ -10888,3 +10888,4639 @@ short data key.
 - **A wrong key and a tampered wrap are indistinguishable here**, deliberately:
   AES-GCM cannot separate them and a store that tried would be claiming a
   distinction the primitive does not make.
+
+## D157 -- a blob is named by the SHA-256 of its plaintext, and its address is sealed into the file
+
+**Date:** October 3, 2026. **Status:** settled, task 19.3.
+
+**The decision.** :mod:``app.storage.blob_store`` owns the store.
+:func:``app.storage.blob_store.EvidenceStore.put`` takes the bytes an officer
+uploaded and answers a :class:``app.storage.blob_store.BlobRef`` carrying the
+digest and the size it opens to; :func:``app.storage.blob_store.EvidenceStore.get``
+opens what that reference addresses. The document itself never leaves the
+module, and no row in this service holds it.
+
+- **The name is the content's address, and nothing else reaches the
+  filesystem.** It is :data:``app.storage.blob_store.BLOB_DIGEST_HEX_CHARS``
+  lowercase hex characters of SHA-256 and the one suffix this module writes, so
+  no reference -- and no filename, screening id or path a caller sends -- can
+  name a file outside the store's root.
+- **A reference is refused before a path is built.**
+  :meth:``app.storage.blob_store.BlobRef.__post_init__`` checks the digest's
+  shape and the size's sign, so a reference is refused before a path is built
+  rather than at the filesystem, and nothing a reference carries can name a
+  file at all.
+- **A blob is self-describing.** Every file is a fixed
+  :data:``app.storage.blob_store.BLOB_HEADER_BYTES`` header -- the wrapped key's
+  nonce, the wrapped key, and the nonce this module drew -- then the sealed
+  document. Every part is a fixed width, so a reader slices it by offset and
+  parses no format at all.
+- **The address is sealed into the blob rather than filed beside it.** The
+  digest, beside :data:``app.storage.blob_store.BLOB_FORMAT_TAG``, is AES-GCM's
+  associated data for both halves, so a blob moved under another blob's name
+  does not open, and neither does one whose bytes were altered. This is the
+  binding D156 left to this task.
+- **The same bytes are written once.** A file is named by what it decrypts to,
+  so a second put of the same document answers the same reference and nothing
+  on disk changes -- there is nothing a second write could have improved.
+- **A blob is never returned rather than returned wrongly.** An address the
+  store holds nothing at is :class:``app.storage.blob_store.BlobNotFound``; a
+  file too short to be one of ours, one that does not open, and one that opens
+  to something which is not the document its name addresses are all
+  :class:``app.storage.blob_store.BlobUnreadable``. None of the three quotes a
+  byte of the document, and the wrong key and the altered bytes are one answer
+  from AES-GCM.
+- **A half-written file is never named like a blob.** The body is written to a
+  temporary beside its final name and moved into place, so a write that fails
+  leaves a file no reader will try to open rather than a half-document under a
+  live address.
+- **The store keeps no index.** A reference is a complete way to reach a blob,
+  so there is nothing to keep in step with what is on disk, and a reference
+  whose file is gone is answered rather than looked up.
+- **Nothing here reads the environment.** D154 loads the master key and this
+  module is handed one, on the reasoning that a key is not read where it is
+  used.
+
+**What this forbids.**
+- A file named by anything a caller chose -- a screening id, an upload name, a
+  path -- or by anything but the digest and the one suffix.
+- Checking a reference at the filesystem rather than before the path is built.
+- Sealing a blob under anything but its own address, or filing the digest
+  beside the file as a record of where it belongs.
+- A document, a data key or a master key in a file name, in a reference, in a
+  log or in a refusal message.
+- Writing ciphertext in place, or naming a partial write like a blob.
+- An index, a manifest, or any second copy of what is on disk.
+
+**What this leaves.**
+- **Nothing calls the store.** The module is written and tested, but no flow
+  holds a :class:``app.storage.blob_store.BlobRef`` and no upload is stored;
+  19.6 is what puts the store in the screening flow.
+- **A reference has a spelling but no column.**
+  :meth:``app.storage.blob_store.BlobRef.to_wire`` writes
+  ``sha256:<digest>:<size>`` and
+  :meth:``app.storage.blob_store.BlobRef.from_wire`` reads it back and refuses
+  any other, but no migration in this repository holds one yet.
+- **Nothing deletes a blob.** There is no purge and no retention, so a stored
+  blob stays until something removes it; 19.7 and 19.8 own that, and what a
+  reference answers once its file is gone is already the
+  :class:``app.storage.blob_store.BlobNotFound`` a missing file gives.
+- **The store is one directory on one filesystem.** There is no sharding and no
+  caching -- every reference opens the file again -- so a store holding very
+  many blobs keeps them all in one place.
+
+## D158 -- an upload is stored encrypted and the row holds only its address
+
+**Date:** October 3, 2026. **Status:** settled, task 19.6.
+
+**The decision.** :func:`app.screening.run_screening` is handed the bytes an
+officer uploaded and the :class:`~app.storage.blob_store.EvidenceStore` to
+write them in, stores the document before the row is created, and puts the one
+token :meth:`~app.storage.blob_store.BlobRef.to_wire` spells on that row.
+``POST /api/screenings`` gets the store from :func:`app.api.get_evidence_store`
+and hands both down. **No row in this service holds a document**, so the
+screening row carries an address and nothing else.
+
+- **The blob is written before the row, not after.** A row that names a blob
+  is therefore a row whose blob is already on disk; the other order would
+  leave a row claiming evidence that a failed write never stored. An orphan
+  blob from a later failure is the cheaper of the two, and 19.7's retention
+  owns it.
+- **The store is built once per process**, by
+  :func:`app.api.get_evidence_store` under an ``lru_cache``. D154 draws a
+  development key *per call*, so a store rebuilt per request would write every
+  upload under a key that exists for that one request and the next request
+  could not open what the last one stored. With a configured key the cache is
+  invisible: both answers are the same bytes.
+- **A document and a store are required together.**
+  :func:`~app.screening._stored_reference` refuses one without the other
+  rather than answering half: storing nothing while returning a screening id
+  would lose the page the screening was made from.
+- **The route stores the upload, not the frame.** ``contents`` is what the
+  officer sent; ``frame.tobytes()`` is a re-encoding of it, and the blob a
+  forensic reader opens later is the file that was actually uploaded.
+- **The column is nullable**, on 10.2's reasoning: a column added to a table
+  that already holds rows cannot be ``NOT NULL``, and a row screened before
+  this revision has no blob behind it. ``image_blob_ref is None`` is the
+  honest answer for a screening no store was wired into.
+
+**Measured, not asserted** -- 20 cases in
+``backend/tests/unit/test_evidence_in_screening_flow.py``: no column of a row
+written through the real route carries a byte of the document (every column
+read back and searched, for the whole document and for a marker riding inside
+its own bytes as a PNG ``tEXt`` chunk); the database *file* carries none
+either; the address on the row opens back to exactly the uploaded bytes and
+its digest is the SHA-256 of them; the stored file carries neither the
+  document nor the PNG magic bytes; two uploads of one document share one
+blob; a screening with no store keeps nothing and writes no file; a document
+without a store and a store without a document are both refused with no row
+written; the root reader answers the configured directory, the shipped
+default beside ``BACKEND_DIR``, and creates nothing; the store is one per
+process; and a production deployment with no key stores nothing.  Plus 28
+mutations of the shipped lines -- 23 in the first pass and the 4 anchors the
+first pass skipped (written LF against CRLF files) plus the 2 survivors the
+first pass found -- all 28 killed, every file restored byte-identically.  The
+full backend suite 7164 passes and ``scripts/check-all.ps1`` exits 0.
+
+**What this forbids.**
+- A row, a column, an event payload or a log line holding a document, a
+  fragment of one, or anything a decoder could rebuild one from.
+- A store rebuilt per request, which in development makes every blob
+  unreadable the moment after it is written.
+- Storing the decoded frame instead of the uploaded bytes.
+- Silently storing nothing when a document was handed over.
+- Reading ``EVIDENCE_STORE_ROOT`` anywhere but ``app.config``.
+
+**What this leaves.**
+- **Nothing reads a blob back yet.** No route reads evidence, so the store is
+  written and not yet read; 19.7 and 19.8 own retention and purge.
+- **A suite that reached the shipped store would write into the repository.**
+  ``backend/tests/conftest.py`` hands every test a store over a temporary
+  directory for that reason, on ``test_alembic_migration.py``\'s reasoning
+  about ``drishti.db``.
+- **The store is one directory on one filesystem and is never cleaned.**
+  There is no purge and no retention, so a stored blob stays until something
+  removes it; 19.7 and 19.8 own that.
+- **A blob written before a cascade that then fails is an orphan.** Nothing
+  points at it and nothing removes it until 19.7.
+- **The reference is not on the trail.** No event carries the digest, so the
+  audit trail cannot say which blob belongs to a run without reading the row.
+- **A row screened before this revision carries no reference** and nothing can
+  recover its document, because none was stored.
+
+## D159 -- Retention is a window per record class, evidence is the only class a purge removes, and a blob is aged by the file that holds it
+
+**Date:** October 3, 2026. **Status:** settled, task 19.7.
+
+**The decision.** :func:`app.config.get_retention_days` reads ``RETENTION_DAYS``
+as ``class=days`` pairs and answers every class in ``RECORD_CLASSES`` with a
+whole number of days or ``None``;
+:func:`app.storage.retention.purge_expired_evidence` walks one store, deletes
+the blobs whose file is older than the evidence window, and answers a
+``PurgeResult`` of the digests removed beside the blobs kept.
+
+- **A window is per record class, and the classes are named in one place.**
+  ``RECORD_CLASSES`` is the purgeable classes followed by the never-purged
+  ones, so a caller cannot name a class this module has not heard of, and the
+  defaults are copied on every call, so nothing a caller does to one answer
+  is what the next call reads.
+- **The audit trail cannot be given a window at all.** Gate 19 asks for
+  retention "without touching the audit trail", so ``audit_events`` and
+  ``ledger_entries`` are refused by name: a window for a class no purge could
+  act on is a promise, and it is refused where it is read rather than left to
+  a sweep that happens not to reach it. 19.8 holds the other half -- that a
+  purge run never touches a ledger entry.
+- **A window below one day is refused**, on the reasoning
+  :func:`app.config.get_rate_limit_per_minute` already uses: a value which is
+  only safe when it is refused is refused. Zero would expire every document
+  the first time a purge ran, and reading it as no retention at all would be a
+  deletion nobody asked for.
+- **A blob is aged by the file that holds it, because nothing else records the
+  instant.** The store keeps no index (D157) and the column on the row holds
+  an address rather than a time, so the window is measured against the last
+  write of the file -- the one ``os.replace`` sets when ``put`` moves a
+  finished body into place. The consequence is recorded rather than hidden:
+  copying a store restamps every blob in it.
+- **The window is a boundary and not a moment.** A blob written exactly
+  ``retention_days`` ago is kept and one written a second earlier is deleted,
+  and both sides of that are held by the suite.
+- **Only a file named like a blob is reachable.** ``blob_paths`` answers the
+  files whose name matches ``_BLOB_NAME_PATTERN`` -- the digest and the one
+  suffix, in one pattern -- and descends into no directory, so a
+  half-written ``.partial``, a backup, or a document an operator copied in
+  cannot be reached by a window.
+- **The purge is handed the store and reads no environment**, so
+  ``app.config`` stays the only reader of the environment as D37 requires, and
+  the window is the one argument a case can hold still.
+- **A purge answers digests and never a path or a byte**, so a caller can
+  report what went without holding anything of the document that went.
+
+**Measured, not asserted** — 31 new cases in ``test_retention.py``: an
+expired blob is gone from disk and its reference answers ``BlobNotFound``; a
+blob inside the window still opens byte for byte; a blob written exactly at
+the window is kept while one a second past it is deleted; a ``.partial``, a
+``README``, a backup, a name whose suffix is not escaped, a directory named
+like a blob and a blob file in a subdirectory all survive however old they
+are; the default window expires against the real clock when no instant is
+passed; and the configuration cases hold the defaults when nothing is set, one
+class changed, the spacing around a pair, an unknown class, a pair with no
+``=`` in it, the same class named twice, a window that is not a whole number,
+zero, and a window set for the audit trail. Plus 22 mutations of the shipped
+lines, all 22 killed, every file restored byte-identically. The full backend
+suite 7195 passes and ``scripts/check-all.ps1`` exits 0.
+
+**What this forbids.**
+- A second reader of ``RETENTION_DAYS``, or of any other variable, outside
+  ``app.config``.
+- A window for the audit trail, in the defaults or in an operator value.
+- Deciding a blob expired by anything but the instant its own file carries.
+- Deleting, or listing, a file whose name is not a blob address.
+- A purge that reports a path, a size, or a byte of what it removed.
+
+**What this leaves.**
+- **Nothing calls the purge.** No route, no job and no script reaches
+  :func:`app.storage.retention.purge_expired_evidence`, so no document is
+  expired until something is; 19.8 owns its logging and its idempotency, and
+  no task after that owns a schedule.
+- **Nothing records the purge.** No run of it reaches the trail, so the audit
+  answer cannot yet say which documents were removed.
+- **A purge takes no lock.** Two over one store at once may report the same
+  digest twice, and one running beside an upload measures a file the moment it
+  is moved into place.
+- **An expired document is gone, not marked.** The row keeps a reference whose
+  file no longer exists, and the store answers ``BlobNotFound`` for it, which
+  is the answer a missing file already gave.
+- **A blob the copy restamped keeps its window from the copy.** That is what
+  aging by the file means, recorded above rather than designed away.
+## D160 -- A sweep names a digest once, and one sweep is one line in the log
+
+**Date:** October 3, 2026. **Status:** settled, task 19.8.
+
+**The decision.** :func:`app.storage.retention.purge_expired_evidence` reports a
+digest only for a file that run removed, and writes one `evidence_purge` line
+per sweep carrying the window enforced and every digest it removed.  A sweep
+run twice over one store answers nothing deleted the second time, and no sweep
+reads a row at all.
+
+- **A digest is reported by the run that removed the file, and by no other.**
+  The walk skips a path that is no longer a file, so a blob another sweep took
+  after the listing is not named a second time, and :class:`PurgeResult` says
+  so as an :invariant: rather than leaving it to each caller to notice.
+- **`missing_ok=True` on the unlink is deliberate and is now held.** The gap
+  the `is_file()` guard leaves is between the stamp and the unlink: a blob that
+  vanishes there is a sweep that removed nothing, not a sweep that failed.
+- **One sweep is one line, whatever it removed.** An empty sweep logs too --
+  `deleted_count=0` and no digests -- so an operator can tell a sweep that ran
+  from one that never did, and the fields are `retention_days`, `deleted`,
+  `deleted_count` and `kept`.
+- **The message is the event name, so no digest is formatted into it.** The
+  digests travel as fields, on 11.7's reasoning that D76 left no free-text
+  slot; the four field names joined that file's `ALLOWED_FIELDS` because a
+  window, a count and a document's own address are vocabulary rather than a
+  payload.
+- **A purge cannot reach a ledger entry because it names no table.** The
+  module imports no ORM and no session, and a case reads its own source to
+  hold that -- which is why "without touching the audit trail" is a property
+  of the module rather than of the window it enforces.
+
+**Measured, not asserted** -- 10 new cases in `test_retention.py`: a store
+swept three times answers the first removal once and nothing after it; a store
+with nothing expired answers the same answer twice; a blob taken after the
+listing is named by nobody; a blob that vanishes between its stamp and the
+unlink does not fail the sweep; the event name is pinned as a literal, since a
+log query is written against it; one line per sweep carries the window, the
+digest list, the count and the kept count; the second line names no digest and
+the document itself is in no line; a sweep over a store beside a migrated
+ledger leaves every column of every entry as it was, entries ten years old
+under a one-day window; and the module names no table and takes no session.
+Plus 15 mutations of the shipped lines, all 15 killed, every file restored
+byte-identically.  The full backend suite 7205 passes and
+`scripts/check-all.ps1` exits 0.
+
+**What this forbids.**
+- A purge that reports a digest for a file it did not remove.
+- A purge that names a path, a size, or a byte of what it removed.
+- A log line whose message carries anything a document is named by.
+- A retention module importing an ORM, a session factory, or a table name.
+
+**What this leaves.**
+- **Nothing calls the sweep.** No route, no job and no script reaches
+  :func:`app.storage.retention.purge_expired_evidence`, so no document is
+  expired until something is; 19.8 gave it an answer a caller can read twice
+  and a line a reader can find, and no task in `tasks.md` owns a schedule.
+- **The log is not the trail.** A line is an operator record and not an audit
+  event, so nothing still reaches `ledger_entries` and the audit answer cannot
+  say which documents were removed.
+- **A sweep takes no lock, and 19.8 narrowed the window rather than closing
+  it.** Two sweeps can both see one file and both report its digest; what is
+  now impossible is naming a digest for a file that was already gone when the
+  listing was walked.
+
+## D161 -- One module owns every request, and a request that outruns its budget is its own error
+
+**Date:** October 3, 2026. **Status:** settled, task 20.2.
+
+**The decision.** ``frontend/api.js`` exposes ``window.DRISHTI_API.request`` and
+nothing else calls the API.  It reads its base URL from
+``window.DRISHTI_CONFIG.apiBaseUrl``, and an absent or non-string base URL means
+the page's own origin rather than a guessed host.  Every call carries a budget
+of 15000 ms unless the caller names one, and a request that outruns it rejects
+with ``ApiTimeoutError`` -- ``name`` ``ApiTimeoutError``, ``code`` ``timeout`` --
+which is not the error a network failure produces.
+
+- **A base URL that is not a string is refused, not coerced.** The reader asks
+  for a string and answers the empty base otherwise, so a build configured
+  with a number reaches its own origin instead of a host spelled ``42``.
+- **A timeout is a named error rather than a rejected ``fetch``.** The
+  controller is this module's own, so ``signal.aborted`` is true for exactly
+  one reason -- the budget ran out -- and that is what tells the refusal apart
+  from a ``TypeError`` no budget caused.  20.3 turns the rest into
+  ``{code, message, status}``; the timeout is already named.
+- **The budget is cleared whatever the outcome.** The timer is armed before the
+  call and cleared in a ``finally``, so a settled request leaves no pending
+  timer and a page cannot hold the event loop open on a request already
+  answered.
+- **A zero budget is a budget.** The default comes from a destructuring default
+  rather than an ``||``, so a caller asking for no wait at all is refused
+  immediately instead of silently handed the shipped fifteen seconds.
+- **The timeout is the only abort.** No caller signal is accepted yet, so
+  ``aborted`` cannot be true for a reason the error does not name.
+- **Nothing calls ``request`` yet.** 20.4 moves ``home.js``'s own ``fetch``
+  onto it, so the module is the one owner of API access by construction and not
+  yet by use.
+
+## D162 -- Every refusal out of `request()` answers the same three fields
+
+**Date:** October 3, 2026. **Status:** settled, task 20.3.
+
+**The decision.** `frontend/api.js` normalises every refusal into one
+`ApiError` carrying `code`, `message` and `status`.  A network failure is
+`network_error` with `status` `0`;  a response that is not `ok` is read once for
+the `{"error": {"code", "message"}}` envelope the backend already sends, and its
+`code` and `message` travel through untouched beside the HTTP status.  A body
+carrying no envelope -- not JSON, not an object, a code that is not a non-empty
+string -- is refused rather than coerced, and the status the response arrived
+with names the refusal instead:  `server_error` at or above 500, `client_error`
+from 400, `unknown_error` below that.
+
+- **`status` is `0` where no HTTP status exists**, on a network failure and on a
+  timeout alike, so a caller can read all three fields off any rejection without
+  first asking whether one happened.
+- **A refused envelope is the server's own words, not a paraphrase.**  Code and
+  message travel beside the status, so 20.8 can tell a spent rate limit from a
+  validation refusal from a 5xx without reading prose to find out which.
+- **A message this module composes never quotes the body.**  A proxy's HTML and
+  the browser's own `TypeError` text stay out of the envelope, so the refusal an
+  officer reads is one this module wrote rather than one a middlebox chose.
+- **The budget is still armed while the body is read.**  Headers can arrive and
+  the body then stall, so the refusal is normalised inside the armed window and
+  an abort outranks the status-derived answer it interrupted.
+- **A timeout is an `ApiError` too.**  `ApiTimeoutError` extends it and keeps
+  its own name and its `code` `timeout`, so D161's "not the error a network
+  failure produces" is now the distance between two codes rather than between
+  two classes -- and a network failure is no longer a bare `TypeError` reaching
+  a page.
+- **A response that is `ok` is returned with its body unread**, so the body of a
+  successful answer is still the caller's to read.
+
+## D163 -- `frontend/api.js` is the one module that reaches the network
+
+**Date:** October 4, 2026. **Status:** settled, task 20.4.
+
+**The decision.** `frontend/home.js` holds no `fetch` call.  The one request
+the screening page makes -- `POST /api/analyze` carrying the image and
+`mode` -- goes through `window.DRISHTI_API.request`, which reads the base
+URL, arms the 15000 ms budget and normalises the refusal (D161, D162).
+`home.html` loads `api.js` after `api-config.js` and before `home.js`, and
+a test reads every shipped page script and refuses a `fetch` call in it.
+
+- **A page reads three fields off a rejection, never a `Response`.**  A
+  not-`ok` answer arrives as an `ApiError`, so `home.js` neither reads
+  `response.ok` nor parses an envelope of its own: it shows `error.message`
+  and keeps one sentence of its own for the single failure that has no
+  message to show -- a network failure still reads "Could not connect to
+  the quality API".
+- **A page asks the module whether it is configured.**  `home.js` reads its
+  base URL through `readApiBaseUrl()` rather than repeating D161's reader, so
+  one trimmed string decides both the request and the "not configured"
+  refusal, and a number in the config cannot spell a host here either.
+- **The budget is inherited rather than re-implemented.**  A page that owns
+  no request cannot forget to arm it, so a body that stalls is refused as
+  `timeout` and an officer reads that instead of a lost connection -- which
+  is what 20.8 needs to tell the four states apart.
+- **The rule is a property of the directory, not of one file.**  The test
+  walks every `.js` under `frontend/` except `api.js`, so a new page script
+  that reaches the network directly is a red build rather than a second
+  unnoticed path.  It also asserts `api.js` really does call `fetch`, so the
+  sweep cannot pass over a module that calls nothing.
+- **"One module owns API access" is now true by use.**  D161 left
+  `request()` with no caller and 20.4 gave it its first; the health probe of
+  20.6 and the topbar of 20.7 are the next callers.
+
+## D164 -- `frontend/format.js` owns every string an officer reads off a number
+
+**Date:** October 4, 2026. **Status:** settled, task 20.5.
+
+**The decision.**  ``frontend/format.js`` exposes ``window.DRISHTI_FORMAT``
+and is the only place a band, a score or an age becomes display text:
+``bandLabel(band)``, ``formatScore(score)``, ``formatRelativeTime(value,
+now)``, and the ``FormatError`` every refusal raises.  Twenty-one cases cover
+the three functions, including a table of the same stamps answered in five
+timezones.
+
+- **The labels are the abstract's own three names, and there is no fourth.**
+  ``low`` reads "Low Risk", ``review`` reads "Review" and ``high`` reads
+  "High Risk" -- ``app.risk.bands`` already records those as the
+  officer-facing spelling and 23.5's to render, so this module spells them
+  once instead of letting each page choose.  **An unknown band is refused**,
+  because a fallback label is a second vocabulary and a mistyped band would
+  print a verdict an officer acts on.  A row carrying no band is 23.5's to
+  render honestly, not a fourth band here.
+- **A score prints at most one decimal, and a whole score prints as a whole
+  number.**  The scale is 0 to 100 (``app.risk.hard_rules``), and the two
+  thresholds a band is read against print as the backend spells them.  A
+  score that is not a finite number, or one off the scale, is refused -- for
+  the reason ``bands.py`` refuses a ``True`` reading as a score, and because
+  ``99.99`` printing as "100" is rounding rather than coercion.
+- **A timestamp is read as UTC unless it says otherwise.**  The backend
+  stamps ``created_at`` in UTC and serialises it with no offset, and
+  ``Date.parse`` would read such a string in the *reader's* zone, so a naive
+  stamp has ``Z`` appended before it is parsed.  The elapsed time is then a
+  subtraction of epoch milliseconds rather than of calendar fields, so an
+  hour across a clock change is an hour and the answer is the same in Kolkata
+  and in Kiritimati.
+- **The reference date is an argument.**  ``formatRelativeTime`` takes
+  ``now`` and refuses without it, so neither a page nor a case reads a clock
+  it did not hand in; the module holds no ``Date.now``, no ``new Date`` and
+  no ``toLocale*`` call, and a case asserts that on the source.
+- **A stamp ahead of the reference reads "just now".**  A station's clock and
+  the server's can disagree by a second, and refusing that would take a row
+  off the screen over skew -- so a negative elapsed time collapses to the
+  word a stamp inside the last minute gets, and never prints a negative age.
+- **The ladder stops at days.**  A month is not a fixed number of days, so a
+  30-day bucket would print "1 month ago" for 31 March to 1 May.  The answer
+  at 400 days is "400 days ago", which is dull and true; 23.4 and 24.1 own
+  any absolute date printed beside it.
+- **No page loads it yet.**  20.5 is the module and its cases; the first
+  caller is 23.4, which also adds it to ``build.cjs``'s ``staticFiles`` --
+  21.8 owns that list, and a shipped file nothing asks for is how a list
+  stops being a record of what is used.
+
+**Revisit if** a fourth band reaches ``app.risk.bands`` and needs a word this
+module cannot spell, or a locale other than ``en-IN`` ships.
+
+## D165 -- `frontend/status.js` owns the four words a page may show about the connection
+
+**Date:** October 4, 2026. **Status:** settled, task 20.6.
+
+**The decision.**  ``frontend/status.js`` exposes ``window.DRISHTI_STATUS``:
+``current()``, ``lastError()``, ``label(state)``, ``refresh()``,
+``subscribe(listener)``, the ``STATE_LABELS`` table, the ``STATES`` table and
+the ``StatusError`` a state outside those four raises.  Fourteen cases cover
+the module, one per state and one per refusal.
+
+- **The probe starts with the page and asks for a path, never an address.**
+  ``refresh()`` runs as the module loads and calls ``window.DRISHTI_API`` with
+  ``/health``, so the address comes from ``window.DRISHTI_CONFIG`` through
+  D161's reader and no URL is baked into a build.  A case asserts the module's
+  source holds no ``http://``, no ``https://`` and no ``localhost``, and three
+  more dial three different configured hosts.
+- **``/health`` answering 2xx is what ``online`` means.**  The route is
+  documented as answering that the process is up without asking it to do
+  anything, so the probe reads the status and not the body: a 200 with no
+  readable body is still online.  ``/ready`` is deliberately not the probe --
+  it opens a database session, and a status badge should not be able to
+  overload the thing it is reporting on.
+- **A build that names no address is ``unconfigured``, and it dials nothing.**
+  This is the one place ``status.js`` departs from ``api.js``, where an empty
+  base falls back to the page's own origin (D161): a static host has no
+  ``/health``, so a same-origin probe would answer "unreachable" for a site
+  that is merely unbuilt, and an officer would read a broken build as a broken
+  server.  A base URL that is not a string is refused the same way, and a page
+  with no ``DRISHTI_API`` at all settles ``unconfigured`` rather than throwing
+  at load.
+- **Every refusal is ``unreachable``, and the refusal itself is kept.**
+  ``lastError()`` holds the ``ApiError`` a not-``ok`` answer or a network
+  failure produced, so ``network_error`` and ``server_error`` stay apart behind
+  the one name.  That is 20.8's raw material; a badge with one word cannot draw
+  those apart, but the state object can.
+- **A CORS refusal is not distinguishable from an offline one.**  A browser
+  reports a blocked cross-origin answer as a ``TypeError`` from the request,
+  which D162 already names ``network_error`` -- the same code an unreachable
+  host produces.  20.8 therefore promises a distinct message for a CORS
+  failure only where the code or the status separates them, and this entry is
+  the record of why the other case cannot be.
+- **A probe passes through ``checking``, and ``refresh()`` never rejects.**
+  Every probe publishes ``checking`` first, so a retry shows work happening
+  rather than the previous answer standing, and a subscriber is told each
+  settled state ``(state, error)``.  Notification walks a copy of the
+  subscriber set, so a listener that unsubscribes while being told does not
+  skip the one after it.
+- **A state outside the four is refused**, for D164's reason: a fallback label
+  would be a second vocabulary on a screen an officer acts on.  The guard is a
+  ``hasOwnProperty`` call rather than a lookup, so ``label("toString")`` is
+  refused too.
+- **The sweep left one line no case can kill, recorded rather than papered
+  over**: ``let currentState = CHECKING``.  The load-time probe publishes
+  ``checking`` synchronously before any reader can read the initialiser, so
+  the start of the state machine is documentation rather than a branch -- the
+  same category as 20.3's ``"use strict"``.
+- **No page loads it yet.**  20.6 is the module and its cases; 20.7 adds it to
+  the pages and to ``build.cjs``'s ``staticFiles`` with its first caller.
+
+**Revisit if** a fifth state is needed (a degraded service that answers but
+cannot screen), or if a page wants to show a last-checked time and the probe
+gains a clock.
+
+## D166 -- `frontend/topbar-status.js` is the one binding that puts D165's state on a page
+
+**Date:** October 4, 2026. **Status:** settled, task 20.7.
+
+**The decision.**  Every page under ``frontend/`` carries one
+``#connection-status`` element inside its ``workspace-topbar``, and one script
+-- ``frontend/topbar-status.js`` -- writes the connection state into it.  A
+page case asserts the element is inside the topbar of all six pages, that each
+page loads the four modules the element needs, and that ``home.css`` still
+styles it; four cases cover the binding itself.
+
+- **The binding owns the element and none of the words.**  It asks
+  ``DRISHTI_STATUS.label(state)`` for the sentence and sets ``data-state`` for
+  the stylesheet, so the four labels still have one home.  A case asserts the
+  module holds no sentence of its own, and a mutant that hard-codes one dies on
+  the next line of the same case.
+- **The element ships empty.**  Pre-filling the checking label in markup would
+  be a second home for a label the module owns, which is D165's reason for
+  refusing a fallback; a page that runs no script shows no state rather than a
+  stale one.
+- **The settled state is read before the subscription.**  ``status.js`` probes
+  at load and publishes synchronously, so a binding that only listened would
+  render the next state and never the one on screen when it ran.  Removing the
+  initial render is a mutant the suite kills.
+- **It is a file of its own, not a line in ``pages.js``.**  ``home.js`` binds
+  the sidebar toggle and ``pages.js`` binds it too, so loading both on
+  ``home.html`` would toggle the sidebar twice per click and land back where it
+  started.  The binding touches one element and knows nothing of the rest of a
+  page, which is what keeps it loadable beside either script.
+- **Every page now loads ``api-config.js``, ``api.js``, ``status.js`` and
+  ``topbar-status.js``,** and ``build.cjs`` ships all four, so the state an
+  officer reads comes from the same configured base on every page rather than
+  from the one page that happened to dial.
+- **No new token, and the default theme with no override block.**  The
+  topbar reuses ``--ux4g-text-neutral-secondary`` for the checking and
+  unconfigured states and ``--ux4g-text-status-success`` /
+  ``--ux4g-text-status-error`` for the other two -- the same pair
+  ``home.css`` already paints pass and fail with.  The dot is a ``::before``
+  painting ``currentcolor``, so a state colours its own text and its own dot
+  from one declaration.  All four measure above 8:1 on the elevated
+  background in light and above 8.6:1 in dark.
+
+**Revisit if** a page wants a last-checked time beside the state, or if the
+badge is ever given a click target (it has none today, and ``role="status"``
+announces the change without one).
+
+## D167 -- a page composes no message of its own, and a CORS refusal names two causes
+
+``frontend/api.js`` composes the one refusal no server ever authored -- a
+``network_error`` -- and quotes the ``{"error": {...}}`` envelope for the rest,
+so ``home.js`` writes ``error.message`` and holds no sentence at all.  The
+unconfigured case is not a refusal but an absence: there is nothing to dial, so
+``home.js`` asks ``DRISHTI_STATUS.label("unconfigured")``, which is the string
+the topbar already prints and the end of the two homes the old text gave it.
+
+- **The old sentence was misleading, not merely blunt.**  ``Could not connect to
+  the quality API. Make sure the local backend is running, then try again.``
+  names one cause and is wrong whenever the backend *is* running and its answer
+  simply is not readable -- the shape of every misconfigured ``CORS_ORIGINS``,
+  which is a failure this project has already met in deployment.
+- **A CORS refusal is not separable, so the sentence says so.**  A browser
+  raises it as a ``TypeError``, the same shape an unreachable host produces, so
+  the composed message names both causes and both checks -- is it running, then
+  does it allow this site's origin -- instead of guessing between them.  A
+  sentence that picked one would be a guess dressed as a diagnosis.
+- **The four sentences are four sentences, not one generic one.**  One case
+  drives the page through a CORS refusal, a 503, a 400 envelope and an
+  unconfigured build, and asserts each message matches its own cause and that
+  no two read alike.  The generic text could make no such claim about anything,
+  which is what made it useless at triage.
+- **The page owns no words; the modules own the sentences.**  Six mutants on the
+  two shipped lines are all killed, among them restoring a page-composed
+  network message and restoring a second unconfigured sentence -- the same rule
+  D166 applied to ``topbar-status.js``, one step further down.
+
+**Revisit if** the API is ever served from the page's own origin, which removes
+the CORS half of the sentence and with it the reason for naming two causes.
+
+## D168 -- the shell's placeholders are named once, in a module no page loads
+
+``frontend/shell-tokens.js`` holds the seven value tokens 21.1 left in
+``frontend/shell.html`` and the six nav keys their conditionals are spelled
+with, so the template and the build cannot disagree about what a page has to
+supply.  Nothing in a browser reads it: the build is its only reader, and a
+case holds that no ``.html`` under ``frontend/`` loads the file.
+
+- **The task names three tokens and the template needs seven.**  ``pageTitle``,
+  ``activeNavKey`` and ``pageHeading`` are the three the task lists, and
+  ``pageDescription``, ``content``, ``overlays`` and ``pageScripts`` are the
+  four 21.1 also wrote -- one module naming all seven, rather than the task's
+  shortlist and a second home for the rest.
+- **A nav key is a key, and its conditional is derived from it.**  The table
+  holds six keys and ``conditionalName`` answers ``nav.<key>``, so the
+  ``{{#nav.profile}}`` spelling cannot exist for a key nobody declared; an
+  undeclared key raises ``ShellTokenError`` rather than answering a name the
+  template does not carry.
+- **The table and the template are held to each other.**  One case reads every
+  ``{{...}}`` out of ``shell.html``, splits the ``nav.`` conditionals from the
+  value tokens, and answers exactly the module's names and keys -- so a token
+  added to one and not the other fails, in either direction.
+- **Both tables are handed out as copies.**  ``tokenNames()`` and ``navKeys()``
+  answer a fresh array each call, so a caller that sorts or pushes cannot
+  reorder the table the next page is filled from.
+- **A name that is not a token is not a near miss on one.**  ``isToken``
+  answers ``false`` rather than throwing, because 21.3 asks it about every
+  placeholder a page may have left out and wants the list of the missing ones,
+  not the first refusal.
+- **The module is build-time and is not in ``staticFiles``.**  Shipping it
+  would put a table in ``dist/`` that reads nothing; 21.3 is its first reader
+  and 21.8 owns that list.
+
+**Revisit if** the shell grows a slot a page may leave empty -- an optional
+placeholder rather than a required one -- which is a different kind of token
+from the seven here and would want its own spelling.
+
+## D169 -- the build fills one shell into every page, and a page it cannot fill fails the build
+
+``frontend/build.cjs`` reads ``frontend/shell.html`` and each page fragment and
+writes the rendered page into ``dist/``.  The six files under ``frontend/`` are
+no longer whole documents: each carries the seven values D168 names and nothing
+else, so the shell markup exists once in the source and a page the build cannot
+fill is refused rather than shipped with a hole in it.
+
+- **A page is tokens, and nothing but tokens.**  ``{{token}}`` on a line of its
+  own opens a block that ends at ``{{/token}}``; anything else is the value to
+  the end of the line.  Text outside a block is refused by name rather than
+  dropped, so a fragment that has drifted back into markup fails the build
+  instead of quietly losing a section.
+- **A page is rendered, not copied.**  The six pages left ``staticFiles``,
+  ``shell.html`` ships to nothing, and ``dist/index.html`` is still the rendered
+  ``home.html``, so the public root an officer opens is unchanged.
+- **A nav section is kept whole or dropped whole.**  The page's own
+  ``activeNavKey`` keeps the body of its ``{{#nav.<key>}}`` section -- that body
+  is where ``aria-current="page"`` comes from -- and every other section goes
+  with its body, so the shell cannot leave two links marked current.
+- **The refusal names the page and what is wrong with it.**  ``ShellRenderError``
+  says which file left out which tokens, which placeholder it carries that the
+  shell does not fill, or which active nav key is not one of the six.  The CLI
+  prints that message and exits 1, and ``renderPage`` is exported so a case can
+  hold each refusal without building a temporary site.
+- **A page that names no nav key is not a page.**  ``activeNavKey`` goes through
+  ``conditionalName``, so a key the shell does not carry is refused by D168's
+  table rather than matched against the template.
+- **The tests that care about the shell read a rendered page.**  ``pages.test.cjs``,
+  ``home.test.cjs`` and ``api.test.cjs`` render the fragment through the build's
+  own ``renderPage`` where the assertion is about the shell, and keep reading the
+  raw fragment where the assertion is about page content; 21.4 to 21.6 move the
+  shell assertions onto ``dist/`` and free those helpers.
+- **Opening a source page from disk no longer shows the shell.**  This is the
+  tradeoff Part 21 accepted in writing: the shell is filled at build time, so
+  pages still render without JavaScript and a ninth page cannot drift from the
+  other eight.
+
+**Revisit if** the shell ever needs a slot a page may leave empty, or needs
+markup that differs per page outside the seven tokens -- either would want a
+different kind of placeholder rather than a longer token list.
+
+## D170 -- the shell reaches every built page as the same bytes, and the case reads what the build wrote
+
+``build.test.cjs`` builds the site into a temporary directory and holds that
+every ``.html`` the build wrote carries the shell's own markup, byte for byte.
+The shell exists once in the source (D169), so what can still go wrong is a
+page that ships without it, or with a copy that has drifted from it.
+
+- **A run is what byte-identical means here.**  A run is a maximal stretch of
+  ``shell.html`` carrying no placeholder, and every run must appear verbatim in
+  every built page.  The runs are read from the template rather than from a
+  built page, so the one copy in the source is the only thing the case trusts.
+- **A nav section counts as one placeholder, not as shell bytes.**  Its body is
+  ``aria-current="page"``, which belongs to a page and not to the shell, so the
+  bytes either side of it are runs of their own and hold whether D169 kept the
+  section whole or dropped it.  Which link is marked current is 21.6's claim.
+- **The two UX4G asset references are the only shell bytes the build rewrites.**
+  The case models that rewrite and asserts the shell still carries the source
+  path first, so a third rewrite fails the case rather than passing it unseen.
+- **The pages checked are the pages that were built.**  The case reads the built
+  directory rather than a list of names, so ``index.html`` is held as the page
+  it is and a page added in Parts 22-24 is checked the day it is built.
+- **A page that drifted is named with the bytes it lost.**  The failure carries
+  the page and the run it could not find, which is the difference between "the
+  shell is missing" and a marker to search for.
+
+**Revisit if** the shell ever carries markup that differs per page outside the
+seven tokens and the six nav sections -- a slot the build fills with something
+other than a page value is not a run, and would want an assertion of its own.
+
+## D171 -- the active nav is read from the nav block of a built page, and the case reads the key the page names
+
+``build.test.cjs`` holds that every page in ``dist/`` marks exactly one nav item
+current, and that the marked item is the one its own ``activeNavKey`` names.
+D170 left this open on purpose: the nav sections are the shell's only per-page
+bytes, so a build that dropped them all would still satisfy every other case.
+
+- **The count is taken inside ``#sidebar-navigation``.**  The sidebar profile
+  shortcut is an anchor outside the nav and carries ``aria-current="page"`` on
+  the profile page, as it did before the shell existed.  A page-wide count would
+  read two there and none on the pages that do not mark it.
+- **The expected item is the page's own key, read from the page.**  The nav
+  carries ``data-active-nav``, which is the ``activeNavKey`` the build filled,
+  so the case compares the marked ``data-nav`` key against it rather than
+  against a list of the six keys -- there is no second copy of the table to
+  fall behind.
+- **Exactly one is the claim, so zero and two both fail it.**  A case renders a
+  page, drops every ``aria-current`` and then adds a second one, and holds that
+  both are refused, so the assertion cannot pass by finding nothing.
+- **The pages checked are the pages that were built,** as in D170, so
+  ``index.html`` is held too.
+- **The failure names the page and the key that should have been marked,** which
+  is the difference between "the marker vanished" and a line to search for.
+
+**Revisit if** a page ever needs two items marked current -- that would be a
+navigation decision rather than a build one, and would want the case to say so.
+
+## D172 -- a sidebar link is resolved against the directory the build wrote, and a dead one is shown failing
+
+``build.test.cjs`` holds that every link in a built page's sidebar resolves to a
+file inside the build output, and holds that a link naming a file the build does
+not write fails that check.  D170 and D171 read markup; neither can tell a link
+that resolves from one pointing at a page the build stopped writing.
+
+- **The whole ``#app-sidebar`` aside is read, not ``#sidebar-navigation``.**  The
+  brand link and the profile shortcut are anchors outside the nav, and a nav-only
+  read would leave two of the eight sidebar links unchecked.
+- **The check is given the directory the build wrote and resolves into it,** so a
+  link to a page the build stops publishing fails, as does a link climbing out of
+  that directory: the resolved path must sit under the built root and be a file
+  that is there.  There is no second list of expected file names to fall behind.
+- **A dead link is shown rather than assumed.**  A case points one sidebar href at
+  a file the build does not write, holds that the change landed inside the
+  sidebar, and holds that the check throws for it -- so the assertion cannot pass
+  by finding nothing.  Mutating the real ``shell.html`` the same way turns the
+  case red, naming the page and the link.
+- **The pages checked are the pages that were built,** as in D170 and D171, so
+  ``index.html`` is held too.
+- **The failure names the page and the href,** which is the difference between a
+  link that was renamed and a page that stopped being written.
+
+**Revisit if** a sidebar link ever leaves the build output -- an external URL or a
+mail address would be a legitimate href that no file in ``dist/`` can satisfy, and
+the check would want to say so by name rather than simply fail.
+## D173 -- the build's two lists are held to the directory they read, and the pages are what says so
+
+``build.test.cjs`` holds that every page fragment in ``frontend/`` is a page
+``build.cjs`` renders and that every page it renders is a fragment there, and
+that the names in ``staticFiles`` are exactly the local assets the shell and the
+pages load.  21.5 to 21.7 read what the build wrote; nothing stopped the two
+lists from falling behind the source, which is how a page written in Part 22
+would ship with a ``<script>`` naming a file no build ever copied.
+
+- **The pages are counted from the directory, not from a second list.**  Every
+  ``.html`` in ``frontend/`` is a fragment the build renders, so a new
+  ``screening.html`` (22.2) or ``result.html`` (23.1) fails the case until
+  ``pageFileNames`` carries it, and a page dropped from the list fails it too.
+  The case reads the build's own list rather than a copy of the six names.
+- **The assets are counted from what the pages load.**  ``shell.html`` and every
+  fragment are read for ``src`` and ``href`` into ``./x.js`` and ``./x.css``, and
+  those names must equal ``staticFiles``.  A page script left out of the list
+  ships as a 404 on a page the shell rendered; a file copied that no page loads
+  is weight in ``dist/`` that nothing else would notice.  Both directions fail.
+- **Two names are excluded by name, and the build writes both:** ``index.html``
+  is the rendered home page and ``api-config.js`` is written from the
+  environment, so neither is read out of ``frontend/``.  ``shell.html`` is out of
+  the page count because it is the template the build fills rather than a page
+  it renders -- the one ``.html`` carrying placeholders where a fragment
+  supplies them.  Nothing else is exempt, so ``format.js`` is not a live claim:
+  it joins ``staticFiles`` with its first caller in 23.4 or 24.1.
+- **A referenced asset must exist.**  A page whose ``<script>`` names a file
+  nobody wrote fails on the filesystem rather than shipping a 404.
+- **Both lists are handed out as copies** by ``buildFileNames()``, as D168 hands
+  out the token tables, so a case cannot reorder what the build reads -- and
+  ``build.test.cjs`` now takes its own ``pageFileNames`` from there instead of
+  holding the six names a second time.
+- **The four ways the lists fall behind are shown failing:** a page dropped from
+  the list, a page added to the list with no fragment behind it, a page script
+  no copy covers, and a copied file no page loads.  Each claim is shown passing
+  first, so neither check can pass by refusing everything.  Dropping
+  ``screenings.html`` from the real ``pageFileNames`` turns the page case red.
+
+**Revisit if** a page ever loads an asset the build rewrites rather than copies
+-- a second source-backed entry in the build would want the treatment
+``api-config.js`` already gets by name.
+
+## D174 -- the documented preview builds what it serves, and the README is held to the scripts block
+
+``frontend/scripts/preview.cjs`` builds ``frontend/dist/`` and then serves it,
+and ``npm run preview`` is the one documented way to look at the site.  Part 21
+traded opening a source fragment from disk for a build step; this is that step,
+made a command rather than a paragraph.
+
+- **The build runs inside the preview, not beside it.**  ``startPreviewServer()``
+  calls ``buildSite()`` before it listens, so ``npm run preview`` cannot publish
+  a ``dist/`` that a stale or partial build left behind -- the risk that made
+  "build, then serve" two things to remember in the right order.
+  ``preview.test.cjs`` points ``DRISHTI_BUILD_OUTPUT_DIR`` at a directory that
+  does not yet exist and holds that every page the server answers was written by
+  that run, so a preview over an existing ``dist/`` would fail rather than pass.
+- **The served root is the build's, not a second copy of the rule.**  ``build.cjs``
+  now exports ``buildOutputDirectory()`` beside ``buildFileNames()``, so the
+  preview serves what ``build.cjs`` chose from ``DRISHTI_BUILD_OUTPUT_DIR``
+  rather than resolving ``dist/`` again (D168's one home for a fact, D173's lists).
+- **The served root is all there is.**  There is no route to a source fragment, so
+  a page still carrying ``{{token}}`` placeholders is unreachable rather than
+  served half-rendered -- the same reason ``shell.html`` and ``shell-tokens.js``
+  stay out of ``staticFiles`` (D168).
+- **The server refuses what it must, and names it.**  A path decoding out of the
+  root answers ``403`` and names the path; a name the build never wrote answers
+  ``404``.  Both are held beside a page that *is* served, so neither can pass by
+  refusing everything, and the climb is asked over a raw socket because ``fetch``
+  would resolve ``/../`` away before the server ever saw it.
+- **Port 5500 is the default**, the port the README already told a developer to
+  use with Live Server, bound to loopback only; ``api-config.js`` reads
+  ``127.0.0.1`` as local, so a preview reaches a local API with
+  ``DRISHTI_API_BASE_URL`` unset.  ``DRISHTI_PREVIEW_PORT`` takes another port
+  and ``0`` asks the operating system for a free one, which is how the cases run.
+- **The README is held to the scripts block.**  A case reads every ``npm run``
+  ``<name>`` the README offers and fails on one ``package.json`` does not define,
+  or whose file is not in ``frontend/``.  The documented command cannot drift from
+  the command that runs, which is the one failure mode a README alone has.
+
+**Revisit if** the preview ever proxies ``/api`` to a backend instead of leaving
+the base URL to ``api-config.js``: a same-origin proxy would change the CORS
+story the README tells, and would want its own case.
+
+## D175 -- the upload path is one module that sends nothing, and it reuses the site's own size and type rules
+
+``frontend/upload.js`` owns the client-side half of choosing a document image:
+which types are allowed, how large one may be, what the officer is shown, and
+what is left in memory afterwards.  Submission is 22.6's, so nothing here
+reaches a network -- and 25.12's browser check has nothing to re-confirm about
+a preview firing a request.
+
+- **The rules are the site's, in one home.**  ``MAX_BYTES`` is 10 MiB and
+  ``ACCEPTED_TYPES`` is exactly JPEG, PNG and WebP -- the numbers
+  ``home.js`` and ``pages.js`` already ship.  ``ACCEPT`` is those three types
+  joined, which is the one spelling the markup's ``accept`` attribute will
+  carry, so the attribute a browser filters by and the set this module refuses
+  are one list rather than two.  A case reads all three back, and another holds
+  that every refused type in a thirteen-entry table is absent from
+  ``ACCEPTED_TYPES``, so widening the accepted set fails rather than passing.
+- **The boundary is exact in both directions.**  ``size > MAX_BYTES`` refuses,
+  so a file of exactly 10 MiB is accepted and one byte more is not; both are
+  asserted, because ``>=`` is the mutation that would quietly turn the
+  documented ceiling into one byte under it.
+- **A refusal is refused, not coerced.**  A missing type, a non-string type, an
+  absent or non-numeric size and a negative size are each their own refusal, and
+  an empty or cancelled picker is **not** one -- an officer who closed the
+  dialog did nothing wrong and is told nothing.  The sentences live in the
+  module (D167), so the page writes ``error.message`` or nothing.
+- **A file that will not decode is the preview's own refusal.**  A
+  ``image/jpeg`` that is not one is refused with ``unreadable_image`` and
+  released, and a decode failure arriving for a ``src`` this module has already
+  replaced is ignored -- the browser fires it late, and treating it as current
+  would drop a good file for a stale error.
+- **``clear`` is the one path back to nothing chosen.**  A retake (22.7), a
+  rejected file and an unreadable preview all land in it, so the released
+  object URL, the emptied input, the hidden panel and the ``onSelect(null)``
+  that tells the caller there is no file cannot drift apart into three states.
+  Every ``URL.createObjectURL`` is paired with a revoke on the way out.
+- **``choose`` is the one way a file enters.**  The input's ``change`` handler
+  calls it, and 22.4's camera capture calls it too, so a captured photo passes
+  the same two gates as a chosen file rather than a second set of them.
+- **The binding refuses a missing element by name.**  Five elements are
+  required (``input``, ``panel``, ``preview``, ``details``, ``error``) and a
+  missing one raises ``missing_element`` naming it, rather than a
+  ``TypeError`` several lines later naming nothing.
+- **No page loads it yet, and a case says so.**  ``upload.js`` is deliberately
+  out of ``staticFiles`` exactly as ``format.js`` is: 22.2 has not written
+  ``screening.html``, so there is no page whose ``<script>`` names it, and
+  D173's two-way asset check would go red on either a copied file nothing
+  loads or a loaded file the build does not copy.  A case reads
+  ``buildFileNames()`` and every page fragment plus the shell, so the day a page
+  loads the module without the build copying it -- or the build copying it
+  without a page -- this case fails and says which way it drifted.
+
+**Revisit if** the backend ever widens its accepted content types or its size
+ceiling: the module's two constants would then be a second vocabulary beside
+the server's, and the right answer becomes reading the limit from a served
+configuration rather than repeating it here.
+
+## D176 -- camera capture is one module that opens nothing until the officer clicks, and hands a File to the upload path
+
+- **The stream is the officer's click away, and a page that loads the module
+  has asked for nothing.**  ``frontend/camera.js`` reads no device at load and
+  makes no ``getUserMedia`` call until ``start()``, which the "Use camera"
+  button calls: binding wires three controls and nothing else. A case asserts
+  that a fresh binding has opened no stream, played no video and drawn no
+  frame, and a second one adds ``start();`` to the end of ``bindCamera`` and is
+  shown going red -- so the claim cannot pass by a permission prompt the test
+  never looks at.
+- **The consent copy is one string in the module, written into the page's
+  container.**  ``CONSENT`` says what the camera is for, that nothing is
+  recorded, and that nothing is uploaded until the officer submits. A case
+  asserts all three claims, that the container carries exactly that string, and
+  that dropping the middle sentence turns it red -- so a page cannot drift into
+  copy nobody checked.
+- **A captured photo is a ``File``, and 22.3's ``choose()`` is the only door it
+  comes through.**  The frame is drawn to a native ``<canvas>`` and encoded as
+  ``image/jpeg``; the resulting ``File`` goes to the one required ``onCapture``
+  callback, which the page wires to ``choose()``. A case loads ``upload.js``
+  and ``camera.js`` into one sandbox and passes ``choose`` itself, so
+  "the same two gates" is a call rather than a claim: the preview is built, the
+  error element stays empty, and ``fetch``/``FormData`` are recorders that
+  would throw, both at zero.
+- **The rear camera is an ideal and the microphone is off.**
+  ``{audio: false, video: {facingMode: {ideal: "environment"}}}`` is frozen, so
+  a machine with one camera answers rather than refuses and no page can loosen
+  it; a case asserts the constraints as the recorder received them.
+- **One start, one stream.**  ``start()`` on an already-open camera returns the
+  same stream rather than dialling ``getUserMedia`` again, so a double click is
+  not a second permission prompt. ``release()`` is the one path back to a
+  closed camera: it stops every track and detaches the surface together, and a
+  case holds both tracks stopped.
+- **The module names no cause it cannot see.**  Every refusal is a
+  ``CameraError`` handed to the one required ``onRefuse`` callback with the
+  browser's own exception kept in ``cause``; nothing is written into a second
+  element. ``start_failed`` and ``no_media_api`` are the two states 22.5
+  re-sentences -- a denied permission and an insecure context are the same
+  two-word prompt to the officer -- so 22.4's sentences are accurate and
+  deliberately unnamed. A case drives all six codes and asserts that no
+  sentence this module writes contains *permission*, *denied*, *allow*,
+  *secure* or *https*, which holds 22.5's ownership as code rather than as a
+  promise in prose.
+- **Capture is refused when there is nothing to capture.**  No stream, no frame
+  size, no 2D context and no blob are four states; the first three are
+  ``no_frame`` -- there is no image on the surface yet -- and the last is
+  ``capture_failed``, because the encoder failed rather than the camera. Both
+  are refused by name, and neither draws at zero.
+- **No page loads it yet, and a case says so.**  ``camera.js`` is out of
+  ``staticFiles`` exactly as ``upload.js`` and ``format.js`` are: 22.2 has not
+  written ``screening.html``. A case reads ``buildFileNames()`` and every page
+  fragment plus the shell, so a page that loads the module without the build
+  copying it -- or the build copying it with no page -- fails and says which
+  way it drifted (D173).
+
+**Revisit if** a browser ships a capture affordance of its own
+(``ImageCapture``, ``HTMLVideoElement.requestPhoto``): the shutter would move
+into the markup and ``canvas.js`` would shrink to a decode.  Until then the
+canvas is the only encoding path every supported browser has.
+## D177 -- the camera names the cause an officer can act on, and an insecure page is told so rather than refused
+
+- **The two causes the task names are told apart by what the browser hands
+  back, not by a guess.**  ``getUserMedia`` refuses with a ``DOMException``
+  whose ``name`` is the only thing that separates one failure from another, so
+  ``CAUSE_CODES`` reads the code off that name and ``MESSAGE_FOR_CODE`` holds
+  one sentence per code: ``NotAllowedError`` (and its older spelling
+  ``PermissionDeniedError``) is ``permission_denied``, whose sentence tells the
+  officer to allow the camera for the site. A name the table does not know
+  keeps the generic ``start_failed`` wording rather than borrowing another
+  cause's -- the guard is a ``hasOwnProperty`` call, so a cause named
+  ``"toString"`` is refused rather than answered with a function.
+- **An insecure page is a different answer from an old browser, and
+  ``isSecureContext`` is what separates them.**  ``getUserMedia`` is exposed in
+  secure contexts only, so a page served over plain HTTP carries no
+  ``navigator.mediaDevices`` at all. ``secureContext()`` answers ``null`` when
+  the browser answered neither way -- absent is not the same answer as
+  ``false`` -- so only ``false`` raises ``insecure_context``, whose sentence
+  names HTTPS and localhost. ``no_media_api`` is unchanged for a secure page
+  whose browser has no media API. The browser's own exception stays in
+  ``cause`` beside the sentence, not paraphrased into it.
+- **Both branches fail without the fix, in both directions.**  A case drives a
+  plain-HTTP refusal and asserts the code, that the sentence names a secure
+  connection, and that it does **not** tell the officer to grant a permission
+  nothing ever asked for; a second drives a denied permission and asserts the
+  opposite. Deleting the insecure-context branch reds two cases and collapsing
+  ``codeForCause`` to the generic code reds four, so neither branch can pass by
+  a module that refuses everything -- the four navigator stubs on a secure page
+  still answer ``no_media_api``.
+- **Three more causes are named rather than folded into the generic
+  sentence**, because a device with no camera and a camera held by another
+  application are different things an officer can act on:
+  ``camera_not_found`` (``NotFoundError``, ``DevicesNotFoundError``),
+  ``camera_busy`` (``NotReadableError``, ``TrackStartError``) and
+  ``constraints_unsupported`` (``OverconstrainedError``).  ``NotReadableError``
+  is deliberately *not* ``permission_denied``: the permission was granted and
+  the device is in use, so borrowing the permission sentence would send an
+  officer to a prompt that has already been answered.
+- **The refusals that name no cause still name no cause.**  ``not_running``
+  and the three no-frame cases are about what the officer has or has not done
+  with an open camera, so their sentences keep saying nothing about
+  permissions or connections, exactly as D176 held them.
+
+**Revisit if** a browser reports a cause outside ``CAUSE_CODES`` with a
+sentence an officer could act on -- it belongs in the table, and the generic
+sentence is the only place that stops being the answer. The table is the whole
+surface, so adding a name is a one-line change plus its sentence.
+
+## D178 -- the submission path is one module that dials the one endpoint, and the id travels in the result page's URL
+
+- **Submitting is its own module, and D175's promise is now kept.**  ``upload.js``
+  still reads no network and holds no ``fetch``; ``submit.js`` is what posts
+  the ``File`` an officer chose to ``POST /api/screenings``, and it reaches the
+  network only through ``window.DRISHTI_API.request``. The existing
+  ``api.test.cjs`` case that no page script calls ``fetch`` directly reads every
+  ``.js`` in ``frontend/``, so the new module is inside that claim rather than
+  beside it.
+- **The body is the shape the endpoint reads**: a multipart ``FormData`` with
+  the image under ``image``, the source it came from under ``mode``, and the
+  officer's claim under ``document_type``. ``mode`` is refused against
+  ``{"auto", "photo", "scan"}`` -- the same three the service accepts, so a
+  page cannot send a fourth -- and a source that names nothing is sent as
+  ``auto`` and ``unspecified``. ``document_type`` has no server vocabulary but
+  is never blank, and a mode that is not one of the three is refused rather
+  than coerced.
+- **The id reaches the result page in the query string, and nowhere else.**
+  ``resultUrlFor`` is the only place a result URL is built, so the page reads
+  one ``?id=`` parameter rather than a second store the two could disagree
+  about; ``24.5`` wires the screenings row to the same spelling. The binding
+  stores the id before it navigates, and a new submission drops the previous
+  one first, so an officer who submits twice cannot read the first run's result
+  from the second.
+- **The page is asked for its own fields at click time.**  ``describe()``
+  answers ``{ file, mode, documentType }`` when the button is pressed, so a
+  retake (``22.7``) and a changed radio are answered by the same submission
+  path rather than by a second reader of the same controls.
+- **A refusal keeps the words it arrived with.**  A ``SubmitError`` and an
+  ``ApiError`` are both written to the error element unchanged, so a 400
+  envelope reads in the service's sentence and a dead service reads in
+  ``api.js``'s; anything else is ``submission_failed``, the one sentence this
+  module composes, because a bug is not a cause the network named. An accepted
+  image whose answer carries no ``screening_id`` -- and an unreadable body,
+  which is the same answer to the same question -- is ``no_screening_id``, and
+  nothing opens in either case.
+- **One submission is in flight at a time.**  ``pending`` disables the button,
+  refuses a second submit, and is exposed as ``pending()`` for the progress
+  panel ``22.8`` builds; the button is re-enabled and the previous error
+  cleared on the way out of every path.
+- **The claim is shown failing, not only passing.**  A case mutates the one
+  line that carries the id into the URL and asserts the recorded navigation no
+  longer matches, so the assertion cannot pass by navigating anywhere; the
+  refusals are driven in both directions (a refused ``mode`` sends nothing and
+  builds no body at all, and the binding itself is refused by name for each
+  element and callback it needs -- while a binding holding exactly the two
+  elements and two callbacks the table names succeeds).
+
+**Revisit if** the service ever answers ``POST /api/screenings`` before the
+cascade is done: the id would arrive with a run still in flight, and the
+progress panel would belong on the result page rather than beside the button.
+
+## D179 -- the quality gate is one client-side reading with two answers, and both actions are callbacks
+
+``frontend/quality-gate.js`` owns what an officer is told about a capture
+*before* anything is analysed, and the two answers a warning offers.  It
+measures one thing, renders one alert, and dials nothing: 22.6's ``submit`` is
+the only sender, and the service runs its own nine checks on the image either
+way, so a passing gate is a floor and not a clearance.
+
+- **The one thing a browser can measure is the pixel size of the frame.**  PPI
+  needs a physical size the client does not have, so the frame's **short edge**
+  stands in for the card's long side, and ``MIN_EDGE_PX`` is the service's own
+  floor written in pixels: ``m6_ppi`` refuses below ``PPI_MIN = 150`` on an
+  85.6 mm card, which is 505 px, rounded down to 500.  A case recomputes that
+  product from the backend's own numbers and fails the constant if it drifts
+  into a number of its own -- so the client floor cannot quietly become a
+  different threshold from the service's.
+- **The warning states its consequence in the warning, not beside the button.**
+  ``CONSEQUENCE`` is one clause naming what "Analyse anyway" will do -- the
+  screening runs on this capture and the result may be wrong -- and it is part
+  of the message ``check()`` returns, so a page cannot show a bare warning.
+  The copy lives in the module (D167), the markup holds the container, and a
+  case shows the claim failing: emptying ``CONSEQUENCE`` leaves the warning
+  reading as it does with the consequence, and that case goes red.
+- **Retake is ``upload.clear()`` and "Analyse anyway" is a callback, both
+  supplied by the page.**  The gate owns no file and starts no analysis: it
+  calls ``onRetake`` (which is D175's one path back to nothing chosen) and
+  ``onProceed`` (which is D178's ``submit``).  The task's own test loads
+  ``upload.js`` and this module into one sandbox and wires ``onRetake`` to a
+  real ``bindUpload`` controller, then asserts ``selected()`` is ``null``, the
+  object URL is revoked, the panel is hidden and the input's value is cleared
+  after the click -- and a second binding built from a source with
+  ``onRetake()`` removed is shown leaving the file chosen.
+- **"Analyse anyway" is the button's own click and it fires once.**  There is
+  no other route past a standing warning: ``anyway()`` refuses ``not_warned``
+  when nothing warns, so it cannot be called on a passing capture to start an
+  analysis nobody was warned about, and refuses ``already_accepted`` on the
+  second click, so a double click cannot begin two screenings.  A case holds
+  that ``onProceed`` is at zero before the click and at one after it.
+- **Nothing measured is never reported as a pass.**  ``check`` refuses a
+  reading it cannot measure by name (``unreadable_reading``, for a missing,
+  non-numeric, zero or negative edge) rather than coercing it, and ``show``
+  answers such a reading -- and a cleared file, which is not a refusal at all,
+  the same answer 22.3 gives a cancelled picker -- by hiding the alert and
+  holding no verdict, so ``blocking()`` is ``false`` only because nothing
+  stands, never because a pass was invented.
+- **The variant class is the gate's own state, and only on the two it owns.**
+  ``setVariant`` removes ``ux4g-alert-success`` and ``ux4g-alert-warning``
+  before adding one, so a pass cannot leave a warning behind it, and the page's
+  own ``ux4g-alert`` and structure are untouched.  Both actions are hidden on a
+  pass: a capture that cleared has nothing to override, and replacing it is the
+  upload panel's own control (G3's no-invented-size rule holds -- this module
+  adds no class, no size and no CSS).
+- **The module ships in no build and is loaded by no page**, exactly as
+  ``upload.js``, ``camera.js``, ``submit.js`` and ``format.js`` are, because
+  22.2 has still not written ``screening.html``.  A case reads
+  ``buildFileNames()`` and every fragment plus the shell, so D173's two-way
+  asset check turns red the day a page loads this module without the build
+  copying it, or the build copies it with no page.
+
+**Revisit if** the service gains an endpoint that answers the gate's nine
+checks before the cascade: the verdict would arrive as the service's own and
+this client-side floor would become an early hint rather than the gate, at
+which point ``check()`` takes a verdict instead of a reading.
+## D180 -- one reader, two transports, and the fallback is not a choice
+
+``frontend/progress-feed.js`` turns a screening's recorded progress into one
+ordered sequence for a page, whichever transport carried it: the stream
+(``18.10``) when the browser has an ``EventSource`` and it connects, and the
+whole document (``18.11``) when it does not.  The client half of the choice
+D151, D152 gave the service.
+
+- **The caller never picks a transport.**  ``start()`` opens the stream if the
+  page has one; an ``error`` on that stream, or a browser with no ``EventSource``
+  at all, starts polling the document.  A case emits ``error`` and holds that
+  ``transport()`` reads ``poll``, that the dead connection was hung up on, and
+  that the whole sequence arrived -- and the mutation that drops the one
+  ``startPolling()`` call in ``onStreamError`` reds that case and the
+  dies-midway case with it.
+- **An error always means the sequence did not arrive whole**, so the fallback
+  is not limited to a connection that never opened.  The service ends its own
+  stream on ``done``, so there is nothing for a reconnect to add: whatever
+  arrived stands and the document fills in the rest.  The route docstrings say
+  the same thing -- both transports read a run that has already finished, and
+  neither watches one in flight.
+- **A step reaches the page once, in the sequence's own order, and that is what
+  makes the fallback safe.**  The document is the whole sequence from step
+  zero, so a poll after a stream that died at step two is told steps two
+  onwards and the first two are not told again -- ``steps.length`` is the one
+  count of what the page has seen, and a stream frame and a document entry
+  both end up in the same array.  A case emits two frames, breaks the stream,
+  and holds that ``onStep`` ran five times with the indices 0 to 4 and the five
+  steps the service wrote; a second case runs the same five steps over each
+  transport and holds the two sequences identical, so a panel cannot tell
+  which one it was reading.
+- **A stream that works never dials the second endpoint.**  ``done`` closes
+  the connection, disarms the timer and reports the frame's own ``units``, and
+  a case holds the request list empty across a whole streamed run -- the
+  fallback is a fallback, not a second reader standing by.
+- **Polling is bounded and its last refusal is named.**  A document that
+  reports more steps than it carries arms the interval and asks again; a
+  document that is refused re-asks until ``MAX_POLL_ATTEMPTS``, then
+  ``onFailed`` receives a ``no_progress`` and no timer is left armed.  The
+  interval is a constant rather than a setting: the store answers a finished
+  run in one request, so the second poll is a branch kept honest by a case
+  that drives it, not a behaviour a user configures.
+- **A refusal is refused rather than coerced, and named by what it is.**  A
+  ``data:`` line that is not JSON, or that parses to something that is not an
+  object, is a ``bad_frame``; a step naming no ``unit`` or no ``state`` is a
+  ``bad_step``, because a per-tier panel has nothing to draw for it; a body
+  that is not a sequence, or a ``units`` that is not a count, is a
+  ``bad_document``.  Each is caught where it arrives -- including inside the
+  browser's own event listener, which is not an ``await`` and would otherwise
+  throw at the page rather than at ``onFailed`` -- and a case drives all three
+  in both directions.
+- **The rest of a step is the service's own.**  Only ``unit`` and ``state`` are
+  checked; ``tier``, ``module`` and ``screening_id`` travel through untouched,
+  because the client re-checking the service's own keys is a second place for
+  them to drift.  A case holds that a step arrives whole.
+- **The two event names and the two paths are read out of the service, not
+  remembered.**  A case parses ``PROGRESS_EVENT`` and ``DONE_EVENT`` out of
+  ``backend/app/progress.py`` and holds the module's constants against them,
+  and composes ``/api`` + the two route strings
+  ``backend/app/api/routes_progress.py`` still declares -- so renaming either
+  side reds this suite instead of shipping a client that listens for a name
+  nobody writes.  This is the same two-way check 22.7 ran on ``MIN_EDGE_PX``.
+- **The module dials nothing until ``start()``, and opens one connection.**
+  The polling request goes through ``window.DRISHTI_API.request``, so
+  ``api.js``'s "no page script calls ``fetch`` directly" case already covers
+  this file and no address is baked in -- the base URL is read from
+  ``api.js`` at bind time, and the id is encoded into the path.
+- **The module ships in no build and is loaded by no page**, exactly as
+  ``upload.js``, ``camera.js``, ``submit.js``, ``quality-gate.js`` and
+  ``format.js`` are, because 22.2 has still not written ``screening.html``.  A
+  case reads ``buildFileNames()`` and every fragment plus the shell, so D173's
+  two-way asset check turns red the day a page loads this module without the
+  build copying it, or the build copies it with no page.
+
+**Revisit if** the cascade moves off the request thread and progress is stored
+as a run proceeds (D151): then the document can carry fewer steps than it
+reports for a reason other than a broken answer, and this module's "wait on the
+interval" branch becomes the ordinary path rather than a boundary case.
+
+## D181 -- the loading state is one switch over the page's own shapes, and the page calls it
+
+``frontend/result-skeleton.js`` is what a result page shows while a screening
+is still running.  The shapes are the page's own markup; the module switches
+them and the result behind them as one unit, and it draws nothing itself.
+
+- **The shapes are the page's markup, found by the one class prefix.**  The
+  binding reads ``loading``'s descendants for ``ux4g-skeleton-*``, so a shape
+  23.1 adds is switched with the rest and there is no second list of names to
+  fall behind.  A case nests one shape two levels down and holds that all seven
+  are found.
+- **UX4G ships seven shapes, and the list is read out of the sheet.**  A case
+  parses ``ux4g-skeleton-*`` out of the installed
+  ``node_modules/ux4g-web-components/styles/ux4g.css`` and holds
+  ``SHAPE_CLASSES`` against it, so the list cannot fall behind either way, and
+  no shape carries a size modifier (G3).  The preflight's Skeleton row listed
+  six and left out ``ux4g-skeleton-sidebar-card``; the sheet is the source of
+  truth and the preflight is amended.
+- **A skeleton class the sheet does not ship is refused by name, not drawn.**
+  ``unknown_shape`` carries the offending class, because a misspelt shape is a
+  grey block nobody checked and an invented one is a component UX4G never
+  shipped.
+- **One switch, over the container and every shape.**  ``show()`` and
+  ``hide()`` write ``loading.hidden``, each shape's own ``hidden`` and
+  ``surface.hidden`` together, so a shape can never be left drawn behind a
+  container that is gone.  Two mutations are shown failing: dropping the
+  per-shape write leaves the container up with every shape still hidden, and
+  dropping the surface write leaves the result standing behind the skeleton.
+- **The binding starts nothing, and the markup decides the starting state.**
+  ``pending`` is read from ``loading.hidden`` rather than forced, so a fragment
+  that ships the skeleton drawn needs no first paint to fight and a page opened
+  on a screening that has already finished does not claim work is happening --
+  which is what the shipped service does, since ``POST`` screens inline (D151).
+  A skeleton and a result both visible is refused as ``both_visible``: there
+  is no state to switch between them.
+- **Both switches report whether they changed anything.**  A second ``show()``
+  and a ``hide()`` answer ``false`` and touch no DOM, so the loading state
+  cannot be drawn twice or removed twice, and the two ``false`` answers cannot
+  be read as the same thing.
+- **A loading state with no shape is refused rather than bound.**  ``no_shapes``
+  covers a container holding no skeleton class at all: bound, it would show
+  nothing and read as a finished screen.
+- **The module carries no ARIA, which is 22.11's.**  Preflight G2 records that
+  the skeleton ships none; this task adds none and a case holds the source free
+  of ``aria-``, so the gap stays named rather than half closed.
+- **It dials nothing and remembers nothing.**  ``fetch`` and ``FormData`` are
+  recorders that would throw, at zero, across a whole show and hide.
+- **The module ships in no build and is loaded by no page**, exactly as
+  ``upload.js``, ``camera.js``, ``submit.js``, ``quality-gate.js`` and
+  ``progress-feed.js`` are, because 23.1 has not written ``result.html``.  A
+  case reads ``buildFileNames()`` and every fragment plus the shell, so D173's
+  two-way asset check turns red the day a page loads this module without the
+  build copying it, or the build copies it with no page.
+
+**Revisit if** the cascade moves off the request thread (D151): then a result
+page opens on a screening that is genuinely still running, and ``show()``
+becomes the ordinary first thing the page does rather than a branch it may
+never take.
+
+## D182 -- the progress panel, the skeleton and the gate each say what they are doing, because UX4G ships none of it
+
+The design system ships the progress bar, the skeleton and the alert as
+classes and data attributes only (preflight G2): no `role="progressbar"`, no
+`aria-valuenow`, no `aria-valuetext`, no live region, no `aria-busy`. Every
+attribute a screen reader needs is therefore written by hand, by the module
+that owns the element, and each of the three carries the one fact it can carry
+alone:
+
+- **The progress bar is the panel.** `role="progressbar"` with
+  `aria-valuemin`/`aria-valuemax` and an `aria-valuetext` that is the *same
+  string* as the visible label, so what a screen reader is told and what an
+  officer reads cannot become two claims. The run's own step count arrives only
+  with the done frame (D151), so the bar starts indeterminate: no
+  `aria-valuenow` at all, and an empty fill rather than the 50 the sheet ships
+  as its default. The drawn fill and `aria-valuenow` are written from one
+  `percentFor`, so they cannot disagree.
+- **The live region is a bare `role="status" aria-live="polite"` div** beside
+  the bar, because no UX4G component claims one. It announces a step in the
+  service's own words and order (D151), and the step index is part of the
+  sentence so a tier reported twice is announced twice -- a live region only
+  speaks when its text changes.
+- **The skeleton says the page is busy and hides its shapes.** `aria-busy`
+  travels with `hidden` on the container, so the flag and the visible state are
+  switched by one write; every shape carries `aria-hidden="true"` once, at
+  binding, because a grey block standing in for content that has not arrived is
+  not content and reading "loading" seven times would be noise.
+- **The gate's alert is a live region set up before it speaks.** The role and
+  politeness are written at binding rather than beside the first verdict,
+  because a live region added at the same moment as its first text is one a
+  screen reader may never announce. Polite, not assertive: a low-resolution
+  capture is worth saying, but it is not an emergency.
+
+Every one of these attributes is written by the module that owns its element,
+so none of the three has ARIA spread across a page and a module. Five cases
+hold the claims by mutation -- dropping the `aria-valuetext` write, the
+`aria-live` write, the `aria-busy` write, the `aria-hidden` write or the
+fill write each turn a suite red. UX4G compliance is claimed for the markup
+these modules build and **not** for a rendered page: no page loads any of them
+yet, because 22.2 has still not written `screening.html`.
+
+## D183 -- the home page start action is a link, so its destination is markup
+
+The home page `start-screening` is an `a` carrying
+`ux4g-btn ux4g-btn-primary ux4g-btn-lg` and `href="./screening.html"`.
+It was a `button` with a `data-modal-target` hook and a click
+listener in `home.js` that opened the home page modal.
+
+**Why**
+
+- **An action that leaves the page is a link.** The other navigating actions
+  in this frontend -- the shell brand, and the buttons on `screenings.html`,
+  `guide.html` and `about.html` -- are already anchors carrying
+  the same three classes, and the installed sheet styles `a.ux4g-btn` as it
+  styles the button. The swap therefore adds no class, no variant, no size,
+  no token and no CSS, and D3's default light theme is untouched.
+- **The destination is then stated once.** A handler calling
+  `location.assign` would be a second copy of a URL the markup already
+  carries, and the link is followed with `home.js` unloaded, which is what a
+  page that hands off to another page should not depend on.
+- **`data-modal-target` had no reader.** No script under `frontend/`
+  consulted it; `home.js` opened the modal itself, so the attribute was a
+  second, dead description of the same action.
+
+**What it costs, recorded rather than hidden**
+
+The home page's inline screening modal and its results modal are now
+unreachable: no control on the home page opens them. Both stay in
+`home.html` and in `home.js`, and every case that drives their
+elements directly still passes. Part 22's `screening.html` (22.2) is what
+replaces them, so the two modal cases that opened the dialog through the
+start button lost that step and set the open state themselves, as the other
+cases already did. Until 22.2 exists the link 22.12 points at is a 404, which
+is the debt already recorded against that tick.
+
+## D184 -- the result page marks Previous screenings as current, because it has no nav key of its own
+
+Written 2026-10-04, for task 23.1.
+
+`frontend/result.html` supplies `activeNavKey: "screenings"`, so the shell
+marks the *Previous screenings* link `aria-current="page"` while the officer is
+reading a different page.
+
+**Why**
+
+- **The shell offers six keys and refuses a seventh.** `shell-tokens.js` holds
+  `home`, `screenings`, `profile`, `settings`, `guide`, `about`, and D168
+  refuses an `activeNavKey` outside that table at build time. A page with no
+  section of its own therefore has exactly two available answers, and picking
+  one is a shell decision rather than a markup detail.
+- **A result is a screening.** `result.html?id=<id>` is the URL 22.6 builds from
+  a submission, 24.5 links the screenings row to the same spelling, and the
+  page shows one screening's findings. "Previous screenings" is the only nav
+  section a result belongs under; the other four are about the operator, the
+  workspace or the documentation.
+- **Growing a seventh key is not a page's to make.** Adding one means editing
+  `shell-tokens.js`'s table, adding a section to `shell.html`, and deciding what
+  the seventh *destination* is -- a listing page that Part 24 has not written.
+  Part 23 opening with a nav entry pointing at nothing would repeat exactly the
+  debt 22.12 recorded when the home page started linking to an unwritten
+  `screening.html`.
+- **Part 22 needs the same answer and has not been given one.** The Part 22
+  preflight recorded this as an open item for `screening.html`. Deciding it here
+  for `result.html` does not decide it there, but it fixes the shape of the
+  answer so 22.2 is a one-line decision rather than a fresh argument.
+
+**What it costs, recorded rather than hidden**
+
+The sidebar marks a link to a different page as current, so it tells the officer
+they are somewhere they are not. That is a wrong claim on screen, not a
+rounding error, and it stays until either a `result` nav key and a page for it
+exist or the shell is taught that a page may mark no section at all. The first
+is Part 24's work; the second is a Part 21 change. `pages.test.cjs` now holds
+the mapping (`"result.html": "screenings"`) so the cost is asserted rather than
+inherited.
+## D185 -- the overlay maps two region shapes through one normal form, and normalises by the size the screening recorded
+
+Written 2026-10-04, for task 23.2.
+
+`frontend/overlay.js` turns the `region` a flag carries into elements
+positioned on the document image. It accepts a plain box and a polygon,
+normalises both to a share of the image, and places that share on whatever
+box the page measured.
+
+**Why**
+
+- **The service records pixels and the page draws pixels, and they are not the
+  same pixels.** `EvidenceFlag.region` is a tuple of whole-pixel corners in
+  the image `app/risk/flags.py` checked, and `GET /api/screenings/{id}`
+  answers with `image: {width, height}` beside it. The image on the page is
+  inside a `.ux4g-img`, which caps at `max-width: 100%`, so its drawn size is
+  the layout's answer and not the recorded one. Dividing by the recorded size
+  is what makes a region land on the pixel it was measured from; dividing by
+  the displayed size would be self-consistent and wrong the moment the two
+  disagree, which is a re-encoded upload or a rotated capture rather than an
+  edge case.
+- **One factor per axis, not one for both.** The displayed box is whatever the
+  layout gave the image, and a region has to land where its own pixel now
+  sits -- including when the box is not the image's shape. A single factor is
+  only correct while the aspect ratio survives the resize, and a square
+  document in a wide frame is a layout the sheet makes easy to write.
+- **A box and a polygon are the same region in two spellings.** A detector
+  hands over a box and 4.12's `_box_polygon` is the writer that turns it into
+  the corner tuple the record treats as a promise; a rule that located a
+  shape writes the corners itself. One normal form after that point means the
+  bounding box, the clip and the refusal list are written once rather than
+  twice, and a box region draws with no clip at all because its corners are
+  already its own bounding box.
+- **Corners run clockwise from the top left, with the far corner left out.**
+  That is the order `app/risk/flags.py` names as a promise and the order
+  `m4_uniformity`/`m5_glare` boxes already follow, so a frontend that read
+  the corners in a different order would be the only reader of the record
+  that disagreed with its writer.
+- **The module is measured before it is drawn.** Every region in a list is
+  mapped before the first element is written, so a region the client cannot
+  map leaves the document as it was rather than half covered. That is D6's
+  rule turned round: the service refuses a malformed region where one is
+  built, and the page refuses one before it paints rather than after.
+- **A region that encloses no area is drawn as nothing, not refused.**
+  `app/risk/flags.py` deliberately does not check whether a polygon's corners
+  enclose any area, and 15.13's own rule is that a result which locates
+  nothing still takes its row. A client-side area check would drop a finding
+  the service meant to report, so a zero-width box maps to a zero-width
+  element and 23.6 is where an officer is told about it.
+- **`null` is the one region that maps to nothing; a missing field is
+  refused.** The service writes `region: null` when it located nothing, and
+  that is a different record from a flag whose region never arrived -- so
+  `bad_region` answers the second rather than quietly drawing nothing for it.
+- **The region element carries one class and one attribute of its own.**
+  G9 records that the sheet ships no box, polygon or highlight, and this is
+  the documented exception: `.result-region` plus `data-result-region`
+  carrying the flag id, which is the seam 23.3's hit-testing reads. Both are
+  project vocabulary beside `.page-header` and `data-active-nav`, not a
+  variant of anything UX4G ships.
+
+**What it costs, recorded rather than hidden**
+
+- **The regions are positioned and invisible.** 23.2 writes `position`,
+  `left`, `top`, `width`, `height` and `clip-path` and nothing else: no fill,
+  no outline, no pointer behaviour, no ARIA. The styling rule in `pages.css`
+  is owed to the task that binds the overlay to the page, and 23.3 is what
+  makes a region clickable and therefore what has to give it a role. Until
+  then the mapping is proved against the module and never against a rendered
+  document.
+- **The overlay draws no image and reads no layout.** It never measures
+  anything: the page hands over the display size, and `draw(flags, display)`
+  takes a second size so a resize is one call rather than a re-bind. A caller
+  that measures nothing gets no regions rather than wrongly placed ones.
+- **`overlay.js` is loaded by no page and ships in no build**, exactly as
+  `upload.js`, `camera.js`, `submit.js`, `quality-gate.js`,
+  `progress-panel.js` and `result-skeleton.js` are, because `result.html`
+  loads no script. It is deliberately absent from `staticFiles`, and
+  `overlay.test.cjs` holds that in both directions beside D173's own check.
+
+## D186 -- a region is a control that names its flag, and one flag is lit at a time
+
+Written 2026-10-04, for task 23.3.
+
+`frontend/overlay.js` answers a click on a region with the flag that region was
+drawn for, and answers a click on a flag row with the region carrying that
+flag id. `bindOverlay` takes one callback, `onSelect`, and returns two more
+members, `select(flagId)` and `selected()`.
+
+**Why**
+
+- **The hit test is the marker the element already carries.** 23.2 wrote
+  `data-result-region` holding the flag id and nothing read it; the click
+  handler on each drawn region reads its own attribute and hands the id to the
+  page. No coordinate arithmetic is added, because the browser already answered
+  the geometric question: `clip-path` clips a polygon to its own corners, so a
+  click inside the bounding box but outside the shape is not a click on that
+  element at all.
+- **A click is a selection and not a toggle.** `onSelect` is handed a string
+  every time and never `null`, so a page cannot be left holding two answers
+  about which flag is current. Changing the selection belongs to the flag list,
+  and a second click on the lit region says the same thing again.
+- **One region is lit at a time, and the two states are written in one place.**
+  `select(flagId)` marks the region matching and unmarks the one that was lit,
+  writing `.result-region-selected` and `aria-pressed` together, so the paint
+  and the accessibility tree cannot end up describing two different regions.
+- **An id nothing drew leaves nothing lit rather than the previous highlight
+  standing.** A flag with `region: null` has no element, so the row 23.6 draws
+  for it must be able to say so by clearing the overlay: `select` answers
+  `false` and leaves `selected()` at `null`. Keeping the old highlight because
+  the new flag had nowhere to point would show an officer a region belonging to
+  a finding they have moved off.
+- **A region that names no flag is not a control.** `role`, `tabindex` and
+  `aria-pressed` are written only where `data-result-region` is, because a
+  button that cannot say which flag it points at is a control that lies.
+- **A region that can be clicked has to be operable from the keyboard, and the
+  sheet ships no control over an image.** G2 recorded that this ARIA is written
+  by hand, so `role=button`, `tabindex=0` and Enter and Space are what a `div`
+  needs to answer what it now claims to be, and Space is prevented so it does
+  not scroll the document past the region just chosen.
+- **The callback is required, because hit-testing with no listener is dead
+  behaviour.** `onSelect` joins `REQUIRED_CALLBACKS` beside `REQUIRED_ELEMENTS`
+  and a binding without it is refused as `missing_callback`, read after the two
+  sizes so that every other refusal keeps naming its own cause.
+
+**What it costs, recorded rather than hidden**
+
+- **The highlight is a class and an attribute, not a paint.** Nothing colours,
+  outlines, hovers or focuses a region: `.result-region-selected` is the hook
+  the documented `pages.css` rule will read, so until that rule is written a
+  selected region is announced to a screen reader and invisible to everyone
+  else. This is the same debt G8 records for the skeleton.
+- **A redraw and `clear()` both drop the selection,** because both build a
+  new set of elements. A page that redraws on a resize has to call `select`
+  again, and the fact that `selected()` reads `null` with nothing lit is what
+  keeps the two from disagreeing.
+- **`overlay.js` is still loaded by no page and ships in no build**, exactly as
+  23.2 recorded, so the round trip is proved against the module and never
+  against a rendered document.
+
+---
+
+## D187 -- the band is a tag, and the score beside it says what it is
+
+Written 2026-10-04, for task 23.4.
+
+`frontend/result-band.js` draws one line of the result page: a UX4G tag
+carrying the band's label in that band's variant, and the score beside it.
+`bindResultBand({ container })` returns `render(result)`, `clear()`, `band()`,
+`variant()`, `label()` and `score()`.
+
+**Why**
+
+- **One variant per band, written down once.** `BAND_VARIANTS` is
+  `low -> ux4g-tag-filled-success`, `review -> ux4g-tag-filled-warning`,
+  `high -> ux4g-tag-filled-error`: the three bands `app/risk/bands.py` bands
+  in, in the order of rising risk, painted by the sheet's own status tokens and
+  by nothing this module chose. A case holds the keys against `format.js`'s
+  `BAND_LABELS` in both directions, so the variant table and the label table
+  cannot fall behind -- the claim `result-skeleton.js` already holds against
+  the sheet's seven shapes.
+- **The band is read from the result, never recomputed.** `to_band` owns the
+  thresholds (`LOW_MAX` 34, `REVIEW_MAX` 69), so a page may not band a score
+  itself; this module colours the answer it is handed and refuses the rest.
+- **A fourth band is refused, not invented.** D144 lets a screening answer with
+  no band at all, so anything the table does not name is `bad_band`, read with
+  `hasOwnProperty` rather than a lookup, so a band of `"toString"` is refused
+  rather than answered with a function (D177's rule).
+- **The score is labelled, because a bare number beside a badge is not a
+  score.** The score element carries `.ux4g-sr-only` "Score: " ahead of the
+  number, so a screen reader hears "Score: 42.5" while the page shows `42.5`,
+  and the number itself comes from `format.js`'s `formatScore`, which already
+  drops a `.0` -- so the score and the score text cannot be two numbers.
+- **Both halves are read before anything is written.** `measure()` reads the
+  variant, the label and the score before the first element exists, so a result
+  this page cannot read leaves the line already standing rather than half
+  replaced by a tag with no score beside it: D6's rule turned round, as in
+  23.2.
+- **23.4 is `format.js`'s first caller.** `bindResultBand` reads
+  `window.DRISHTI_FORMAT` at binding and refuses `no_format` when it is absent,
+  exactly as `submit.js` refuses `no_api`. The module draws and reads nothing
+  else: no clock, no storage, no request.
+
+**What it costs, recorded rather than hidden**
+
+- **`result-band.js` is loaded by no page and ships in no build**, exactly as
+  `overlay.js` is, so D173's two-way asset check holds in both directions and
+  turns red the day a page loads the module without the build copying it.
+  `format.js` is named by no page for the same reason, so the handover's note
+  that 23.4 would bring it in is answered one step later than it expected: the
+  caller exists, the page that would load both does not.
+- **The row and the score carry two classes of the project's own**
+  (`.result-band` and `.result-band-score`), because the sheet ships no class
+  for a badge row or for a number beside a badge. Nothing paints or aligns them
+  yet: that is the same documented `pages.css` rule G9 already owes, and 23.4
+  adds no CSS.
+
+---
+
+## D188 -- the flag list is grouped by the cascade's own order, and a row says what the printable report says
+
+Written 2026-10-04, for task 23.5.
+
+`frontend/result-flags.js` draws the findings panel: one `li` per flag, grouped
+by the tier that made it. `bindFlagList({ container })` returns `render(flags)`,
+`clear()`, `tiers()`, `ids()`, `rows()` and `empty()`.
+
+**Why**
+
+- **The group order is the cascade's, not the response's.** `TIER_ORDER` is
+  `quality, 0, 1, 2, crossdoc` -- the order `app/risk/flag_ids.py` documents
+  for the nine families ("the quality gate first, then tier 0, tier 1, tier 2,
+  then the cross-document rules"). A case matches that sentence out of the
+  backend source, so the table and the docstring cannot fall apart. The capture
+  gate runs before tier 0, so grouping by arrival would show the photograph's
+  findings last.
+- **A sixth tier is refused, not invented.** `EvidenceFlag` checks only `value`,
+  `confidence`, `weight_band` and `region`, so `tier` is the one field a rule
+  may carry outside the five. `bad_tier` is read with `indexOf` and strict
+  equality, so a tier of `"0"` is refused rather than joined to `0` (D177's
+  rule), exactly as 23.4 refused a fourth band.
+- **The weight on a row is the flag's own weight band, under the report's own
+  heading.** `app/reporting.py`'s `FINDING_COLUMNS` heads `weight_band`
+  "Weight band" and `confidence` "Confidence", and a case holds this module's
+  labels against that table: a screen and a printout of one screening call the
+  same field the same thing. The weightset's number for a band is deliberately
+  not held on a flag, so a row shows the band and never a weight this page
+  would have to invent; 23.7 is where the number arrives, with
+  `contributions`.
+- **A confidence is printed as it was measured.** `String(confidence)` and
+  nothing else, because a value rounded to two decimals is a different
+  measurement from the one taken -- D6's rule, and the reason
+  `_check_unit_interval` refuses rather than clips. `app/reporting.py` prints
+  the same two numeric fields as they are stored.
+- **An absent half of the comparison is a word, not an empty cell.**
+  `expected` and `found` may be `null`, and the report's own `NOT_RECORDED` is
+  what a row says; the empty state's sentence is `NO_FINDINGS` verbatim, so a
+  screen with no findings and a printed one read alike.
+- **Every finding is read before the first element is written.** `measure()`
+  reads id, tier, label, weight band, confidence, expected, found and reason for
+  every flag before `render()` writes anything, so a finding this page cannot
+  read leaves the list exactly as it was rather than half replaced by groups
+  that stop mid-cascade (D6's rule turned round, as in 23.2 and 23.4).
+- **Six refusals, each naming what it is**: `missing_element`, `bad_flags`,
+  `bad_flag`, `bad_tier`, `bad_weight`, `bad_confidence`.
+- **A row is not a control, and says so.** `.ux4g-list-item-row` is the sheet's
+  clickable row -- `cursor: pointer` and a hover background -- so every row also
+  carries `.ux4g-list-item-row-fixed`, the sheet's own answer for a row that is
+  not a button. 23.3's `overlay.select(flagId)` still has no row to call it and
+  **no task in Part 23 owns that wiring**; a row that looked clickable while
+  doing nothing would be the lie D186 refused.
+- **The reason is the rule's own, not the template's.** A row prints
+  `flag.reason`, as `app/reporting.py` prints it;
+  `app/explain/reasons.py`'s floor still has no caller outside its own test and
+  stays unwired until 23.8.
+
+**What it costs, recorded rather than hidden**
+
+- **`result-flags.js` is loaded by no page and ships in no build**, exactly as
+  `overlay.js` and `result-band.js` are, so D173's two-way asset check holds in
+  both directions and turns red the day a page loads the module without the
+  build copying it, or the reverse.
+- **`.result-flag-row` is a hook with no rule behind it**, joining
+  `.result-band`, `.result-band-score` and `.result-region-selected` on the list
+  of classes waiting for the documented `pages.css` rule G9 owes. **23.5 adds no
+  CSS**, so a row carries the sheet's own padding and none of the project's own.
+- **The group heading is an `h3` wearing the divider classes**, so the tier name
+  is a real heading inside the rule the Part 23 preflight planned. The sheet
+  ships `.ux4g-divider-horizontal-text` and no example of its use, and nothing
+  renders this page yet, so whether the heading sits right at the height the
+  sheet gives the divider is unverified in a browser.
+- **`tier` is never joined to the progress stream's spelling.** D151 records the
+  stream saying `tier_0` and `0` side by side, so a client joins them itself; a
+  flag list built from the result joins nothing.
+
+## D189 -- a finding with no region is listed and says so, because dropping it is the one lie a findings panel cannot tell
+
+Written 2026-10-04, for task 23.6.
+
+`frontend/result-flags.js` now reads `region` and prints `NOT_LOCATABLE` --
+"Not locatable on this document." -- on the row of any finding that carries
+none.
+
+**Why**
+
+- **`region` is `None` on purpose, and a finding with no place is still a
+  finding.** `app/risk/flags.py` says it directly: "`None` is a claim and not
+  a gap: a finding with nowhere to point is still a finding, and it is listed
+  rather than dropped." 14.3 writes `region=None`, so the case arrives in real
+  screenings rather than only in theory.
+- **The note is the honest form and omission is not.** `overlay.js` already
+  counts these as `unplaced()` and draws nothing for them, so a page joining
+  the two halves would show a document with highlights beside a list that never
+  mentions the findings behind no highlight. An officer would read the silence
+  as "no such finding", which is the one claim this record never made. 23.3
+  could not say it, because the overlay draws regions and owns no list; the
+  list is where the sentence belongs.
+- **The wording is this page's own, because the report prints no region.**
+  `app/reporting.py` prints value, weight band, confidence, expected, found and
+  reason -- no polygon -- so there is no backend sentence to hold this to, as
+  `NOT_RECORDED` and `NO_FINDINGS` have. A case holds the module's own constant
+  to the task phrase instead, and the constant is exported so a page never
+  retypes it.
+- **The list asks one question and not the geometry.** `readRegion` answers
+  "was a region recorded" and reads no corner: the shape of a region is
+  `overlay.js`'s to judge (D185), so this module holds no second reader of it.
+  Absent, `null` and an empty polygon or box are all "no place", and a box is
+  one of the two shapes overlay draws rather than a third case.
+- **A region that names nowhere is refused rather than read as no place.** A
+  string, a number or a boolean is a caller bug, and reading it as "not
+  locatable" would print a claim about the document on the record of a
+  programming error -- D6's rule, and the reason `_check_region` refuses rather
+  than coerces. `bad_region` is the seventh refusal and is held beside the
+  overlay refusal of the same name, so a page passing one set of flags to both
+  hears one cause.
+
+**What it costs, recorded rather than hidden**
+
+- **A flag the overlay could not place still prints without a note here.** A
+  polygon of two corners or a corner that is not a pair of numbers is judged by
+  `overlay.js`, which refuses it with `bad_region` when the page draws the
+  document; this module reads presence, not shape. Two modules can disagree
+  about one flag, each refusing or noting what the other owns, and D185 normal
+  form is where a page joins them.
+- **The note is a muted span with no class of its own.** The sheet ships no
+  class for a caveat, and a `.result-flag-unplaced` hook would be another name
+  on the G9 list of classes waiting for a `pages.css` rule nobody has written.
+- **The note reads as the last line of the stack**, under expected and found,
+  because it is a fact about the row rather than a half of the comparison.
+  Nothing renders the page yet, so where it sits at real row heights is
+  unverified in a browser.
+
+## D190 -- the breakdown's total is the sum of the numbers on screen, and the panel refuses no score for disagreeing with it
+
+Written 2026-10-04, for task 23.7.
+
+`frontend/result-contributions.js` draws one row per `contributions` entry the
+result route already sends -- finding, weight, value, contribution -- and a
+`Total` row whose number is the sum of the column as shown.
+
+**Why**
+
+- **The four fields are the ones the API sends, so the panel invents nothing.**
+  `app/risk/scoring.py`'s `Contribution` is `id`, `weight`, `value`,
+  `contribution` and `routes_screenings.py` serialises it with
+  `dataclasses.asdict`. 23.5 deliberately shows a `weight_band` and not the
+  weightset's number, because a flag carries no weight; this panel closes that
+  gap from the other side by reading the term the weightset's own arithmetic
+  produced, rather than multiplying a band by a value a page would have to
+  guess.
+- **The total is the sum of the shown numbers, not of the exact products.**
+  A weight is points on the 0-100 scale and a value is in `[0, 1]`, so two
+  decimals carries both closely enough for an officer to add the column up by
+  hand; totalling the displayed values is what makes the rows visibly reach
+  the number beside them.  The backend's own total is `math.fsum` of the exact
+  products, and a JS float sum of the same terms is order-dependent
+  (`0.1 + 0.2`), so the panel would otherwise print a total its own column
+  does not add up to.
+- **The total is not `result.score`, and the panel says nothing about it.**
+  `app/risk/engine.py` applies 7.13's history term, 7.6's floor and 7.7's clamp
+  after the sum, and states that "the rows add up to the pre-history total and
+  not to the score".  A panel that asserted equality with `score` would be
+  wrong for every screened row a hard rule or a history touched, so the total
+  is labelled `Total` and the claim the test holds is the one that is true:
+  the rendered rows sum to the rendered total.
+- **An empty breakdown is a total of zero, not a "no data" sentence.**
+  `weighted_breakdown` holds that an empty tuple "is a real answer -- a
+  document on which nothing fired -- and sums to `0.0` rather than being a
+  missing breakdown", so the table is drawn with its total and no rows.  The
+  empty state used elsewhere on the result page would claim the record said
+  nothing where it said nothing fired.
+- **"Weight" and "Value" are the report's words.**  `app/reporting.py` heads
+  its findings table with exactly those two, so a screen and a printout of one
+  screening call the same number the same thing.
+
+**What it costs, recorded rather than hidden**
+
+- **The panel holds no `?id=` reader, so it is unrendered.** `result.html`
+  loads no script; D173's two-way asset check holds in both directions and the
+  build copies nothing.
+- **The `Total` row carries no class of its own.**  The sheet ships no
+  total-row or footer-cell class, so a `.result-contributions-total` hook would
+  be another name on the G9 list of classes waiting for a `pages.css` rule;
+  the total is found by its row header instead, and no project class was added.
+- **Rounding the total at two decimals can differ from the backend's exact
+  `fsum` by less than a hundredth.**  That is the price of a column an officer
+  can add up; the exact terms stay on the record and in the printable report.
+- **Nothing here has been seen in a browser.**  The table is drawn against the
+  smallest element the test builds, so real row heights, the
+  `ux4g-table-responsive` scroll and dark-theme contrast are unverified.
+
+## D191 -- the override appears only where the officer contradicts the band, and no table on the page says which choice that is
+
+Written 2026-10-04, for task 23.9.
+
+`frontend/result-decision.js` draws the officer's own half of the result page:
+the abstract's three choices as a radio group, a remark field, and a switch
+that is on screen only once the choice disagrees with the band beside it.
+
+**Why**
+
+- **The override control mirrors `contradicts_band`, not
+  `override_required`.**  `app/audit/decision.py` has two rules and they answer
+  different questions.  `contradicts_band` is true whenever the choice sits at a
+  different point on its own ordering than the band does on the other, in
+  either direction, and `record_override` writes an `override_recorded` event
+  on exactly that reading.  `override_required` narrows the same question to
+  the adverse choice alone, because it answers "must the officer *claim* this".
+  A control the officer ticks is the claim, so it belongs where the event is
+  written; the narrowed rule stays a server-side refusal.
+- **The disagreement is read off two positions, never out of a table.**
+  `BAND_ORDER` and `OFFICER_ACTIONS` are two independent orderings and no
+  object in the module holds a band beside a choice -- 7.10's rule for
+  `decision.py`, held on the frontend as well.  A case walks every line of the
+  module and every exported table for a line naming both vocabularies at once,
+  comparing whole words: `allow` carries `low` inside it, and a substring check
+  would have paired the two in the very test that says they are never paired.
+- **The three keys are the service's, read rather than restated.**
+  `OFFICER_ACTIONS` is parsed out of `app/audit/decision.py` and held against
+  this module's own, and `BAND_ORDER` the same way, so neither can drift
+  without a failing case.  `ACTION_LABELS` is display vocabulary and holds keys
+  only: nothing in the frontend labels a choice and the sheet ships no label
+  for one.
+- **A row carrying no band is asked nothing.**  The backend answers `False` for
+  `system_band=None` because no band was shown to go against, and the frontend
+  agrees rather than inventing a band to disagree with.  A band that is a
+  string the engine never bands in is still refused by name, because a typo is
+  a fault and an absent band is an answer.
+- **Hidden is the mechanism, so nothing waits on a `pages.css` rule.**  The
+  switch is drawn with `hidden` and revealed by clearing it, the same attribute
+  the loading container and 23.3's regions use.  The module adds no class of
+  this project's own, so the G9 list is unchanged.
+- **The form reads the band the band line already reads.**  It takes `result`
+  and reads `result.band`, the field 23.4's tag draws from, rather than a
+  second argument a page could fill two ways.
+- **The remark helper says it is optional.**  `DecisionRequest.remark` defaults
+  to `""`, so a helper that implied a reason is owed would ask for something
+  the service does not require.
+
+**What it costs, recorded rather than hidden**
+
+- **The form is unrendered.**  `result.html` loads no script and `staticFiles`
+  copies none, so D173's two-way asset check holds in both directions and the
+  build ships nothing of this.  23.10 to 23.13 and the page binding own it.
+- **The ids and the radio name are page-wide singletons.**
+  `decision-group-label`, `decision-remark` and `officer-action` are constants,
+  which is correct for one form per result page and would need to be parameters
+  if a page ever drew two.
+- **A hidden override answers `false` however its input stands.**  The control
+  is cleared whenever it is hidden, so an answer to a question that is no
+  longer on the page cannot be read back as an override.
+- **Nothing here has been seen in a browser.**  Every case is proved against the
+  smallest element the test builds, so real control sizes, focus order, the
+  switch's own animation and dark-theme contrast are unverified.
+## D192 -- a recorded decision is locked by the platform, refused by the module, and said on one line under the form
+
+`frontend/result-decision.js` gained the one exchange it was holding: the choice,
+posted to `POST /api/screenings/{id}/decision`, after which the form is locked.
+
+**Why**
+
+- **The path is composed, never configured.**  `decisionPathFor()` builds
+  `/api/screenings/{id}/decision` with the id encoded into it, and the exchange
+  goes through `window.DRISHTI_API` exactly as `submit.js` and `home.js` do, so
+  no address and no fetch is this module's own.  The id is read off
+  `result.screening_id` -- the same stored result the band is read from -- so a
+  page cannot draw one screening's choice beside another result's band.
+- **Absent id, unusable id.**  A result carrying no id draws a form that simply
+  cannot be sent (`no_screening_id` at submit), and an id that is a string
+  nobody could look up is refused by name at `render()` with the form left
+  standing.  That is D191's rule applied to a second value: a typo is a fault,
+  an absent value is an answer.
+- **The three body keys are `DecisionRequest`'s own, held by a case.**  A case
+  parses `app/schemas.py` and holds the class's three fields against
+  `REQUEST_FIELDS`, the same way D191 holds `OFFICER_ACTIONS` against
+  `app/audit/decision.py`.  A fourth key would fail the case rather than travel.
+- **Locking is the platform's, refusing is the module's.**  `lock()` sets
+  `disabled` on every control and relabels the button, so the form is not
+  resubmittable by keyboard, pointer or assistive technology alike; `choose()`
+  and `submit()` then refuse with `already_recorded`, so a page holding the
+  controller cannot edit a recorded choice into a different claim either.  No
+  class of this project's own is added, so the G9 list is unchanged.
+- **The lock waits for the service.**  Nothing is locked until a 2xx arrives: a
+  refused decision is still an officer's decision to make again, and the case
+  walks that path -- 404 then a recorded answer -- on one button.
+- **Two presses are one decision.**  A second `submit()` while the first is in
+  flight is refused with `pending` rather than queued, which is the double-click
+  the button's own `disabled` already prevents in a browser and the guard a
+  direct caller needs.
+- **Every sentence stays in this module.**  The button, the recorded line and
+  the refusal the officer caused are all drawn here, so `result.html` supplies a
+  container and nothing else.  The click path says a refusal rather than
+  rejecting into the console, and the line under the form is 22.11's live
+  region (`role="status"`, `aria-live="polite"`) rather than a second home for
+  the same announcement.
+
+**What it costs, recorded rather than hidden**
+
+- **The lock is per drawn form.**  `clear()` and `render()` release it, so a page
+  that re-renders the result draws an unlocked form again.  Nothing automatic
+  does that, and the audit trail keeps every choice either way (18.4), but the
+  guarantee is "this form cannot be sent twice", not "this screening can hold
+  one choice".
+- **A 2xx with an unreadable body still locks.**  The endpoint writes the event
+  before it answers, so the exchange happened; `submit()` hands the page
+  whatever arrived, `null` included, and the module reads no field of
+  `DecisionResponse` rather than keeping a second copy of the schema.
+- **The live region is `hidden` until it has something to say.**  An officer who
+  cannot see will not hear some announcements that way; a permanently present
+  visually-hidden region needs a class the sheet does not ship, so the caveat is
+  written down rather than solved with custom CSS.
+- **Nothing here has been seen in a browser.**  The button's own disabled style,
+  the alert's layout beside the form, focus order and dark-theme contrast are
+  unverified, exactly as 23.9 recorded for the rest of this form.
+## D193 -- the version panel quotes the three versions the stored result carries, says "Not recorded" where it has none, and is labelled experimental
+
+**Date:** October 4, 2026. **Status:** settled, task 23.11.
+
+**Context.**  23.11 asks the result page to show the ruleset version, the model
+versions and the prompt version, labelled as experimental.
+`ScreeningResultResponse` carries `ruleset_version` and `model_versions`, and
+`prompt_version` is a constant on `GET /api/version` that is on no row and no
+result.  `app/version.py` has promised "the UI shows them as experimental" since
+before either endpoint existed, so the label is this module's to keep rather
+than a page's to invent.
+
+**Decision.**
+
+- **All three are read off the one stored result and none is defaulted.**  The
+  row records what answered *that* screening (D79), so a constant quoted beside
+  it would claim a ruleset for a row nothing has scored -- the rule
+  `app/storage/models.py` already states.  There is no fallback to
+  `GET /api/version`, and the panel sends nothing at all.
+- **Absent is an answer: `Not recorded`.**  `null`, an omitted key and an empty
+  model set all read that way, because the question the panel answers is "which
+  versions produced this?", and none of the three names one.
+- **A value nobody could quote is a fault, refused by name** on 23.10's rule:
+  `bad_ruleset_version`, `bad_prompt_version` and `bad_model_versions`, with the
+  panel left standing because all three are read before anything is written.
+- **The model set is read whole, by own key, sorted.**  `Object.keys` rather
+  than a lookup, so an inherited property is not a model this screening ran; a
+  stored object carries no order of its own, so the panel sorts it rather than
+  letting it reshuffle between renders; and a `null` inside the set is a fault,
+  not an absence, because the key has named a module and then said nothing about
+  what answered for it.
+- **The label is one warning-toned tag and a caption that repeats it.**  The tag
+  says the block is advisory rather than at fault, which is why it is
+  `ux4g-tag-filled-warning` and not the error tone the band uses for High Risk.
+- **The block is the sheet's own table**, in the composition `Design.md` asks
+  for and 23.6 already uses: `ux4g-card ux4g-card-body`,
+  `ux4g-d-flex ux4g-gap-s`, `ux4g-tag ux4g-tag-s ux4g-tag-filled-warning`,
+  `ux4g-table ux4g-table-m ux4g-table-responsive`, `ux4g-table-cell-text`, and a
+  `ux4g-sr-only` caption.  Each version is a `th scope="row"` beside its value,
+  so a screen reader names it.  No class of this project's own and no custom
+  CSS, so the G9 list is unchanged and D3's default theme answers the preflight's
+  theme question.
+
+**What it costs, recorded rather than hidden**
+
+- **The prompt version reads `Not recorded` on every result the service can
+  return today.**  Nothing writes it: no column on the row, no key on
+  `ScreeningResultResponse`, and `app/explain/narration.py` keeps its version on
+  its own request.  The row is drawn and says so rather than being left out, and
+  falling back to the deployment's constant would put *today's* prompt version
+  beside a summary an older one wrote.
+- **`null` and `{}` read alike.**  D79 separates "no model ran for this
+  screening" from "this deployment runs no model"; both are reasons nothing is
+  named, and the panel shows names.
+- **A version is trimmed** before it is shown, so a padded column value is not
+  displayed as padding.
+- **Nothing here has been seen in a browser**, and no page binds the panel yet:
+  `result.html` loads no script, so `result-versions.js` is out of the build's
+  static files and named by no markup, as 23.3 to 23.10 already are.
+
+## D194 -- the preview answers its own URL before it announces it
+
+`frontend/scripts/preview.cjs` asks its own port for a page before it prints
+it, and prints only a port that has answered.
+
+- **A bound port is not yet an answerable one.**  A port the OS hands to
+  `listen(0)` can refuse the first connection after its socket exists: the
+  socket is bound and listening, and a client arriving in the next moments is
+  refused while the same port answers a moment later.  The preview printed
+  such a port as if it were as good as any, so the first caller to arrive --
+  a developer at `npm run preview`, or `preview.test.cjs` -- could be sent to a
+  URL that refused.
+- **The announced URL is now one the preview has answered.**  It requests
+  `/index.html` over `agent: false`, so the check is a whole request and answer
+  rather than a TCP connect that proves nothing, and a non-`200` counts as no
+  answer.
+- **A port that does not answer is dropped rather than printed.**  The server
+  is closed and the bind is tried again: with `0` the retry is a different port
+  from the OS, and a configured port is asked again after a pause.
+  `PREVIEW_PROBE_ATTEMPTS` refusals refuse by name rather than print a URL
+  that lies.
+- **The probe reads the build through the same handler every request uses**,
+  so it cannot pass by a route the build does not serve, and it writes nothing.
+- **An error after the preview is serving is reported.**  The `once("error")`
+  that named a failed bind is replaced once the port has answered, so a later
+  error names the port instead of being swallowed by a listener that already
+  ran.
+
+**What it costs, recorded rather than hidden**
+
+- **Every preview start now makes one request to itself**, a loopback round
+  trip of about a millisecond, and up to `PREVIEW_PROBE_ATTEMPTS` binds before
+  one that answers.
+- **`server.closeAllConnections()` is what lets a refused port go**, so a
+  dropped probe connection cannot hold the next bind waiting on it.
+- **The served root and both refusals are unchanged** (D174): the probe reads
+  `index.html` from the build output, so it asserts nothing new about what a
+  request may open.
+
+**Revisit if** the preview ever proxies `/api` to a backend (D174): the probe
+would then be a request the preview makes to itself on every start, and a proxy
+that answers a self-request differently from a browser would want the probe
+aimed at the static root instead.
+## D195 -- the actor on the page is the configured station label the build already reads, and the frontend collects no credential that could replace it
+
+- **The station is configuration, not an identity, so it is configured the
+  way the API origin already is.**  `DRISHTI_STATION_LABEL` is trimmed at build
+  time and written into `api-config.js` beside `apiBaseUrl`, and an unset or
+  whitespace value is `station-unset`.  10.7 put the same two rules on
+  `app.audit.emit`'s `actor`, so the page and the trail cannot disagree about
+  what "no station set" looks like -- and `result-actor.test.cjs` reads
+  `emit.py` to hold the one string against the other.  There is nothing to log
+  into here, so there is nothing a label could be read out of.
+- **A station nobody configured is refused by name, not drawn as a blank.**
+  `bindResultActor` takes the label at `render()` rather than at bind time, so
+  `container` stays the one required element and a label that is not a
+  non-empty string is `bad_station_label`, leaving the block standing.  This is
+  23.10's rule and deliberately not 23.11's: an absent *version* is the honest
+  answer a stored row carries, while an absent station is a page that passed
+  nothing, and drawing the placeholder would put a post on the record that
+  nobody is standing at.
+- **The label is configuration, so none of it is read off a stored result.**
+  D193 held the three versions to the row that answered them; the station is a
+  property of where the screen runs, so the page hands it in.
+- **The block is the sheet's own components** -- card, table with the
+  responsive wrapper, a scoped row header, `ux4g-table-cell-text`, and a
+  caption that says out loud that the value is a station and not a person --
+  with no class of this project's own and no custom CSS, so the G9 list is
+  unchanged.  D3's default theme answers the `ux4g-design` preflight's theme
+  question, so no token overrides were added.
+- **The display collects nothing.**  It writes no `input`, `textarea`,
+  `select`, `form` or `button`, and no `type`, `name`, `id`, `autocomplete`,
+  `formaction` or `value` attribute, so there is nowhere on this block for a
+  credential to hang.  The label is drawn as `textContent`, so a configured
+  label cannot become markup.
+- **The no-credential claim is read off the whole shipped frontend rather than
+  off a list, so a page written tomorrow is covered today.**  Every `.html`,
+  `.js` and `.css` in `frontend/` is scanned, and `node_modules/`, `dist/` and
+  `*.test.cjs` are out because none of them is what a browser is handed.  Two
+  scans.  The first reads every value-collecting control -- written as markup
+  or built in script, so assembling one cannot walk past the claim -- and
+  fails if such a control carries a credential or session word in an
+  attribute, a property or a `setAttribute`.  The second is the carriers
+  themselves: `sessionStorage`, `document.cookie`, `cookieStore`, an
+  `Authorization` header, a `Bearer` token, `credentials:` on a request, and a
+  storage key named for a session.  Each is shown failing on a fixture first,
+  so neither can pass by refusing everything, and each is shown passing on the
+  controls this frontend really does collect.  **The words are matched against
+  values and never against prose**: `about.html` and `profile.html` both *say*
+  this build has no password, `profile.html` carries a `Change password` button
+  that refuses by name, and a sentence is not an input.
+- **No page binds any of Part 23.**  `result.html` loads no script, so
+  `result-actor.js` is out of `staticFiles` and named by no markup; D173's
+  two-way check holds per module in both directions.
+
+**What it costs, recorded rather than hidden**
+
+- **A configured label is not length-checked.**  A very long
+  `DRISHTI_STATION_LABEL` ships as configured: nothing here guesses what a
+  reasonable station name is, and a build is the wrong place to refuse a
+  deployment over a cosmetic length.
+- **The scan reads words, not intent.**  A credential spelled from a vocabulary
+  it does not hold would pass it, and what it checks is what a control carries,
+  not where the value ends up.
+- **Nothing of Part 23 has been seen in a browser** (unchanged from 23.11):
+  every module is proved against the smallest element its test builds, so real
+  row heights and dark-theme contrast remain unverified, and the actor block
+  joins that list.
+
+**Revisit if** a page ever has to show the actor of one screening rather than
+the station the screen runs at: that is a different value from a different
+source, and D193's rule would then say it has to be read off the row that
+recorded it rather than off the environment.
+---
+
+## D196 — The history table is a container; `screenings-list.js` owns every row
+
+**Status:** settled · **Settled by:** 24.1
+
+`screenings.html` ships `<tbody id="screenings-body"></tbody>` and nothing
+inside it. The rows come from `frontend/screenings-list.js`, which reads
+`GET /api/screenings` through `api.js` and draws them.
+
+**Why**
+
+- **A page fragment is shipped to every reader, including one whose service
+  has never been configured.** Six sample `<tr>`s were a claim that a
+  screening existed when none did. Drawn rows cannot make that claim.
+- **The sample rows also asserted facts the storage layer does not hold.** They
+  named a `mode` ("Photo", "Scan") the list route never returns and a
+  `SCR-nnnn` id shape the backend does not mint, so the markup could not have
+  been a rendering of any stored row.
+
+**How it applies**
+
+- **`data-result` maps the band onto the existing chips** — `low` to `pass`,
+  `review` and `high` to `attention`, and `null` to `all`. The chip vocabulary
+  is 24.4's to replace with the real band names; 24.3 moves the filtering
+  server-side. The mapping is the seam, not the answer.
+- **An absent field is named, never filled.** The route returns no `mode`, so
+  that column reads `Not recorded`, and a row whose `band` is `None` draws
+  `.ux4g-tag-filled-neutral` reading `Not scored`. This is 23.10's rule: an
+  absent value is the honest answer a stored row carries, while an absent
+  *page* claim is not.
+- **A payload the module cannot read is refused before anything is drawn**, by
+  code (`bad_payload`, `bad_item`, `bad_timestamp`, `bad_score`, `bad_band`),
+  so a bad row leaves the table as it stood rather than half replacing it.
+- **`format.js` reached the build through this page.** The score and the band
+  label are read from it rather than spelled twice here, which is why
+  `staticFiles` gained both names and why `result-band.test.cjs`'s "format.js
+  must not be copied yet" assertion became false and was corrected.
+
+**Not settled here**
+
+- Three stat tiles were deleted rather than answered: the route carries only
+  `total`, and a passed count, an attention count and an average computed
+  from one page would be numbers about the page. Restoring them needs a
+  backend summary.
+- There is no loading or error state. The sheet ships no loading variant for a
+  table, so a failed read is stored on `error()` rather than thrown at a page
+  that cannot show it. 24.7 owns that treatment.
+
+
+## D197 - The history table's class composition and its seven columns are pinned by a test
+
+**Status:** settled - **Settled by:** 24.2
+
+`screenings.html` keeps `ux4g-table ux4g-table-m ux4g-table-zebra-rows
+ux4g-table-interactive` and its seven column headers. 24.2 changes neither. It
+writes the expectation down so a later task that restyles the table has to say
+so in a test, not in a diff.
+
+**Why**
+
+- **Part 24 rewires the data, not the design.** 24.1 emptied the tbody, and
+  24.3 to 24.7 move search, sorting, paging, the row actions, the export and
+  the empty and error states onto real data. Each can restyle the table on the
+  way past, and an undecided restyle is the failure this repository has been
+  guarding against since the Part 22 page work.
+- **A composition claim that only a reviewer could check stops being checked.**
+  The four classes and the seven `<th scope=`col`>` cells are what an officer
+  looks at; nothing else in the suite would notice either changing.
+
+**How it applies**
+
+- **The expectation lives in `screenings-list.test.cjs`**, as
+  `TABLE_UX4G_CLASSES` and `COLUMN_NAMES`, read back out of the page rather
+  than asserted as a string in it. The test also fails on a class added to the
+  `<table>` and on one that is not in the installed stylesheet.
+- **The drawn row is checked against the declared header count**, so a column
+  added to the `<thead>` without a cell drawn for it fails as well. D196's row
+  drawing is the other half of that equality.
+- **Restyling the table is a decision, not a cleanup.** It needs an entry here
+  and a task line in `tasks.md` naming what replaced the four classes.
+
+**Not settled here**
+
+- Nothing here claims the composition is correct, only that it is unchanged
+  from the design 24.1 inherited. Part 25 is what renders it in both themes at
+  four widths, and that part may change it on evidence.
+
+## D198 - The band filter chips carry the bands the engine bands in, and a row nothing scored belongs to no chip
+
+**Status:** settled - **Settled by:** 24.4
+
+`screenings.html` holds four `ux4g-filter-chip-md` buttons inside its
+`ux4g-filter-chip-group`: All, and one per band `app/risk/bands.py` bands in
+(`low`, `review`, `high`). `screenings-list.js` files each drawn row under the
+band the engine gave it, and under `not-scored` when it gave none.
+
+**Why**
+
+- **`Passed` and `Needs attention` are verdicts the engine never bands
+  in.** A row has to be filed under the vocabulary its score is read in, or
+  an officer pressing `review` cannot see the rows that are `review`.
+- **An unscored row is not a band, so it gets no chip.** `band` is `None`
+  until the gate has run, and a chip reading `Not scored` would offer a
+  filter over a set the engine never defined. Such a row is reachable under
+  All alone, which is what 24.1's `null` case did by accident and 24.4
+  makes deliberate.
+- **The composition is the one 2.1.0 ships.** Design.md 12 records that a
+  chip has no base class, and the sheet agrees: the only
+  `.ux4g-filter-chip*` names in `styles/ux4g.css` are `group`, `md` and `sm`.
+  A `.ux4g-filter-chip` base in the markup would be a class that paints
+  nothing.
+
+**How it applies**
+
+- **The chip's labels are the formatter's.** `format.js` owns `Low Risk` /
+  `Review` / `High Risk`, and a case asserts each chip's text is the
+  `bandLabel()` of its own `data-filter`, so the markup and the formatter
+  cannot drift apart quietly.
+- **The vocabulary is pinned on both sides.** `screenings-list.test.cjs`
+  reads the chips back out of the page and holds them against the
+  module's `BAND_FILTERS` and the formatter's `BAND_LABELS`, and goes red
+  if `data-filter=`pass` or `attention` returns.
+- **A drawn row's `data-result` is the band it was given**, which is what
+  `pages.js` compares against the pressed chip, so the two sides of the
+  filter agree by construction. `not-scored` is a value no chip carries.
+
+**Not settled here**
+
+- **The filter is still client-side over the rows the page holds.** 24.4
+  changes which rows a chip selects, not where the rows come from.
+- **Nothing here claims the chips look right.** Part 25 renders them in
+  both themes at four widths.
+
+## D199 - View is a link, Delete is a button behind a UX4G modal, and a redraw announces itself
+
+**Status:** settled - **Settled by:** 24.5
+
+The seventh column holds two controls of different kinds. View is a link
+`a` whose href is `result.html?id=` plus the encoded screening id.
+Delete is a `button` that opens the confirmation `screenings.html`
+ships and only a second press sends `DELETE /api/screenings/{id}`. After a
+delete the module re-reads `GET /api/screenings` rather than patching the
+row out, and every redraw dispatches `drishti:screenings-changed`.
+
+**Why**
+
+- **Navigation is what a link is.** View needs nothing from JavaScript to
+  work, and `submit.js` already spelled the same URL for the upload
+  page, so the history row lands the officer on the page they would have
+  reached from a fresh screening.
+- **A delete changes something a server holds, so it cannot be a link.** It
+  takes a second press, and that press names the row it is about: a
+  confirmation that does not say which row cannot be a confirmation of
+  anything.
+- **The history is re-read, not patched.** The repository already refuses a
+  deleted row to every read, so the answer is the only thing that can say what
+  the history holds. A total decremented here would be a number about this
+  page rather than about the station.
+- **The redraw has to be announced.** `pages.js` owns the band filter and
+  hides rows by setting `hidden`; a redraw replaces those rows, so
+  without the event the filter would silently reset the moment anything was
+  deleted.
+
+**How it applies**
+
+- **The row controls live in `screenings-list.js`, not `pages.js`.**
+  The stub that answered `[data-row-action]` in `pages.js` and told
+  the officer nothing had been deleted on a server is gone, and a case in
+  `screenings-list.test.cjs` holds both pages to that.
+- **The confirmation is the modal home.html already ships**: `ux4g-modal-backdrop`
+  carrying `is-open`, with `ux4g-modal-box ux4g-modal-s` inside. The
+  sheet ships `ux4g-modal-actions` and **not** the `ux4g-modal-footer`
+  the package README documents, so a case fails if that name is used.
+- **Both ids are encoded.** A value that were not an id must not be able to
+  close the path or the query string and carry parameters of its own.
+- **The outcome is a status line, not an alert.** `#screenings-notice` is a
+  `role="status"` paragraph: a refusal the service wrote is shown in its
+  own words, and a delete this page has no confirmation for is refused by name
+  (`no_confirm`) rather than silently ignored.
+
+**Not settled here**
+
+- **`result.html` still reads nothing from its query string.** The link is
+  correct and the id arrives, but no task in Part 23 or Part 24 owns loading a
+  stored screening by id; the page is still the skeleton 23.1 wrote.
+- **The dialog has no focus trap, no Escape and no focus restore.** It follows
+  home.html, and 25.5 is the task that brings those to the remaining dialogs.
+- **Nothing here has been rendered.** The dialog, both row controls and the
+  encoded href are proved against markup and a stubbed tbody only.
+## D200 - The export is written by the module that owns the rows, from the rows the page left visible
+
+**Status:** settled - **Settled by:** 24.6
+
+`screenings-list.js` serialises the CSV: `CSV_COLUMNS` names the six columns
+the table shows as data, in the order the page's header cells name them, and
+every field is quoted. It writes the rows the page has left visible, in the
+order the table holds them, through `window.DRISHTI_DOWNLOAD` --
+`pages.js`'s existing `downloadFile`, published rather than duplicated.
+
+**Why**
+
+- **The file the officer gets has to be the file they were looking at.** The
+  band chip and the search box belong to `pages.js` and it says what it
+  excluded by hiding those rows, so a second copy of the filter inside the
+  export could disagree with the table and write rows nobody can see.
+- **The old header named the sample table, not this one.** It read `Screening,
+  Checked, Mode, Score, Result` over the first five cells, which put a document
+  type under `Checked` and dropped `Result` entirely, and it took the
+  Screening cell's own text, which glues the id to the status.
+- **The seventh column is Actions, and a button is not a value.** It is left
+  out of the file rather than exported as an empty column.
+- **The row drawing lives in one module.** D199 moved the row controls there
+  for the same reason; the values of a row are as much the module's as the
+  buttons are.
+
+**How it applies**
+
+- **`pages.js` no longer holds the CSV.** The handler, the header list and the
+  `text/csv` string are gone; a case in `screenings-list.test.cjs` fails on
+  any of them returning, and another holds that the page still publishes
+  `window.DRISHTI_DOWNLOAD` and that `screenings.html` still carries the
+  button.
+- **The columns are pinned to the page's own `<th>` names** (`COLUMN_NAMES`
+  less `Actions`), so a renamed or added column fails rather than quietly
+  exporting under the wrong heading.
+- **The Screening field carries the id and the status as one value,** because
+  a CSV row is one line and the cell draws two.
+- **A page with nowhere to save the file refuses the export by name**
+  (`no_download`), in the same way a page with no confirmation refuses a
+  delete.
+- **The stub's `textContent` now aggregates its children,** as a browser's
+  does. Without that the export read every cell as empty and the case passed
+  against a stub rather than against the code.
+
+**Not settled here**
+
+- **Nothing here has been rendered in a browser,** and the file has not been
+  opened in a spreadsheet. The bytes are proved against a stubbed tbody.
+- **The export carries one page of rows.** `GET /api/screenings` is asked for
+  the default limit, so a station with more history than that exports what
+  the table shows and no more. 24.3 owns paging.
+- **Nothing announces the export.** The button saves a file and the status
+  line says nothing; 24.7 owns the states this page shows.
+## D201 - The three states the table is not in are one switch, and the page owns their markup
+
+**Status:** settled - **Settled by:** 24.7
+
+`screenings-list.js` holds `STATES` -- `rows`, `loading`, `empty`, `error` --
+and one `showState()` writes all four regions: the table scroll, the skeleton
+container, the error region and the empty panel. A state this page does not
+have is refused by name (`bad_state`). The markup of the three states is the
+page's own, in `screenings.html`; the module only switches it.
+
+**Why**
+
+- **A page cannot be in two states at once.** The 24.1 code hid the table and
+  the empty panel separately from where a load failed, so a failed read left
+  an empty table with nothing on it -- which reads as "no screenings" rather
+  than "the read failed". One switch is what makes the three states
+  exclusive.
+- **The skeleton is the page's own markup, not drawn rows.** Drawing five
+  placeholder `<tr>`s would put the module's row vocabulary into a state that
+  has no rows, and `ux4g-skeleton-block` is what the sheet ships for exactly
+  this.
+- **A failure is said in the words the service wrote,** and is also kept on
+  `error()` for a caller that wants the object rather than the sentence.
+- **The alert carries its own way out.** `#screenings-retry` is a
+  `ux4g-btn-outline-primary ux4g-btn-md` inside the alert's own action bar and
+  reads the route again, so the recovery is a press rather than a reload.
+
+**How it applies**
+
+- **`load()` shows the skeleton before it awaits, and `render()` switches to
+  `rows` or `empty`.** The count line (`role="status"`) says
+  `LOADING_MESSAGE` while the read is in flight and is cleared on a failure,
+  so the sample "Showing 6 of 6 screenings" cannot survive as a lie.
+- **`aria-busy` travels with the skeleton,** written by the same call that
+  writes `hidden`, and every shape carries `aria-hidden="true"` from the
+  markup (G2: the skeleton ships no ARIA of its own).
+- **`pages.js` still owns the filter's answer** and still toggles the table
+  and the empty panel for a band or search that excludes every row. 24.7 does
+  not move that; the module owns the states a read produces.
+- **Eight cases in `screenings-list.test.cjs`,** one per state plus the
+  exclusivity, the composition read back out of the installed sheet, and the
+  refusal. Dropping the loading switch, downgrading the alert to
+  `-warning`, or hardcoding the message turns one of them red.
+
+**Not settled here**
+
+- **The skeleton still draws nothing in a browser.** All seven
+  `ux4g-skeleton-*` rules are scoped `.ux4g-application-submission`, which this
+  page does not carry, so G8 is now owed twice: `result.html` and
+  `screenings.html`.
+- **The empty panel keeps the project's own icon and heading** rather than the
+  sheet's `-content` block and `-icon` class, which is the state 24.1 left it
+  in. Design.md 13's rule about a bespoke illustration is recorded against it
+  and was not settled here.
+- **The delete confirmation's outcome line is still a `role="status"`
+  paragraph,** not an alert. 24.5 said 24.7 owns the error treatment; it owns
+  the read's failure, not every outcome on the page.
+- **Nothing in Part 24 has been rendered in a browser,** this page included:
+  the three states are proved against the stub, not against a screen.
+---
+
+## D202 - The audit view lists the ids it is asked about, and the route answers for one event each
+
+**Status:** settled · **Settled by:** task 24.8
+
+`frontend/audit.html` is the audit view and `frontend/audit.js` owns its rows.
+The page is a container, not a record: the markup ships an empty
+`<tbody id="audit-events-body">`, no sample row, and one script tag, and the
+module reads `GET /api/audit/{id}/verify` through `api.js`.
+
+**Why**
+
+- **The route the task names answers about exactly one stored event.**
+  `/api/audit` holds one read, and `AuditVerificationResponse` carries
+  `audit_id`, `status`, `batch_id`, `batch_root`, `proof_length` and `checked`.
+  No event type, no actor, no timestamp, no ruleset or model version.
+- **Nothing else in the service exposes a trail.** `app/audit/trail.py` holds
+  `completed_event_id` and `event_by_id` and no list, and no `/api/screenings*`
+  response carries an audit id or an event stream. The roadmap's F18 columns
+  are five columns a route this service does not have would carry.
+- **Inventing them is the one lie this page cannot tell.** 24.1 already set
+  the precedent in the other direction: a field the route does not carry reads
+  "Not recorded", it is not filled in.
+
+**The decision**
+
+- **The query string carries the ids, and the list is one row per id.**
+  `audit.js` reads `id` whole, so `audit.html?id=<uuid>` is one row today and a
+  screening's whole trail is one link away the moment a trail route lands, with
+  no change to the table. A blank parameter names no record and is dropped
+  rather than read as one; a page opened with no id at all shows the empty
+  state and sends nothing.
+- **The id is encoded into the path** and both the path and the count are the
+  module's own, so an id cannot close the path and a page cannot grow a second
+  copy of the route.
+- **A row carries the id the answer held and how many checks completed** -- the
+  two of the answer's six fields that 24.9 (the status and the sentences) and
+  24.10 (the batch id, root and proof length) do not own. Two columns is a thin
+  table, and that is the honest reading of the route rather than a layout to
+  dress up.
+- **A payload the page cannot read is refused by name** (`bad_event`,
+  `bad_status`, `bad_checks`, `bad_ids`, `bad_state`) and the list is left as it
+  stood, so an answer the page cannot read never draws two rows beside an
+  alert.
+- **The four states are one switch,** as D201 settled for the history table, and
+  a failure is said in the words the service wrote.
+
+**How it applies**
+
+- **`load()` collects every answer before `render()` reads any of them,** so a
+  route that refuses the third id leaves the list as it stood rather than
+  half replaced. The ids are read one after another rather than all at once.
+- **The nav key is `screenings`,** on D184's reasoning and with D184's cost: the
+  shell puts `aria-current="page"` on a link to a different page.
+- **The event list is a table, not the timeline** the sheet also ships. The
+  timeline's head icon rule sets no background or colour, and a timeline's row
+  is a single cell wide; the UX4G preflight note records the reasoning in full.
+- **Twenty-four cases in `audit.test.cjs`,** one per refusal, per state, plus the
+  table composition and the class list read back out of the installed sheet.
+  Stopping the counter, dropping one shape's `aria-hidden`, swapping a table
+  class, or accepting a status outside the three turns one of them red.
+
+**Not settled here**
+
+- **`audit.html` is not linked from anywhere yet.** Nothing in Part 24 carries an
+  audit id to it, because no response exposes one; F15's "audit id surfaced with
+  a link to the verification view" is still owed.
+- **The skeleton still draws nothing in a browser.** G8 is now owed three times:
+  `result.html`, `screenings.html` and `audit.html`.
+- **Nothing of Part 24 has been rendered in a browser,** this page included.
+## D203 - The verification result is a tag the walk's own words back up, and the sentences are shown rather than counted
+
+**Status:** settled · **Settled by:** task 24.9
+
+`frontend/audit.js` gains two columns between 24.8's Event column and 24.10's
+batch columns: **Result** and **What was checked**. The **Checks run** count
+column they replace is gone, and the reasoning is below.
+
+**Why**
+
+- **The count was a number about nothing.** "2" beside an audit id says that
+  two of three steps ran. It does not say *which* two, so a reader who needs to
+  know why a record was refused has to guess. The service already writes the
+  answer: `app/audit/verify.py`'s `CHECK_SENTENCES` gives one plain sentence per
+  completed check, precisely so "nothing here needs a reader who knows the
+  trail" (its own docstring).
+- **The three answers are not three shades of one thing.** `verified` is a
+  clearance, `altered` is the one refusal, and `unknown` is a question the walk
+  could not answer -- it is not a milder `verified`. Drawn as three rows of
+  identical text, that distinction is invisible.
+- **Colour alone is not an answer.** An officer with a colour-blind eye, a
+  screen reader, and a printed copy all need the word.
+
+**The decision**
+
+- **`STATUS_VARIANTS` and `STATUS_LABELS` are two tables keyed by the three
+  words 9.17 answers with,** looked up with `hasOwnProperty` on 24.1's
+  reasoning. `verified` takes `ux4g-tag-filled-success`, `altered` takes
+  `ux4g-tag-filled-error` because it is the only refusal, and `unknown` takes
+  `ux4g-tag-filled-neutral` because 24.1's "an unscored row gets a neutral tag,
+  not a verdict" applies unchanged. Each row also carries
+  `data-verification`, so the three answers can be told apart in the DOM and
+  not only on screen.
+- **The word carries the meaning; the tag carries the colour.** The tag's text
+  is `Verified` / `Altered` / `Unknown`, so nothing rests on the variant alone.
+- **The explanation is the walk's own sentences, in the order it ran them,** one
+  `<li>` per completed check in a bare `<ul>`. The count is not shown beside
+  them: the sentences are the count.
+- **A walk that completed no check says so.** `NO_CHECKS_LABEL` -- "No check
+  completed." -- is held in the module, not the markup, because the module owns
+  the tbody. 23.10's rule: an absent fact is said, not left blank and not
+  guessed at.
+- **The sentences are `checked` verbatim.** The page does not re-word what
+  `app/audit/verify.py` wrote, and a check name it cannot read is refused by
+  name upstream rather than rendered as prose of this page's own.
+
+**How it applies**
+
+- **No class was invented and no CSS was added.** The tag composition is 23.4's
+  and 24.1's -- base, variant, size. The `<ul>` carries no class at all, on
+  G14's reasoning: `.ux4g-list` is a card-body composition and would draw a box
+  inside the table's own box.
+- **The test asserts distinctness and explanation together**, in one case: three
+  answers, three different tag class-sets, the error tag on `altered` and on
+  nothing else, and the sentence naming the check that disagreed present in the
+  `altered` row. Mutating `STATUS_VARIANTS.altered` to the success tag fails
+  three cases; restoring 24.8's count-only cell fails four.
+- **`readEvent` is unchanged** -- it still copies `checked` and still refuses a
+  sentence it cannot read -- so 24.8's refusals hold and 24.10 reads the same
+  event object.
+
+**Not settled here**
+
+- **Still nothing of Part 24 in a browser.** The three-column table at 320px,
+  the three tag variants against the result page's own tags, and dark-theme
+  contrast are open. The states are proved against the stub DOM.
+- **24.10 still owns the batch id, the batch root and the proof length,** which
+  the route already carries and no column shows.
+- **`audit.html` is still not linked from anywhere,** and the skeleton still
+  draws nothing (G8, owed three times).
+
+## D204 - The three facts the walk reached are three columns, shown as the log spells them, and a fact it never reached says so
+
+**Status:** settled · **Settled by:** task 24.10
+
+`frontend/audit.js` draws the last three fields
+`GET /api/audit/{id}/verify` already sent and no column showed: **Batch id**,
+**Batch root** and **Proof length**. They sit between 24.9's **Result** and
+**What was checked**, in the order `app/ledger/verification.py` reaches them --
+the batch, then the root read out of it, then the path walked to that root --
+so a row reads left to right as the walk ran.
+
+**Why**
+
+- **The route already carries the proof, and 24.8 dropped it.** `Verification`
+  answers `batch_id`, `batch_root` and `proof_length` beside the three words, and
+  24.9's "what was checked" cell is the sentences without the numbers. A reader
+  told a record was `verified` had no way to see which commitment it was
+  verified against.
+- **A root that cannot be read out in full is not a commitment.** The column
+  shows the log's own 64-character spelling (`D57`), unabridged. A truncated
+  root with an ellipsis beside it cannot be compared against the anchor it
+  names, which is the one thing a reader wants to do with it.
+- **`ux4g-table-cell-text` truncates, so it does not go on the root.** Its own
+  rule is `overflow:hidden; text-overflow:ellipsis; white-space:nowrap`. The
+  batch id is a UUID and takes the class with the Event column, which is the
+  same shape; the root and the count carry no class, and no custom CSS was
+  added to wrap one.
+
+**The decision**
+
+- **One fact per cell, read in `readEvent` before anything is drawn.** The
+  batch id and the batch root go through one `readFact`, which accepts a
+  non-empty string or `null` and refuses anything else as `bad_batch`. The two
+  are read *apart* rather than as a pair: a row can carry a batch whose log
+  entry no longer answers, which is a walk that reached the batch and never
+  read a root -- a reachable answer that is one and not the other.
+- **A proof length is a count of sibling steps from zero up.** `readProofLength`
+  takes `null`, or a whole number that is not negative, and refuses `"3"`,
+  `2.5`, `-1`, `NaN`, `Infinity`, `true` and an absent key as
+  `bad_proof_length`. `0` is kept, not folded into absence: a batch of one leaf
+  has a path of none, and that is a path walked.
+- **`ABSENT_LABEL` -- "Not recorded." -- is the one label for all three.** The
+  column header names which fact is missing and 24.9's cell carries the reason
+  the walk stopped, so three bespoke sentences would restate a cause the
+  service does not distinguish. 23.10's rule again: an absent fact is said,
+  never left blank and never guessed at.
+- **Nothing is re-worded.** The page draws the values the service sent and adds
+  no prose beside them; `What was checked` is still `checked` verbatim.
+
+**How it applies**
+
+- **No new component, class or token.** Three `<th scope="col">` and three
+  `<td>` in the composition D202 settled; `D3`'s default light theme answers
+  the `ux4g-design` preflight's theme question, as it does for every page here.
+- **The tests are the mutation.** Seven new cases: the three facts drawn as
+  sent and the root asserted whole at 64 characters; `0` drawn as `"0"`; all
+  three absent facts reading `ABSENT_LABEL`; a batch with no root drawn as one
+  and not the other; `readEvent` holding the three as sent; the two refusal
+  families by name; and the truncating class on the batch id and on nothing
+  else. Ten refusals joined 24.8's table. Restoring 24.9's three-cell row reds
+  eleven cases.
+- **`readEvent` still refuses an answer whole**, so 24.8's promise holds: a
+  payload it cannot read leaves the list as it stood rather than half drawn.
+
+**Not settled here**
+
+- **Still nothing of Part 24 in a browser.** Six columns, the widest of them a
+  64-character root, at 320px and against `ux4g-table-responsive`'s scroll, is
+  unverified -- as are the three tag variants from 24.9 and dark-theme
+  contrast.
+- **G13 and G14 are unchanged.** No route lists a screening's trail, so a
+  screen is still opened one `?id=` at a time, and the explanation cell's bare
+  `<ul>` still has no list class.
+- **The roadmap's other F18 columns -- type, actor, timestamp,
+  ruleset/model version -- are still owed**, and no response carries them.
+
+---
+
+## D205 - A case is the set of screening ids the page was opened with, and it draws no custom CSS
+
+**Date:** October 5, 2026
+**Task:** 24.11
+**Status:** settled, and the settled answer is a boundary rather than a feature
+
+### What was decided
+
+- **A "case" is the set of screening ids `cases.html` was opened with.** There
+  is no case entity, no traveller entity, and no relation between two
+  screenings anywhere in the service, so a traveler's documents side by side is
+  a grouping `GET /api/screenings` and `GET /api/screenings/{id}` cannot
+  produce. `cases.js` reads `id` whole -- `?id=a&id=b` is two documents -- and
+  reads each one from a route that exists. A real case route becomes one link
+  away with no change to the card.
+- **A card draws the `crossdoc` flags its own answer carries, and nothing
+  else.** `app/risk/flag_ids.py` names four cross-document rules and
+  `app/risk/flags.py` spells the tier `"crossdoc"`, but `flags` is a column on
+  the screening row, so no route reports a cross-document finding across two
+  screenings. Every other tier is scoped to one document and belongs on
+  `result.html`. **If the cross-document engine is not writing onto screening
+  rows today, this view's second column is empty, and that is the service's
+  answer rather than a fault in the page.**
+- **The side-by-side layout is UX4G's grid, not CSS of our own.**
+  `ux4g-grid` + `ux4g-grid-cols-1` + `ux4g-md-grid-cols-2` (768px) +
+  `ux4g-xl-grid-cols-3` (1200px) + `ux4g-gap-m`. 24.11 adds no `<style>` block
+  and no rule to `pages.css`, and two cases assert both.
+- **The cross-document list is a bare `<ul>`/`<li>` with no class**, on 24.9's
+  G14 reasoning: the sheet's list classes carry their own padding, border and
+  divider, which would draw a box inside the card's own box.
+
+### Why
+
+- A page that invented a traveler, or read a band from a route that does not
+  exist, would be a claim the service cannot support -- and in a
+  border-security project an unlabelled invention is exactly what
+  `tasks.md`'s "Tier 2 stand-ins must carry `is_stub: true`" rule exists to
+  prevent. Naming the gap (G15) and building on what exists is the same
+  discipline 24.8 applied to the audit trail's missing columns.
+- The band tag's four variants and their labels are **copied, not shared**:
+  `result-band.js` is not loaded by `shell.html`, so referencing
+  `window.DRISHTI_RESULT_BAND` would ship a page reading a module no page
+  loads. The copy is pinned by `cases.test.cjs` against `result-band.js` and
+  `format.js`, so drift is a failing test rather than a quiet divergence.
+- A table was rejected over a grid: documents side by side is a comparison read
+  across, and at 320px a three-column comparison becomes one column of the
+  same. A card also holds a list of flags without the box-inside-a-box G14
+  exists for.
+
+### What it forbids
+
+- No traveller, case, or cross-screening entity invented on the frontend.
+- No cross-document finding synthesised by comparing two answers this page
+  holds; if the engine does not write those flags, the column is empty and
+  says so.
+- No card link to `result.html`, which reads nothing from its query string
+  today (G10). A link that goes nowhere is worse than an id read aloud.
+- No `<style>` block, and no `.case-*` class, on this page.
+
+### Revisit condition
+
+A case route lands (or `result.html` is wired to its query string), and this
+becomes a link rather than a page boundary. If the cross-document engine starts
+writing onto screening rows, the column fills with no change here.
+## D206 - A case of one document is its own answer, and the cross-document column is dropped rather than filled
+
+**Date:** October 5, 2026
+**Task:** 24.12
+**Status:** settled
+
+### What was decided
+
+- **`single` is a fifth state beside `documents`, `loading`, `empty` and
+  `error`,** chosen by one exported rule, `stateFor(count)`: none named is
+  `empty`, one is `single`, two or more is `documents`. One `showState()`
+  writes all five regions, as D201 settled for the history table.
+- **`#case-single` is a panel of its own,** not `#case-empty` reused: "No
+  document was named" is false for a case that named one, and saying it would
+  be the same unlabelled invention D205 exists to prevent. Same composition
+  the sheet ships -- `ux4g-empty-state` > `ux4g-empty-state-content`, an
+  outline button back to `screenings.html`, no icon (Design.md 13).
+- **The lone card keeps the document's own facts and drops the
+  cross-document section.** Kind, screening id, band tag and score are the
+  service's answer and are still drawn; the grid stays visible and the count
+  still says "1 document". What is missing is the comparison, and the panel
+  is what says so.
+- **"No cross-document flag was raised." is not drawn without a comparison.**
+  With one document in the set no cross-document rule can have run, so that
+  sentence would report a clean result for a check that never happened. The
+  section is drawn where there is a comparison to report: two or more
+  documents, or a `crossdoc` flag the service did raise on the lone screening
+  -- that flag is the service's answer and is never withheld.
+
+### Why
+
+- A one-document case is the common case on a screen that takes one document at
+  a time, and hiding the band to be tidy about a missing second document would
+  lose the only thing the officer opened the page for.
+- A flag that cannot have been raised, reported as not raised, is the failure
+  mode this project is least willing to ship: a reader would take "nothing
+  fired" for "nothing ran", and those are opposite sentences in a
+  border-security tool.
+- The empty state's own words are the design: an officer must be able to tell
+  "you named nothing", "there is one document and nothing to compare it
+  against", and "the read failed" apart without reading a route id.
+
+### What it forbids
+
+- No second document invented, suggested or faked so the column has something
+  in it (D205).
+- No `#case-empty` copy reused for `#case-single`, and no sentence claiming a
+  cross-document check ran when the case holds one document.
+- No `<style>` block, no `.case-*` class, and no new component or token: the
+  panel is the composition the page already ships.
+
+### Revisit condition
+
+The cross-document engine starts reporting a finding that spans two
+screenings, at which point a case needs a route to hold a traveler's set
+(D205) and this state becomes a rarer path rather than a rarer design.
+
+## D207 - A page's UX4G class list is read out of its own markup, and a name the stylesheet does not define is red
+
+**Date:** October 5, 2026
+**Task:** 25.1
+**Status:** settled
+
+### What was decided
+
+- **The per-page class list is derived, not written.** `frontend/ux4g-classes.test.cjs`
+  reads every `class=""` token out of the page's own markup, keeps the
+  `ux4g-` ones and looks each up in `node_modules/ux4g-web-components/styles/ux4g.css`.
+  The list is printed as the test's diagnostic, so a run shows the page's classes
+  instead of asserting against a list nobody can re-derive by reading.
+- **No hand-maintained list.** `audit.test.cjs` carried one, and it had already
+  drifted: it names `ux4g-d-flex` and `ux4g-gap-y-l`, which `audit.html` does not
+  use. A list kept by hand is a list that is wrong while reading as correct.
+- **The lookup boundary is part of the guard.** `isShipped` matches `\.<name>(?![\w-])`,
+  so `ux4g-p-l` is not answered by `ux4g-p-lg` and `ux4g-card-b` is not answered
+  by `ux4g-card-body`. A substring hit would let every typo pass.
+- **A page naming no UX4G class is red, not vacuously green.** Every page gets the
+  same `assertOnlyShippedClasses`, which asserts the list is non-empty before it
+  asserts the list is clean.
+- **Only the design system's names are judged.** Tokens without the `ux4g-`
+  prefix are the project's own and belong to `pages.css` and `home.css`; the
+  guard neither blesses nor condemns them.
+- **The grep target is anchored.** One test renders each page through
+  `build.cjs`'s `renderPage` and asserts the built page links the very file the
+  guard reads, so "grep `styles/ux4g.css`" names a file the browser loads rather
+  than one that happens to be installed.
+- **Scope is the static markup, and that is stated.** Classes a module writes at
+  runtime are asserted in that module's own test, where the drawn element can be
+  inspected; this guard reads the page's own classes. Both sets were checked and
+  both are clean.
+
+### Why
+
+- Part 25 exists because nothing here has ever been rendered. A class that 2.1.0
+  does not ship is a class that draws nothing, and reading the CSS cannot reveal
+  it -- the CSS is where you would not find it.
+- Nine pages, ~200 class names, and no browser. The only honest substitute is a
+  mechanical check against the installed sheet, and a mechanical check is only
+  worth having if it is red when it should be. The fixtures assert that it is,
+  and a deliberate `ux4g-card-bdy` in `cases.html` turns the real page red.
+
+### What it forbids
+
+- No hand-written per-page class list, and no `"." + name` substring lookup.
+- No claim that a class is *used* or *drawn*. This guard answers one question:
+  does the stylesheet define the name. G8's skeleton debt, G9's hooks and the
+  stepper workaround are untouched by it and remain open.
+- No change to any page's markup to satisfy it: every page was already clean, so
+  the task added a test and no class.
+
+### Revisit condition
+
+The package moves off `ux4g-web-components@2.1.0`, at which point the sheet path
+and the boundary rule both have to be re-read rather than carried over.
+## D208 - A page''s UX4G behaviour list is read out of its own markup, and a hook nothing implements is red
+
+**Date:** October 5, 2026
+**Task:** 25.2
+**Status:** settled
+
+### What was decided
+
+- **The per-page behaviour list is derived, not written.**
+  'frontend/ux4g-behaviour.test.cjs' reads every 'data-*' token out of the
+  source that carries it and keeps the ones the design system owns. The list is
+  printed as the test''s diagnostic, exactly as D207 prints the class list.
+- **A hook is the design system''s by namespace or by the runtime reading it.**
+  A 'data-ux4g-*' name claims the package explicitly; any other 'data-*' name the
+  shipped runtime itself names is a hook the runtime acts on. Everything else --
+  'data-module', 'data-filter', 'data-stat', 'data-sort-key', 'data-display',
+  'data-placeholder-switch', 'data-nav' -- is ours and is not judged, the same
+  split D207 makes on the 'ux4g-' prefix.
+- **Exact attribute names, not substrings.** The runtime''s vocabulary is the set
+  of 'data-[a-z0-9-]+' tokens in its own bytes, so 'data-ux4g-toggle' is not
+  answered by 'data-ux4g-toggle-disable' and 'data-placeholder-switch' is not
+  answered by 'data-placeholder'.
+- **Answered means implemented or declared.** A claimed hook must be implemented
+  by 'dist/runtime/design-system.js' or declared in 'FALLBACKS' with the file
+  that implements it. Anything else is a behaviour the page believes in and the
+  browser never runs, and it is red.
+- **A declared fallback is our debt and is proved, not asserted.** An entry names
+  the file; the test then requires that the file really selects the hook, that
+  every page naming the hook loads that file in its built form, and that the
+  runtime still does not implement the hook -- so the entry cannot outlive the
+  gap it records. 'data-ux4g-accordion-toggle' is the one entry today, and
+  'pages.js'' ''initAccordions'' is the fallback it records.
+- **Modules are judged too.** 'home.js', 'pages.js', 'preferences.js' and
+  'progress-panel.js' write design-system hooks into a page after load, and
+  'progress-panel.js' alone relies on four ('data-ux-progress-bar',
+  'data-ux-progress-label', 'data-ux-label-placement', 'data-ux-shape') that no
+  test checked. The module list is derived from the directory, so a new module
+  is covered without being registered.
+- **The grep target is anchored.** One test renders each page through
+  'build.cjs'' ''renderPage'' and asserts the built page links the very runtime
+  the guard greps; 'build.test.cjs' already proves that path ships as
+  './assets/design-system.js'.
+
+### Why
+
+- 2.1.0 documents 'data-ux4g-accordion-toggle' in its README and does not read
+  it. The runtime ships a Collapse/Accordion class keyed on 'data-bs-*' and
+  'data-ux-*' attributes, so the documented hook is inert and 'pages.js' has to
+  supply the toggle by hand. A page can believe in any number of behaviours the
+  README describes and the browser will not run one of them.
+- Nothing in this repository has been rendered in a browser, so the runtime
+  bundle is the only evidence available about what the package will do.
+
+### What it forbids
+
+- No hand-written per-page behaviour list, and no substring lookup for a hook.
+- No marking a page green because its list is empty. The inventory test asserts
+  that the four hooks carrying the claim are still read off the sources, so the
+  derivation cannot quietly stop finding them.
+- No claim that a behaviour works. The guard answers one question: does the
+  runtime implement the hook, or do we. 25.3''s accordion question, 25.5''s focus
+  trap and 25.7-25.13''s browser checks are untouched by it and remain open.
+- No change to any page to satisfy it: every page was already clean, so the task
+  added a test and touched no markup.
+
+### Revisit condition
+
+The package moves off 'ux4g-web-components@2.1.0', at which point the runtime
+path and the ownership rule both have to be re-read rather than carried over.
+When 25.3 removes 'initAccordions', this guard''s two fallback tests go red and
+the entry has to go with them.
+
+---
+
+## D210 - A page is rendered at four widths in a real browser, and the run measures the render rather than trusting the picture
+
+**Date:** October 5, 2026
+**Task:** 25.7
+**Status:** settled
+
+### What was decided
+
+- **The evidence is a measurement; the screenshot is the receipt.**
+  'frontend/scripts/viewport-shots.cjs' drives a headless Chromium over the
+  DevTools protocol and, for every page at 320, 768, 1024 and 1440 CSS pixels,
+  reads four things off the rendered document: whether it scrolls sideways,
+  whether any element reaches past the viewport edge, whether text is cut by a
+  clipping box, and whether any text renders below 10px. 'npm run shots' writes
+  one full-page PNG per page per width to 'docs/viewport-shots/<width>/' and a
+  per-page verdict to 'docs/viewport-shots/README.md', exiting non-zero on any
+  finding. A picture cannot be read for a one-pixel overflow, so the picture
+  alone would not have answered the task.
+- **The four verdicts live in a pure function.** 'analyseMeasurement' takes a
+  measurement and returns findings, so 'frontend/viewport-shots.test.cjs' holds
+  every rule -- the 1px tolerance, the 10px floor, the order page-overflow
+  before element-overflow -- without launching a browser. The browser is a
+  fixture for those rules, not the place they live.
+- **The harness owns no dependency.** Node 24 ships a WebSocket, and the
+  Chromium is already on the machine, so the DevTools client is a short class
+  here rather than a pinned puppeteer in 'package-lock.json'.
+  'findBrowserExecutable' refuses to return nothing, because a run that
+  silently rendered no pictures is the exact failure 25.1-25.6 could not catch.
+- **The 1px box is not clipping.** A box one pixel wide and one pixel tall with
+  'overflow: hidden' is the screen-reader-only pattern this repo uses
+  ('.visually-hidden' in 'home.css', and the collapsed sidebar status). The
+  clipped-text check ignores it, or every table's hidden caption and every
+  hidden field label would be reported as clipped text at every width.
+
+### Why
+
+- Nothing in this repository had been rendered in a browser before 25.7. 25.6
+  could prove from the package CSS that a focus ring would win on specificity,
+  and could not say whether a single focus ring was on screen.
+- Two real defects survived every source-level guard and appeared on the first
+  render. At 320px the profile form''s grid track was sized by an input''s
+  intrinsic width and pushed the contact card 22px past the viewport; at 768px
+  '.page-header__actions' carried 'flex: 0 0 auto' inside the row-direction
+  '.profile-header', and the 'width: 100%' that the 48rem breakpoint applies
+  made it 628px wide, putting the Remove button 76px off-screen.
+- Both fixes are layout-only in 'pages.css': '.field-grid' takes an explicit
+  'minmax(0, 1fr)' track, the same shape '.profile-grid' already used, and
+  '.page-header__actions' takes 'flex: 0 1 auto' with 'min-width: 0'. No
+  markup, class, token or theme changed, so the preflight answer is unchanged:
+  the default light theme (D3).
+
+### What it forbids
+
+- No claim that a page is clean because a source grep was clean. The guard is
+  the render, and it is re-run with 'npm run shots'.
+- No hand-written page list. The set is read out of the build output, the same
+  way 'previewPageNames' serves it, so a new page is covered on the next run.
+- No width-specific stylesheets. A fix belongs where the layout already lives,
+  as a rule that holds at every width.
+
+### Revisit condition
+
+If UX4G ever ships a responsive component that owns this layout, '.field-grid'
+and '.page-header__actions' have to be re-read against it rather than carried
+over. The same applies to the 'min-width' floor in 'pages.css': 25.10 tests the
+text-size preferences, and a run at 112.5% or 125% may need it revisited. The
+three breakpoints here are rem-based against a 16px root, so a change to the
+root font size moves all of them at once.
+## D211: the theme render set, and four UX4G 2.1.0 pairs that fail
+
+**Status:** accepted, October 5, 2026 (25.8)
+
+### Context
+
+The dark theme shipped unrendered until now. 25.7 proved layout at four widths
+but only ever loaded the light theme, so nothing had yet seen what the dark
+theme paints. UX4G 2.1.0 does ship a '[data-theme=dark]' block that remaps the
+semantic tokens, and no project CSS or script carries a hardcoded colour, so
+the theme was expected to work. Rendering it is what showed that it mostly
+does, and that four pairs inside it do not.
+
+### Decision
+
+The guard is the render again, run a second time over a different axis.
+'frontend/scripts/theme-shots.cjs' renders every built page in both themes at
+1280 CSS pixels and reads four things off each one: the 'data-theme' the page
+resolved to, the computed colour of every text run and every painted border,
+the colour actually behind each of them, and the page background. The
+measurement is the evidence; a dark screenshot next to a light one cannot be
+told apart from a light screenshot next to a light one by eye alone, so
+'summariseThemes' also fails the run when one page paints the same background
+in both themes. That is the exact shape a theme that failed to apply takes.
+
+The browser plumbing moved out of 'viewport-shots.cjs' into
+'scripts/browser-capture.cjs' so the two harnesses share one DevTools client
+rather than each carrying a copy. 25.7's public interface is unchanged and its
+40 renders still pass.
+
+Four real defects surfaced, all inside UX4G's own pairings, all fixed in
+'pages.css' with palette tokens and no new colour and no root override block:
+
+| what | shipped pair | was | now |
+| --- | --- | --- | --- |
+| warning alert text | orange-600 on orange-100 | 1.98:1 | orange-800, 4.51:1 |
+| info alert text | cyan-600 on cyan-100 | 1.90:1 | cyan-800, 5.25:1 |
+| input helper text | neutral-500 on neutral-100 | 4.35:1 | neutral-secondary, 9.51:1 |
+| completed stepper ring | neutral-300 by name | invisible in dark | border-color-neutral-strong, 3.19:1 |
+
+The stepper ring is the one that only the dark render could have found. UX4G
+writes it as '--ux4g-color-neutral-300', a raw ramp step rather than a semantic
+token, so it does not flip with the theme: on the neutral-800 step behind it in
+dark, the outline was the same colour as its own background.
+
+### What it forbids
+
+- No claim that a theme works because '[data-theme=dark]' exists in the
+  package. It did exist, and four pairs were still wrong.
+- No counting a border as invisible when it is merely faint. UX4G's neutral
+  1px dividers sit at 1.16:1 to 1.91:1 by design; calling those defects would
+  bury the real one. Only a border whose colour matches what surrounds it is
+  reported.
+- No reporting a shape filled in the colour it is outlined in. The fill is the
+  boundary; a radio mark and a stepper disc are not missing a border.
+- No failing a disabled control for contrast. WCAG 1.4.3 exempts a control the
+  user cannot operate, and UX4G dims those to 0.25 alpha on purpose.
+- No new colour, no root token override block, and no change to D3's default
+  light theme.
+
+### Revisit condition
+
+The four fixes are compensating for UX4G 2.1.0. When the package is upgraded,
+re-run 'npm run theme-shots' and drop any override the new version fixed
+itself; a rule that has been fixed upstream is now a second answer to a
+question the package answers. The contrast *thresholds* are deliberately not
+this task's business: 25.9 owns text, border and focus-ring contrast, and the
+harness holds body text to 4.5:1 without the large-text exemption so that a
+real failure cannot hide behind a size exemption.
+
+## D212: the upload timing and the private-storage answer are read out of a private browser context, not out of the sources
+
+### Context
+
+25.12 asks two questions that neither the sources nor a unit test can settle.
+First, does an upload request leave the page before an officer submits? A
+previewed file and a submitted file are the same object on screen, and
+`upload.js`, `home.js` and `submit.js` each send nothing until something asks
+them to. Second, does `preferences.js` survive a browser that has no
+`localStorage`? Its `getStorage()` probe is wrapped in a `try`, but a `try` is
+exactly the thing a test cannot prove; only a browser that really refuses
+storage refuses it.
+
+Private browsing is also not the only way storage disappears. An opaque origin
+-- a frame sandboxed without `allow-same-origin`, or a third-party frame whose
+site data is blocked -- raises `SecurityError` on the `localStorage` property
+itself, before any method is called. That is the case `preferences.js` had no
+unit case for, and it is the one that reaches a real officer.
+
+### Decision
+
+- The check opens `home.html` in an off-the-record Chromium browser context
+  created by `Target.createBrowserContext`, drives a real file into
+  `#screening-file` with `DOM.setFileInputFiles`, and reads every
+  `Network.requestWillBeSent` in two windows: after the file is chosen, and
+  after the submit button is clicked. Anything above zero in the first window is
+  a finding.
+- The unavailable-storage case is a frame sandboxed with `allow-scripts` and no
+  `allow-same-origin`, so the browser raises `SecurityError` rather than the
+  harness pretending to. `preferences.js` is **inlined** into that frame: a
+  script that failed to load over the network would otherwise be read as a
+  storage failure.
+- The run writes `docs/private-check/README.md` and exits non-zero on any
+  finding. `npm run private-check` runs it; it is not part of `check-all.ps1`,
+  the same place `theme-shots` sits.
+- The verdicts live in `analysePrivateCheck`, separate from the browser, and
+  `private-check.test.cjs` holds them. A private-mode run that could only be
+  trusted by re-reading its own output would be an assertion, not a check.
+- The unit seam is widened where it was thin, not replaced: `pages.test.cjs` now
+  covers a `localStorage` property that throws on read and a window that
+  carries none at all, and `submit.test.cjs` loads `api.js`, `upload.js` and
+  `submit.js` into one sandbox behind a real `fetch` recorder, so choosing a
+  file and clicking the button are watched in the same place the network is
+  dialled.
+
+### Consequences
+
+- The check watches both upload endpoints the site posts to, `/api/analyze`
+  (`home.js`) and `/api/screenings` (`submit.js`), so a new sender is caught
+  rather than passing unnoticed.
+- A run whose opaque-origin frame could still read `localStorage` is itself a
+  finding (`storage-not-blocked`). Otherwise a browser that quietly allowed
+  storage would produce a green run that proved nothing.
+- Only `home.html` ships an upload, because 22.2's `screening.html` was never
+  built. The `upload.js`/`submit.js` wiring is covered by the unit seam only;
+  see 25.11's blocker.
+- `stopBrowser` matches on the throwaway profile directory rather than the
+  launcher's pid. A Chromium launcher exits as soon as it hands the browser to
+  another process, so its pid is already gone at cleanup time and the
+  renderer, network and crashpad processes have been re-parented; killing the
+  pid left them running, which is the orphan 25.11 recorded.
+
+### Revisit condition
+
+If 22.2's `screening.html` is ever built, add it as a second page so the
+`upload.js`/`submit.js` seam is checked in a browser as well. If a page ever
+needs storage to be refused for a *first-party* origin, that is a different
+case from an opaque origin and needs its own probe rather than a wider one here.
+
+## D213 -- A deployed CORS failure is settled from outside, and a 4xx is a
+success
+
+**Status:** accepted
+
+### Context
+
+The `.tech` deployment was reported as unable to reach the API, and the cause
+had been assumed twice: once as an HTTPS assumption, once as an allowlist
+mismatch. Both assumptions were guesses about a configuration nobody had
+read back. The deployed frontend and the deployed API are two separate builds
+on two separate providers, and each can be right while the site still fails.
+
+### Decision
+
+- **The check runs against the live deployment, not against the repository.**
+  `frontend/scripts/deployed-check.cjs` fetches `GET /health` on the API that
+  the deployed `api-config.js` names, fetches every deployed `api-config.js`,
+  and drives a real image upload from each deployed origin through a throwaway
+  Chromium. It writes `docs/deployed-check/README.md`.
+- **The allowlist is read from the revision that answers traffic.** Each probe
+  origin is sent as a real `OPTIONS /api/screenings` preflight and the
+  `access-control-allow-origin` it is answered with is recorded. A value
+  written in Cloud Run is evidence of intent; the answer is evidence of fact,
+  and only the answer describes the revision a browser actually reaches.
+- **A deployed `api-config.js` is read by running it, not by matching it.** The
+  file's whole job is to branch on `location.hostname`, so `readApiConfigSource`
+  evaluates it in a sandbox seeded with the host it was fetched from. A regex
+  would answer a different question than the browser does, and would call an
+  empty `apiBaseUrl` a missing file.
+- **A 4xx from the API is the CORS layer having worked.** The browser
+  delivered the request and the application answered it; only a blocked entry
+  (`Network.loadingFailed`) or a response with no allow-origin header is a
+  CORS failure. Reading a 422 as a broken upload would send the next session
+  to the wrong provider.
+- **The two causes are named separately, in the order they bite.** An empty
+  baked-in `apiBaseUrl` means the page issues no request at all, which is a
+  build-time setting (`DRISHTI_API_BASE_URL`) and needs a redeploy. An origin
+  absent from the allowlist means the request would be refused even after that
+  fix, which needs `CORS_ORIGINS` *and* a new Cloud Run revision. Reporting
+  only the second would have been right and useless.
+- **A blocked request outranks the allowlist check** in `analyseDeployedCheck`,
+  because what the browser refused to send is the finding; an origin absent
+  from the table is only the explanation for it.
+
+### Consequences
+
+- The check needs network access and a Chromium on the machine, so it is an
+  `npm run deployed-check` and not part of `check-all.ps1`. `analyseDeployedCheck`,
+  `describeDeployedCheckResolution` and the report writer are pure and hold 15
+  cases in `deployed-check.test.cjs`, so a run is decidable without repeating
+  it.
+- The report records methods, urls, statuses and CORS headers only. No
+  response body other than `/health` reaches it, so no image bytes, OCR text
+  or identity data can be written down.
+- The recorded run shows the `.tech` origin is allowed as `http://` but not as
+  `https://`, while the browser lands on `https://` from either url. That is
+  the comparison the task asked for, and it is now evidence rather than a
+  guess.
+
+### Revisit condition
+
+If the frontend is ever served same-origin behind a proxy, the allowlist
+becomes a second question and this check should gain the proxied origin rather
+than trusting `api-config.js` alone.
+
+## D214 -- The container image is pinned by digest, and is proved by running
+it rather than by reading it
+
+**Status:** accepted
+
+### Context
+
+The deployment is a Cloud Run buildpack build: a `Procfile` and a
+`.gcloudignore`, with the runtime chosen by the platform rather than by this
+repository. 26.1 asks for a `Dockerfile` and a `.dockerignore` instead, which
+moves that choice here. Two things had to be decided rather than defaulted.
+
+A base image named by tag alone is not a pin. `python:3.13-slim-bookworm` names
+a different image after every upstream patch release, so "it built yesterday"
+stops being evidence about the image in front of you. And the machine this was
+written on has a running `dockerd` inside WSL that its own user cannot reach,
+so the properties a daemon would prove are not the properties that could be
+proven here.
+
+### Decision
+
+- **The build is two stages on one pinned base.** A `builder` resolves
+  `requirements.txt` into `/opt/venv`; a `runtime` copies that directory and
+  the source, and nothing else, so pip, its cache and the build tools stay in a
+  layer the shipped image never reads.
+- **Both stages name the same digest**, `python:3.13-slim-bookworm@sha256:
+  5024f48b...`, resolved from Docker Hub on 2026-10-05. The builder resolves
+  the wheels against the image it names and the runtime copies the result
+  across the stage boundary, so a second digest would ship an
+  interpreter-dependent install and fail at the first import rather than at
+  the build.
+- **Dependencies are installed before the source is copied**, so editing a
+  module reuses the install layer instead of resolving every wheel again.
+- **The CMD is exec-form `uvicorn main:app` on port 8080**, which is the port
+  Cloud Run sets `PORT` to, so one line serves both the container and the
+  deployment.
+- **`.dockerignore` is a list of what to send.** It drops `tests/`, the
+  caches, any `.venv`, and the local runtime state -- `*.db` and `evidence/`,
+  which is where a local database and its identity-bearing blobs live. What the
+  runtime reads is held in explicitly, because an ignore rule one pattern too
+  broad is a build failure with no other symptom.
+- **The image is proved two ways, because the two answer different questions.**
+  `tests/unit/test_dockerfile_contract.py` reads both files and holds the
+  multi-stage split, the digest pin, the shared digest, the copied virtualenv,
+  the copied source, the served port and the ignore list: 8 cases, no daemon,
+  so they run in `check-all.ps1` and are decidable anywhere. Then
+  `tests/deploy/test_docker_image_health.py` builds `backend/`, runs the
+  container, and asserts `GET /health` answers `{"status":"ok"}` from inside
+  the image.
+
+### Consequences
+
+- **A green suite is not evidence the image works.** The build-and-run test
+  skips, with the reason printed, wherever no usable daemon is reachable, so it
+  is only evidence when it actually answered.
+- **The image runs as root.** There is no `USER` line yet; that is 26.2's
+  change, and doing it here would have made that task's test assert something
+  this one had already decided.
+- **No migration runs at start-up.** `/health` opens no session and reads no
+  row, so 26.1 proves the image starts and serves, not that its schema is
+  migrated. 26.5 owns `alembic upgrade head`.
+- **The digest is a maintenance cost, deliberately.** An upstream security
+  patch does not reach the image until someone resolves a new digest and
+  commits it, which is the point: the base image moves on a decision rather
+  than on whatever a rebuild happened to pull.
+- **`tests/deploy/` sits outside `pytest.ini`'s `testpaths`,** on the same
+  reasoning as `deployed-check`: it needs a daemon, and it is named
+  explicitly with `python -m pytest backend/tests/deploy`.
+
+### Revisit condition
+
+If the project stops deploying a container and goes back to buildpacks only,
+`Dockerfile` and `.dockerignore` become inert and the contract tests must be
+retired with them rather than left asserting against a file nobody builds.
+
+## D215 -- The image drops to a fixed non-root uid, and the claim is settled by
+asking the running process
+
+**Status:** accepted
+
+### Context
+
+D214 shipped an image with no `USER` line, so the service answered requests as
+uid 0. 26.2 asks for a non-root container, and there were three choices hiding
+inside that one line. Which uid it is, whether the name or the number goes in
+the instruction, and whether the directory the service writes into is handed
+over before or after the switch.
+
+The writable surface is decided in `app/config.py` and is not the image's to
+choose: `BACKEND_DIR` resolves against `app/config.py` itself, so in this image
+the SQLite file is `/app/drishti.db` and the evidence store root is
+`/app/evidence`. Both live under the `WORKDIR`, which is root-owned by default.
+Dropping to a non-root user without handing over `/app` would answer the first
+upload with a permission error, so the two changes are one change.
+
+### Decision
+
+- **The uid and gid are `10001`, fixed in the file.** A uid inherited from the
+  base image is a uid this repository has not decided, and `10001` is above the
+  system range, so it collides with nothing Debian reserves.
+- **`USER` names `drishti:drishti`, not `10001`.** Docker resolves a numeric
+  `USER` at start-up and fails the container if the name is gone, so the number
+  cannot be used for the ownership that has to survive a rename, while the
+  instruction can still be read.
+- **The account has no home directory and a `nologin` shell.** It serves HTTP
+  and never logs in, so the two ways into an interactive session are closed at
+  creation rather than at the entrypoint.
+- **`/app` is chowned before the `USER` switch, not after.** A chown below the
+  switch is a line the build runs as the unprivileged user, so it grants
+  nothing and fails instead.
+- **The virtualenv stays root-owned.** It is world-readable, the service imports
+  from it and never writes into it, and keeping it root-owned is what stops a
+  compromised process from rewriting the interpreter it runs under.
+- **Two questions are asked separately.** The static contract test in
+  `tests/unit/test_dockerfile_contract.py` reads the Dockerfile: a `USER`
+  naming something other than root, a fixed non-zero uid, a `nologin` shell,
+  the `USER` being the last one declared and preceding the `CMD`, and the
+  `chown` preceding it. The deploy test in
+  `tests/deploy/test_docker_image_health.py` asks the two answers a file cannot
+  give: `{{.Config.User}}` on the image, and `id -u` inside the running
+  container. The second is the one that catches a `USER` the image carries and
+  then drops.
+
+### Consequences
+
+- **The uid is part of the image's contract.** Anything that mounts a volume
+  into `/app` -- a persistent database, an evidence store -- must be writable
+  by `10001`, and a host directory owned by root will fail the same way a
+  root-owned `/app` did.
+- **Four static cases join the eight from D214**, and they still run in
+  `check-all.ps1`; the two deploy cases skip without a daemon, exactly as
+  D214's do, so this task's live half is unproven on this machine.
+- **`alembic upgrade head` will need the same answer** in 26.5, for the same
+  reason: it writes `/app/drishti.db`.
+
+### Revisit condition
+
+If the deployment moves to a platform that supplies its own runtime user and
+rejects an image `USER` -- Knative and Cloud Run honour it, so this is a
+hypothetical -- the instruction goes and `tests/deploy` asserts the effective
+uid instead of the declared one.
+## D216 -- The Cloud Run settings are one v2 service file, and they are read
+### Context
+
+26.3 asks for three Cloud Run settings -- concurrency 1, a small maximum
+instance count, and a request timeout sized for the cascade -- "documented in
+one place" and applied. `backend/README.md` previously said only that an
+operator should "set a small maximum instance count, one request per instance
+at a time, and a request timeout appropriate for image analysis in Cloud Run
+settings" before exposing the service. That is advice in prose, not a setting:
+nothing carried the values, nothing checked them, and the next deploy inherited
+whatever the service already had.
+
+### Decision
+
+**`backend/cloudrun.yaml` is a Cloud Run v2 `Service` definition and the single
+place the settings live.** Its header comments carry the reasoning for each
+value, and `tests/unit/test_cloudrun_config_contract.py` reads the file.
+
+**The three values are 1, 2 and `600s`.**
+
+- **Concurrency 1** because the service keeps per-process state a second
+  concurrent request would interleave with: the rate-limit budget (D78) and the
+  Merkle batching window are both counted in one process, so concurrency above 1
+  makes them per-instance accounting rather than per-service. The platform
+  default is 80, which the cascade's CPU and model load cannot serve anyway.
+- **`maxInstanceCount` 2, `minInstanceCount` 0.** Small on purpose: this is an
+  unauthenticated public endpoint on a shared project, so the ceiling is a cost
+  and abuse bound rather than a throughput setting. Zero floor so an idle demo
+  costs nothing. Left unset, the ceiling takes the server default of 100.
+- **`timeout` 600s**, sized for the cascade rather than copied from a default.
+  The abstract budgets Tier 0 under 0.3 s, Tier 1 at 0.5-1 s and Tier 2 at 1-2 s;
+  this demo runs the same cascade on a shared CPU instance with no GPU and a
+  cold-start model load. The largest single step is the summariser's own 30 s
+  budget (`LOCAL_LLM_TIMEOUT_SECONDS`), which the test imports rather than
+  retypes, so the timeout cannot drift from it. Cloud Run's documented ceiling
+  is 3600 s; the value is set well below it because concurrency 1 means a hung
+  request occupies an instance's only request slot.
+
+**The timeout carries its unit.** The YAML field is a `google-duration`, so
+`600s` is required where the `gcloud --timeout` flag would have accepted a bare
+`600`. A bare number in the file is a rejected deploy.
+
+**`gcloud run services replace cloudrun.yaml` applies it, and
+`gcloud run deploy --source .` is not used.** A source deploy writes its own
+revision template and would overwrite all three settings on the next deploy;
+`services replace` applies the file as written. `backend/cloudbuild.yaml`
+builds and pushes the image first, from the same pinned Dockerfile the image
+contract tests read.
+
+**Field names were taken from the Admin API schema, not from memory.** The v2
+`Service` schema (`run.googleapis.com/$discovery/rest?version=v2`) names
+concurrency `maxInstanceRequestConcurrency`, the ceiling
+`scaling.maxInstanceCount`, and the timeout a `google-duration` string. The
+v1/knative spellings (`containerConcurrency`,
+`spec.template.spec.maxInstanceCount`) parse as YAML under a v2 `apiVersion`
+and are then ignored, which is a deploy that succeeds and silently keeps the
+old concurrency -- so the test asserts the `apiVersion` too.
+
+**Two questions are asked separately.** The static contract test reads the file,
+so it is decidable with no gcloud, no project and no deployed revision, and it
+runs in `check-all.ps1`. What it cannot show is that a live revision carries
+them, which needs `gcloud run services describe` against the real service --
+there is no `gcloud` CLI in this environment, so that half is unproven here.
+
+### Consequences
+
+- **Ten static cases join the suite**, and a mutation check confirmed each one
+  bites: concurrency raised to 80, the ceiling deleted, the ceiling at 100, a
+  non-zero floor, a 30 s timeout, a 3600 s timeout, a unit-less timeout, a v1
+  `apiVersion`, a wrong port, and `APP_ENV` back to development each fail.
+- **`APP_ENV=production` is in the file** because at the `development` default
+  each instance generates its own AES-GCM master key, and with two instances
+  evidence written by one is undecryptable by the other (19.1).
+- **26.4 inherits the CORS entry point.** `CORS_ORIGINS` belongs in this file's
+  container `env` alongside `APP_ENV`, so the allowlist has one home.
+- **26.5 inherits the deploy step.** `alembic upgrade head` runs in the Cloud
+  Build step or as an init container; either way `services replace` is the
+  command that applies it, and the uid from D215 still governs the write.
+- **The image name in the file carries a `DRISHTI_PROJECT` placeholder**, so a
+  first deploy substitutes the real project. The concurrency, ceiling and
+  timeout need no substitution and are the values this task fixes.
+
+### Revisit condition
+
+If the service moves behind a queue with real workers, or the rate limit becomes
+per-service rather than per-process, concurrency and the instance ceiling stop
+being correctness constraints and can rise together. If Tier 2 moves to a GPU
+worker with its own latency profile, the 600 s figure should be re-derived
+against measured per-tier latencies rather than the abstract's targets -- which
+is 26.8's per-tier metrics.
+## D217 -- The migration is the image ENTRYPOINT, and it runs as the uid that writes the file
+
+
+**Status:** accepted
+
+
+### Context
+
+
+26.5 asks for `alembic upgrade head` in the deploy step and for the SQLite path
+
+to keep working for a local demo. 8.8 built the migration and proved it against a
+
+SQLite file; nothing ran it. Nothing in `app/main.py` creates a schema either,
+
+so a container built from this image would serve requests against a database holding no
+
+tables.
+
+
+There were three places it could go, and two of them migrate a database nobody reads.
+
+
+### Decision
+
+
+**`backend/docker-entrypoint.sh` is the image ENTRYPOINT.** It runs
+
+`alembic upgrade head` and then `exec`s the CMD.
+
+
+- **A `cloudbuild.yaml` step is the wrong filesystem.** A build step migrates a
+
+  database inside the build container. The revision opens the SQLite file in its own
+
+  container, at `/app/drishti.db`. Those are two different files, and the second
+
+  one would still hold no schema, so the step would be a passing build that proves
+
+  nothing about the service.
+
+- **Cloud Run has no init container**, so the start command is the deploy hook that runs
+
+  where the database actually is. One filesystem, one migration, the service.
+
+- **It runs below the USER switch**, as uid 10001 from D215, because that is the uid that
+
+  writes `/app/drishti.db`. An ENTRYPOINT above the switch would migrate a
+
+  root-owned database the service could not then write.
+
+- **`set -e` makes a failed migration stop the boot.** Without it the script
+
+  execs the server after alembic has exited non-zero, and the failure becomes a runtime
+
+  error on the first request instead of a container that never starts.
+
+- **`exec  $@` rather than a second CMD.** The command line stays the one
+
+  `cloudrun.yaml` and D216 describe, and uvicorn keeps PID 1, so the platform's
+
+  SIGTERM reaches the server rather than a shell that ignored it.
+
+- **The file is chmod 0755 in the image.** The repository is worked on from Windows, where
+
+  a checkout carries no executable bit, so an entrypoint without a chmod is a container
+
+  that cannot start.
+
+- **The local demo migrates too.** `backend/README.md`'s `Run locally`
+
+  block now runs the same command before uvicorn, and with no `DATABASE_URL` the
+
+  service opens the SQLite file `app.config` already resolves. Running it at
+
+  every start is safe: 8.8's idempotency case, now read through the CLI.
+
+
+### What is proved, and what is not
+
+
+Twelve cases in `tests/unit/test_deploy_migration_step.py`. Eight read the two
+
+files and the README, so the claim is decidable with no daemon: the migration is a
+
+command and not a comment, it runs before the exec, `set -e` is first, the
+
+ENTRYPOINT sits between the USER switch and the CMD, the CMD is unchanged, the script is
+
+copied and made executable before the switch, and the virtualenv that supplies the bare
+
+`alembic` is on PATH. Four run the alembic CLI as a subprocess against a
+
+temporary SQLite file, then read and write it through `app.storage` -- the
+
+migration and the service pointed at one URL, the file stamped at head, a second run a
+
+no-op, and a screening row written and read back. Seven mutations were caught.
+
+
+What none of that shows is a live container. 26.1 and 26.2 are blocked on the machine for
+
+the same reason -- no container runtime on PATH -- so the image this entrypoint belongs to
+
+has still never been built or run here.
+
+
+### Revisit condition
+
+
+Two instances booting against one PostgreSQL would run two `upgrade head` at
+
+once, which alembic does not serialise; a deployment that scales past one instance needs
+
+a migration lock or a single-instance migration step. On the SQLite demo the file is
+
+per-instance and ephemeral, so a Cloud Run revision loses its screenings when the instance
+
+is reclaimed -- that is a property of the demo target, not of this step.
+## D218 -- CI runs the three stages check-all.ps1 runs, and the workflow file is read as the contract
+
+`.github/workflows/ci.yml` is the workflow. Two jobs on `ubuntu-latest`, one
+for the backend and one for the frontend, both fired by an unfiltered `push`.
+
+### What is decided
+
+- **The trigger is `push` with no branch filter.** A filter lets pushes to
+  every other branch through unbuilt, which is the drift the gate exists to
+  catch. `pull_request` is included alongside it, not instead of it.
+
+- **Two jobs, because the runtimes differ.** CPython 3.13 -- the interpreter
+  D214 pinned, not the runner default -- and Node from `frontend/.nvmrc`. A
+  frontend failure must not hide the backend result behind it, and the split
+  costs nothing because neither job needs the other's toolchain.
+
+- **The backend command is check-all's own, verbatim**, from the repository
+  root so pytest finds `backend/pytest.ini`. A paraphrase is a second gate
+  that can drift from the first, and the whole point is one gate.
+
+- **That command collects `backend/tests`, so the suite includes
+  `tests/deploy`.** On a hosted runner `docker` is on PATH and the daemon
+  answers, so 26.1's build-and-run case stops skipping and actually builds the
+  image -- the first place the image will have been proved, since this machine
+  has no runtime. The job's `timeout-minutes: 45` exists for it: a cold build
+  resolves every wheel from PyPI, which that case allows 30 minutes for.
+
+- **The frontend commands run from `frontend/`.** `npm test` from the
+  repository root is npm's help text, not the suite, so the working directory
+  is part of the claim rather than a detail. `npm ci` installs from the
+  lockfile; there is no `node_modules` on a fresh runner.
+
+- **`permissions: contents: read`.** Nothing here pushes, deploys or writes to
+  the API.
+
+### What is proved, and what is not
+
+Seven cases in `tests/unit/test_ci_workflow_contract.py`. The file is parsed
+with PyYAML and the assertions are about run blocks and working directories,
+so a stage named only in a comment satisfies none of them. Covered: the
+unfiltered `push`; the backend command matching check-all's; the install
+preceding it; `npm test` and `npm run build`, in that order and from
+`frontend/`; `npm ci`; and a checkout in every job. Ten mutations were caught,
+one per claim.
+
+What none of that shows is a green run. The workflow cannot be executed from
+this machine: it needs GitHub's runner, and this checkout is deliberately not
+pushed (AGENTS.md forbids git commands here). The first push is what settles
+it, and it will also, for the first time, build the image on a runner that
+has a daemon.
+
+### Revisit condition
+
+If the docker build in `tests/deploy` proves too slow to sit in every push,
+the revisit is to split it into its own job on a schedule or on a manual
+trigger, rather than to narrow the pytest path and let the local gate and the
+CI gate quietly disagree about which tests exist.
+
+## D219 -- The artefact contract is the build's own name list, read back off disk, and it is a stage of the gate
+
+`frontend/scripts/check-artefacts.cjs`, run by `npm run check-artefacts`
+immediately after `npm run build`, as the fourth stage of
+`scripts/check-all.ps1` and as a step of the frontend CI job.
+
+### What is decided
+
+- **The expected artefacts are the build's own lists.**
+  `build.cjs` exports `expectedArtefactNames()`: the rendered pages, the index
+  the home page is published under, the copied scripts and stylesheets, the
+  generated `api-config.js`, and the two UX4G assets taken from the same
+  `htmlReplacements` the build rewrites page links with. A second list held by
+  the check would be the drift D168 removed from the build.
+
+- **The check reads the directory, because that is the only way it can fail
+  where the build did not.** It is a stage after the build, not part of it: a
+  build that exits 0 having left a page or a script unwritten is precisely the
+  fault the build cannot report, since the build is what did not write it.
+
+- **Missing and empty are the same fault, and every offender is named.** A
+  zero-byte page is a page that 404s as hard as an absent one, so the check
+  reads the bytes rather than the directory entry, and one run reports every
+  name it is missing rather than the first. A directory holding no build output
+  at all is refused with the command to run, not as twenty-five absences.
+
+- **It is a stage of check-all as well as a CI step.** CI is check-all's own
+  gate (D218); a stage only in the workflow would leave `./scripts/check-all.ps1`
+  reporting three green stages for a build nobody had looked at.
+
+### What is proved, and what is not
+
+Four cases in `frontend/check-artefacts.test.cjs`. The second is 26.7's Verify:
+`guide.html`, `pages.js` and `assets/ux4g.css` are deleted out of a real build's
+output, and both `checkArtefacts()` and the command CI runs are held to naming
+all three and exiting non-zero. The claim is shown passing before the files go,
+so the check cannot pass by refusing everything. The other two hold it to an
+emptied artefact and to no build output at all.
+
+Three cases in `tests/unit/test_ci_workflow_contract.py` hold the wiring: the
+command runs from `frontend/` and after `npm run build`; `package.json` still
+carries the script the workflow names; `check-all.ps1` runs the same command.
+Four mutations -- the step deleted, the step moved ahead of the build, the
+script deleted, the local stage deleted -- turned the suite red, one claim each.
+
+Not proved is a run of the workflow, for 26.6's reason: this checkout is never
+pushed. Nor does the check speak for a file no list names: an artefact nothing
+claims to write stays outside the contract until something claims it.
+
+### Revisit condition
+
+If the build ever writes files it does not know by name -- a generated
+manifest, a content-hashed bundle -- the name list stops being the contract and
+this check grows to read that manifest instead. The revisit is then to delete
+`expectedArtefactNames()`, not to keep both in step.
+## D220 -- Cascade cost and outcome are log lines, and the correlation id is stored on the row
+
+`app/metrics.py`, the cascade loop in `app/screening.py`,
+`screenings.request_id` and the fifth migration.
+
+### What is decided
+
+- **A metric is a log line and nothing more.**  The service has one channel
+  (D76), a line is a JSON object with named fields, and every field these two
+  lines carry is already inside
+  `tests/api/test_log_content_ban_api.py`'s `ALLOWED_FIELDS`: a row's opaque
+  id, a tier's name, a duration, a count, a boolean and a name from a closed
+  set.  A second exporter -- a Prometheus client, a statsd socket -- would be a
+  second thing to correlate by id, and 11.7's ban would have to be policed
+  twice over.  One channel, one ban, one correlation story.
+
+- **One line per tier, one per cascade, and three ways to end.**  A reader
+  groups the cascade by `outcome`, and the vocabulary is frozen in
+  `CASCADE_OUTCOMES`: `completed` (the plan ran to its end), `hard_failed`
+  (6.5's one stop ended it) and `failed` (a tier raised, so the cascade
+  answered nothing).  `elapsed_ms` is rounded to three places so the tier
+  lines and `app.api.request_logging`'s request line share one spelling of a
+  duration rather than two roundings of one number.
+
+- **The outcome line is written from a `finally`, and the fault still
+  propagates.**  A cascade that raised is the run an operator most needs to
+  find, and it is the one outcome the other two names cannot describe.  The
+  metric is measured and the exception is re-raised untouched: swallowing a
+  fault to log it would be a second, worse behaviour than the one D114 is
+  about.
+
+- **`tiers_run` is the trail's own answer, not a second one.**  The names are
+  appended as each tier returns, so they are exactly the list the
+  `analysis_completed` payload carries under `TIERS_RUN_KEY` -- a tier a hard
+  fail kept out is absent rather than recorded as skipped, and a tier that
+  raised returned no result to cost and so has no name.  The metric cannot
+  come to disagree with the audit trail about what ran, and one test holds
+  the two against each other.
+
+- **The correlation id is read off the ambient binding, and `None` is
+  honoured.**  `run_screening` asks `app.logging_config.current_request_id`
+  rather than reading the inbound header, so the row and every line the same
+  run wrote share one value by construction rather than by two callers
+  agreeing.  A screening run outside any request stores `None`: there was no
+  id to stamp, and a column added to a table that already holds rows cannot
+  be required anyway.
+
+- **The column is nullable text, appended last, and is its own revision.**
+  No maximum length, on `Screening.filename`'s reasoning -- a limit written
+  on the column is a limit on PostgreSQL and a decoration on SQLite.  A fifth
+  migration rather than an edit to 8.5's, on 10.2's reasoning, and the
+  ``screenings`` column count is now eighteen.
+
+### What is proved, and what is not
+
+Eleven cases in `tests/unit/test_cascade_metrics.py`.  The count is held with a
+plan of two rather than the shipped plan of one, so "one line per tier" is
+true because tiers are measured and not for want of a second tier; the
+stubbed second tier raises if it is reached, so nothing but the measurement
+can be what stops it.  One stub sleeps and its line has to show the sleep, so
+`elapsed_ms` cannot be a constant.  All three outcomes are *reached* rather
+than enumerated.  The raised case asserts both halves: the `failed` line is
+written and `Reached` still propagates.
+
+Four cases in `tests/api/test_screening_correlation_id.py` hold the hop the
+flow cannot see -- the id is bound in a middleware, the cascade runs in a
+threadpool, and a context variable that crossed neither would leave every line
+null and the row empty.  They assert the offered id, the answer's header,
+every line and the stored row as one value; that a caller who offered none
+still gets the minted id rather than `None`; and that two screenings carry two
+ids.
+
+Five mutations turned the suite red, one claim each: the per-tier call
+removed (4 red), a hard fail reported as `completed` (1), a raised cascade
+reporting `completed` (1), `current_request_id()` replaced by `None` (4), and
+the repository discarding the id it was handed (4).
+
+Not proved: anything about a metrics *backend*.  A line is written to stdout
+and this repository has no scraper, no dashboard and no retention for it, so
+"emit" is proven and "the numbers are read somewhere" is not.  The per-tier
+figure is also the tier as the cascade paid for it, not the tier's own
+stages -- 6.6 already times those inside `TierResult.stage_timings`, and this
+is the caller's half.
+
+### Revisit condition
+
+If a metrics backend is ever added, the revisit is to make `app.metrics` the
+only module that speaks to it and to leave `log_event` alone -- rather than
+to let a route or a stage emit into two channels.  A tier the plan names
+later joins by being named in `CASCADE` and measured by the loop above, with
+no change here.
+
+## D221 -- The synthetic passport is a fixture beside the two it composes, and its manifest is two frozen records
+
+`backend/tests/fixtures/passport_corpus.py` and
+`backend/tests/unit/test_passport_corpus.py`.
+
+**Context.**  27.1 asks for a passport generator, and Part 27 then builds a
+corpus, a tamper map, a ground-truth schema and an evaluation harness on top of
+it, so the placement is a fork worth settling before 27.2 extends it.  Three
+things argued.  Part 4 and Part 12 each built a synthetic image generator as a
+fixture (`mrz_images`, `document_images`) and this one is their composition, so
+the established home is `tests/fixtures`.  Nothing shipped reads it: the
+screening path takes an uploaded capture, and the generator exists to be
+measured, not served.  And `app` imports no test module anywhere in this
+repository, so a generator the app is to reach would mean app-to-tests coupling
+-- the one edge this codebase has never had.  Against that, 27.12 puts measured
+numbers on a screen in the app, which sounds like the harness needs to live
+beside the app.
+
+**Decision.**  The generator is a third fixture and imports the two it composes
+rather than reimplementing either drawing.  The manifest is two collections of
+frozen records -- `document_images.PrintedField` for the printed block, a new
+`MrzField` for the zone -- and no dict.  The MRZ is composed out of `td3`'s own
+layout tables and `TD3_CHECK_DIGIT_FIELDS`, with every printed digit computed by
+`mrz.check_digit`, so no position and no pairing is stated in the generator.
+
+### What is decided
+
+- **A field is addressed by its name and nothing else.**  `printed_field()` and
+  `mrz_field()` raise `KeyError` naming the fields that do exist, which is D87's
+  rule against a field addressable by a dict key.
+
+- **The manifest is the two halves of the page, separately.**  A printed row and
+  its MRZ counterpart are different fields with different boxes, and the suite
+  holds them against each other rather than merging them into one truth: the
+  printed `20 FEB 1968` and the zone's `680220` are one day, and a corpus whose
+  halves disagreed would be a corpus of forged documents by accident.
+
+- **`ROW_GAP = 60` is a detection requirement, measured on this page.**  The
+  strip's own line pitch is 42 pixels and `filter_lines` keeps any line whose
+  spacing is within a quarter of the tightest spacing on the page, so printed
+  rows at the default gap survive beside the zone and the page then measures as
+  six lines rather than two.  Measured across the sweep: `row_gap=24` gives
+  `None`, 60 and 90 both give `"TD3"`.
+
+- **The page grows rather than clipping.**  A `size` that cannot hold the rows
+  and the strip yields a larger page, and the strip is placed strictly below the
+  lowest printed row so it can never cover a field.  A `size` too small for the
+  printed rows is `draw_document`'s refusal, passed on rather than caught.
+
+- **"No real identity data" is a closed vocabulary, and a case holds it.**  Every
+  surname and given name is one this module states, every document number
+  carries the `SYN` prefix and exactly six digits, every date falls in a stated
+  year window, and a case holds a generated document against all of it.  An AST
+  walk of the module's own source holds that no clock is read and that
+  `random` is only ever `random.Random`, because a corpus whose dates move with
+  the wall clock cannot be reproduced.
+
+- **The round trip is honest about which half is which.**  The characters are
+  read out of the drawn pixels with the fixture's own reader and the boxes are
+  ground truth, while `detect_mrz` independently proves the zone is in those
+  pixels at all.  Nothing else in this project reads a character out of a cell
+  -- the runner takes a parse from its caller, and Tier 1's OCR is the seam --
+  so the two halves are what there is, and the suite says which is which rather
+  than implying a full optical read.
+
+### What is proved, and what is not
+
+Twenty-eight cases in `tests/unit/test_passport_corpus.py`, swept over three
+seeds.  The literal Verify round-trips generated image to parsed MRZ: the
+detector names the format and two lines of 44 cells, the read returns the
+printed lines character for character, the parse agrees with the manifest field
+by field, and all five check digits pass.  Six mutations are red: the tight row
+gap, a constant composite digit, a name printed without its `<<`, the manifest
+built from a neighbouring cell, the strip pasted one pixel off its ground-truth
+box, and a surname from outside the stated pool.  `check-all.ps1` exits 0.
+
+Not proved, and not claimed: that any OCR engine reads the printed rows -- 12.7's
+standing gap, unchanged, as neither engine is installed here.  One document
+type: 27.2 adds a visa and a national ID, and this entry's placement is the
+thing that decides whether that is two more specimens or a second generator.
+And the manifest here is not the ground-truth schema 27.4 defines; it is the
+first version of one.
+
+### Revisit condition
+
+If 27.5's harness has to ship inside `app` to feed 27.12's results view, this
+generator moves with it and `app` grows a dependency it does not have today --
+and that is the moment to decide, rather than importing `tests.fixtures` from
+`app` and leaving the edge there quietly.
+## D222 -- One generator draws all three document types, and the passport module became an entry point onto it
+
+### Context
+
+27.1 drew one synthetic passport: a printed data page, a TD3 zone whose five
+check digits were computed from `td3`'s own tables, and a manifest. 27.2 asks
+for visas and national IDs, and D221 left the shape of that open: "whether that
+is two more specimen tables or a second generator is that task's fork, and
+D221's placement is what it turns on."
+
+The fork is real because the three formats do not differ only in a constant. A
+TD3 is two lines of 44 with the name on line 1; a TD2 is two lines of 36 with
+an optional-data field where a TD3 has a 14-character personal number; a TD1 is
+three lines of 30 with the name on line 3, two optional-data fields, and a
+composite digit computed across two lines. Three generators would have meant
+three copies of the identity pools, three copies of the page assembly, three
+copies of the manifest builder, and three constants -- `ROW_GAP`, the number
+prefix, the surname list -- that could drift apart silently.
+
+### Decision
+
+**One generator, keyed by document type, composed out of the format modules'
+own tables.** `tests/fixtures/document_corpus.py` holds a `_Format` record per
+type: the format module's layout dict, its field reader, its
+`CHECK_DIGIT_FIELDS` table, its composite-input reader, its document code and
+its printed rows. Every position is read out of the layout at call time and
+every check digit is placed by name from that format module's own table, so the
+generator states no line number, no offset and no pairing of a field with its
+digit.
+
+Two consequences are worth naming.
+
+**The name field lands where the format puts it without the generator knowing.**
+The eight values placed into a zone are named, and each is placed on the line
+`_Format.span` finds it on. That is why a TD1's name appears on line 3: the
+layout says so, not the generator.
+
+**The composite digit is placed last because the standard's table lists it
+last.** Its characters are the other four printed digits, so any other order
+would compute a digit over a half-filled buffer. The order comes from
+`TD1_CHECK_DIGIT_FIELDS`/`TD2_`/`TD3_`, not from this module.
+
+**`passport_corpus` was kept as an entry point rather than deleted.** 27.1's
+28 cases and its public names stay, and the module now re-exports the generic
+module's pools, readers and record under the names 27.1 wrote them as. Two
+reasons rather than one: `passport_corpus.generate` is the name 27.1 shipped,
+and a reviewer correctly refused the deletion of a completed task's generator on
+the grounds that "extend the generator" did not authorize removing it. One
+generator with two names for the passport path is cheaper than a second
+generator and is not a second answer to any question.
+
+**One case changed, and it had to.** 27.1's `test_the_generator_never_reads_the_clock`
+walks `passport_corpus`'s own source to catch a clock read made through an
+alias. That entry point now draws nothing, so walking its source would pass
+whatever the generator underneath did; the case now walks
+`document_corpus.__file__`, and its docstring says why.
+
+### What is proved, and what is not
+
+91 cases in `tests/unit/test_document_corpus.py`, swept over three seeds and
+three document types. The literal Verify runs once per type: the detector names
+the format from the pixels (TD3 two of 44, TD2 two of 36, TD1 three of 30), the
+read returns the printed lines character for character, the parse agrees with
+the manifest field by field, and every digit in that format's own
+`CHECK_DIGIT_FIELDS` table passes. Six mutations are red: a visa printing `P<`,
+a TD1 composite read off one line, `ROW_GAP` at 24, a constant composite digit,
+a surname from outside the stated pool, and a blanked nationality.
+`check-all.ps1` exits 0 (7388 backend collected, 700 frontend).
+
+A seventh mutation was green and is the reason two cases exist rather than one.
+Widening the surname pool *in the generator* was invisible, because the
+closed-vocabulary case compares drawn values against the pool the generator
+declares. So the pools are now pinned as exact tuples in the test file, and a
+value added to any of them fails there first.
+
+Not proved, and not claimed: that any OCR engine reads the printed rows (12.7's
+standing gap, unchanged -- neither Tesseract nor EasyOCR is installed here). The
+round trip is still two halves: `detect_mrz` proves the zone is in the drawn
+pixels and the characters are read by Part 4's own pattern reader at ground-truth
+cells. A TD1's name is read from `sources["name"]` rather than from
+`parsed.surname`, because `td1.py` states its line 3 is not parsed yet; that is
+3.6's standing gap and this task did not close it. And the manifest is still not
+the ground-truth schema 27.4 defines.
+
+### Revisit condition
+
+If 27.5's harness has to ship inside `app`, this generator and the passport
+entry point move with it, and the entry point is the thing to drop first: it
+exists to keep 27.1's names alive, not because a passport needs two modules.
+
+## D223 -- A tamper is measured against the page it changed, and none of them touches the zone
+
+`backend/tests/fixtures/document_corpus.py` and
+`backend/tests/unit/test_document_tamper.py`.
+
+**Context.**  27.3 asks for four injected forgeries, each recording the region
+it affected as ground truth.  The corpus had no portrait at all, so a "photo
+replacement" had nothing to replace; the manifest had no field for an
+alteration; and the zone is the half of the page 27.6 will compare a detection
+against, so an injection that landed on it would have quietly made the whole
+corpus unreadable rather than forged.
+
+**Decision.**  `generate(..., tampers=...)` draws the page first and injects
+afterwards, and every injection appends a `Tamper` record whose `box` is
+measured off the two draws.  Three of the four re-print a row; one pastes a
+portrait and one pastes a stamp.  None of them is drawn near the zone.
+
+### What is decided
+
+- **A region is the tight box of the pixels the injection changed, and an
+  injection that changed none is refused.**  The box is a diff of two frames
+  rather than a declaration by the drawing code, so it cannot be a rectangle
+  somebody chose.  An injection that repainted the page would make every
+  rectangle on it equally true and none of them informative, and the vacuity
+  guard is what stops "a region for every injection" being answered by a
+  region bounding no pixel.  A replaced photo's region is *smaller* than the
+  portrait it covers, because the marks both pictures share are not part of the
+  change -- that is the honest answer, not a loose one.
+
+- **A text edit re-draws the printed block rather than painting over it.**  The
+  block is drawn again with one row's value replaced, because the drawing is
+  what says where the new text went; the manifest then describes the pixels
+  instead of an intention, and every other row comes back byte for byte.  The
+  rows come from *the document's own printed values*, not from the holder it was
+  drawn from.  That is the second bug this task found: redrawing from the
+  holder made a birth-date change silently undo an earlier number edit, and
+  three of the four regions on such a page were measured against ink that was no
+  longer there.
+
+- **Every page carries the same portrait, and a replacement is provably not
+  it.**  One silhouette at one set of levels, drawn in a frame of the box's own
+  size so a mark running off the edge cannot paint outside the recorded region.
+  A replacement moves the head and darkens the paper.  The portrait's box is a
+  function of that page's printed block, so the picture is compared in each
+  page's own box rather than in a fixed rectangle.
+
+- **A stamp is inked marks and no text.**  4.4 decides what a glyph is by
+  height, and a stamp carrying letters at a legible size would be grouped into
+  a line of the zone beside it.  A case holds that nothing in a pasted stamp
+  survives `filter_glyphs`; a mutation that draws text there is red.
+
+- **The frame is reserved for the portrait and the stamp whether or not either
+  is drawn.**  A tampered document therefore has the same size and the same
+  cells as the untampered document of its seed, which is what lets 27.7 compare
+  a flagged region against ground truth on the same geometry.
+
+- **The zone is untouched, and that is proved rather than asserted.**  Every
+  recorded region is disjoint from every character cell, the detector still
+  names the format, the zone reads back character for character and every
+  printed check digit still passes -- while the two re-printed rows now disagree
+  with it.  That disagreement is the forgery 27.6 measures.
+
+- **A kind is named at most once, and an unknown one raises `KeyError`.**  Two
+  records for one region would make "a region for every injection" true of an
+  injection that did not happen.  Each kind's own `random.Random` is seeded by an
+  integer, because a string seed is hashed differently between interpreter
+  versions and a corpus whose tampering moved with the interpreter is not a
+  corpus.
+
+### What is proved, and what is not
+
+121 cases in `tests/unit/test_document_tamper.py`, swept over three document
+types and two seeds, each tamper alone and all four on one page.  27.3's
+literal Verify runs for every combination: one record per injection, each
+region inside the page and bounding a pixel the injection really changed, and
+each region equal to the diff between the page with the injections before it and
+the page with this one as well.  Seven mutations are red -- a region covering
+the whole page, an injection recording nothing, a text edit aimed at the wrong
+row, a stamp carrying text, a replacement number equal to the one it replaces,
+a replacement photo equal to the one it replaces, and (observed rather than
+mutated) a redraw from the holder instead of from the page.
+`check-all.ps1` exits 0 (7509 backend collected, 700 frontend).
+
+One mutant was green and is recorded because it is worth knowing: replacing
+`_another_number`'s equality guard with a bare draw was green, because a
+six-digit draw collides with the number printed one time in a million.  The
+guard is there for the millionth draw, and the mutant that would catch it --
+returning the number itself -- is red, through the vacuity guard rather than
+through the case about differing values.
+
+Not proved, and not claimed: that any detector finds any of these.  No tier has
+been run over a tampered page, which is 27.6's subject, and the manifest is
+still not the ground-truth schema 27.4 defines -- `Tamper` holds a kind, a row,
+a region and the two texts, and 27.4 is free to name that differently.
+
+### Revisit condition
+
+If 27.4's schema wants machine-readable tampering rather than a record per
+injection, `Tamper` and `generate`'s `tampers` argument are the two seams to
+move, and the measured region is the part that must survive the move: it is the
+only part a region-overlap metric can be computed against.
+
+## D224 -- The ground truth is a declared schema, and a manifest is what a harness can read back
+
+`backend/tests/fixtures/document_manifest.py` and
+`backend/tests/unit/test_document_manifest.py`.
+
+**Context.**  27.5 measures field-level accuracy over the corpus, 27.6 a catch
+rate and a false-alert rate, and 27.7 the IoU between a flagged region and the
+region an injection changed.  All three read ground truth no module declared:
+27.3 left `Tamper` as a dataclass inside the generator, so "the manifest" was
+whatever `SyntheticDocument` happened to hold, and the only check on it was the
+test that drew it.  A harness wanting JSON would have had to serialise
+dataclasses itself, and nothing would have said what a manifest must contain.
+
+**Decision.**  A manifest is one page as plain JSON -- `manifest(document)` --
+and `validate(record)` says whether a record is one.  The keys, their kinds and
+what each must be true of the page are stated once, in `DOCUMENT_SCHEMA` and the
+three record tables it nests, and every check a table cannot express is a named
+step beside it.
+
+### What is decided
+
+- **A manifest is plain JSON, not a dataclass.**  Boxes become arrays and every
+  number a Python `int`, so writing one and reading it back returns the record
+  unchanged.  Nothing has yet written one -- 27.5 is what does.
+
+- **The schema is a closed declaration.**  A key the schema does not declare is
+  a complaint rather than an extension point, so a second writer cannot add a
+  field the validator never looks at.
+
+- **A rule is only a rule if something is refused by it.**  Twenty-nine
+  manifests, each broken exactly one way, are the proof that every check in
+  `validate` bites; eight mutations of the module are red.
+
+- **The cross-checks read the generator's and the format's own tables.**  The
+  kinds an injection may name are `document_corpus.TAMPER_KINDS`, the row each
+  editing kind edits is `TAMPER_FIELDS`, the fields a zone may print are that
+  format layout's, and the format a type carries is `DOCUMENT_TYPES`.  Nothing
+  about the corpus is restated here, so a fourth document type or a fifth
+  injection is ruled on the day it is added.
+
+- **The layers run in order and stop at the first that fails.**  A record is
+  reported against its shape before it is reported as untrue of a page, so a
+  missing key draws one complaint rather than five downstream of it.
+
+- **`Tamper` and `generate`'s `tampers` argument did not move.**  The seam 27.3
+  named is untouched: the schema serialises the records the generator already
+  builds, and the measured region is the same rectangle in both.
+
+### What is proved, and what is not
+
+96 cases.  Every document the generator draws -- three types, three seeds, and no
+injection, each of the four alone, and all four on one page, 54 pages -- has a
+manifest that validates, and each such manifest survives a JSON round trip.
+Twenty-nine of them are broken one way each and each is refused with the
+complaint its rule is written to draw.  Eight mutations of the module are red:
+dropping the undeclared-key complaint, the rebuild check, the zone-disjointness
+check, the on-page check, the replacement check, the id check, writing a box as a
+tuple, and dropping `original` from an injection record.  `check-all.ps1` exits
+0 (7605 backend passed and 4 skipped, 700 frontend).
+
+Not proved, and not claimed: that any of this measures anything.  No harness has
+read a manifest, so the schema is checked against the generator that wrote it and
+against nothing else.  That a manifest's printed values stay inside the closed
+vocabulary the corpus claims is 27.2's case and still holds; whether a detector
+can be scored against a region at all is 27.6's and 27.7's subject.
+
+### Revisit condition
+
+If 27.5's harness has to run outside the test tree -- as a script an operator
+runs over a corpus on disk -- this module and the generator move out of
+`tests/fixtures` together, and `manifest` and `validate` are the pair that has to
+survive the move.  If a real corpus ever joins the synthetic one, the honest move
+is a second generator and these same two functions over it, rather than a flag on
+this one saying its data is real.
+## D225 -- The two rates are counted over different pages, and the zone-only reader catches nothing
+
+`backend/tests/fixtures/evaluation.py` and
+`backend/tests/unit/test_evaluation.py`.
+
+**Context.**  27.6 asks to "extend" the evaluation harness, and no harness
+existed: 27.5 is checked in `tasks.md` with no verification note and no file,
+while the newest thing on disk was 27.4's schema.  So the base had to be built
+before it could be extended, and that settled the shape.  The other half of the
+question is what gets measured.  27.3 guarantees no injection touches the zone,
+12.7's gap is unchanged (no OCR engine is installed, so nothing reads a printed
+row), and `detect_mrz` locates blobs rather than characters -- so the only
+optical read this repository has is the corpus fixture's own cell reader.
+
+**Decision.**  A detector is handed a `Case` -- the drawn page with its manifest
+beside it -- and answers with the fields it read and the alerts it raised.
+`evaluate` scores that against the manifest, and **the catch rate and the
+false-alert rate are counted over disjoint pages**: an injection is caught when
+an alert names its kind, counted over the injections drawn; a page is a false
+alert when its reading carries any alert and it carries no injection, counted
+over the clean pages.  The default detector, `read_zone`, reads the zone and
+verifies its check digits, and nothing else.
+
+### What is decided
+
+- **A rate is a numerator, a denominator and a ratio, and no denominator is no
+  number.**  `Rate.ratio` is `None` rather than `0.0` over an empty corpus, so
+  a sweep that drew nothing cannot report a clean sheet.
+
+- **A catch is keyed by the name of the kind it caught.**  A detector raising
+  `check_digit` catches nothing here, which is the point: the catch rate
+  measures whether *that* injection was found, not whether anything was said.
+
+- **The detector is a parameter and the default is named.**  A case can hand
+  the reader labels to raise, which is how the suite proves the two rates are
+  computed from different pages rather than asserting it.
+
+- **The default reader is the zone, and it is labelled as such.**  Its
+  docstring says in one line that the printed block is not read and why.
+
+- **`Case` carries no name of its own.**  `document_corpus.document_id` names a
+  clean page and a tampered page of the same seed alike, so filing cases under
+  it would collide; the manifest keeps its own name and 27.12 is where a
+  harness needs a unique one.
+
+### What is proved, and not
+
+62 cases.  Two detectors that raise the same alerts on every tampered page score
+the same catch rate and different false-alert rates; a detector that raises only
+where the corpus left a page clean scores 0.0 and 1.0.  Neither number can be
+recovered from the other, which is what "reported separately" has to mean.  Each
+kind has its own rate and the four add up to the whole.  Five mutations are
+red: the false-alert denominator counting every page, a catch with no matching
+label, a per-kind catch with no matching label, a missed field not counted, and
+the no-zone branch reading a field anyway.  `check-all.ps1` exits 0 (7671
+collected, 700 frontend).
+
+Measured over one seed of all three types: field accuracy 215/215, tamper catch
+rate 0/12, false-alert rate 0/3.  **The zero is the finding, not a defect** --
+27.3 guarantees no injection touches the zone, so a detector that reads only the
+zone cannot catch one, and 27.5's field accuracy covers the zone alone.
+
+Not proved, and not claimed: that any tier catches any of the four injections.
+Nothing runs Tier 1's OCR or Tier 2's stamp, face or deepfake modules over a
+tampered page yet, and no engine on this box could read the printed rows a text
+edit changes.
+
+### Revisit condition
+
+When a detector that reads the printed block exists -- 12.7's gap closing, or
+Tier 2's heuristics being run over a tampered page -- the catch rate stops being
+a property of the reader and becomes a property of the pipeline, and the report
+has to name which detector produced it before any of its numbers can be shown
+beside another's.  `read_zone` is the floor, not the detector.
+## D226 -- A flagged region is measured against the edit it names, over the catches and not over the injections
+
+`backend/tests/fixtures/evaluation.py` and
+`backend/tests/unit/test_evaluation_region.py`.
+
+**Context.**  27.6 counted an injection caught when an alert named its kind, and
+the two rates it reported were counted over disjoint pages so neither could
+stand in for the other.  That left the rate saying nothing about *where* the
+detector looked: a detector raising every label at the whole page and one
+raising every label at the exact edited pixel both score 1.0 on it.  27.3 had
+already recorded the box an injection changed, and 27.4 had put it in the
+manifest, so the ground truth for the region existed and nothing read it.
+
+**Decision.**  `Alert` carries the half-open box it points at, and `evaluate`
+reports `overlap` -- the mean IoU between each caught injection's recorded box
+and the best alert naming that kind -- with `localized`, the count of those
+reaching `OVERLAP_THRESHOLD`.  `iou(one, other)` is the one arithmetic, and a
+box that is absent is worth 0.0.
+
+### What is decided
+
+- **The overlap is counted over the catches, not over the injections.**  A
+  detector that catches nothing is left with `None` rather than a zero that
+  would read as "pointed at the wrong place", which is what `Rate.ratio` and
+  `Mean.value` already do for an empty denominator.
+
+- **An alert naming no region overlaps nothing.**  `Alert.box` defaults to
+  `None`, so a detector may say what is wrong without saying where and be
+  scored 0.0 rather than crashing the harness or passing on silence.
+
+- **The best of several alerts naming one kind is the one scored.**  A detector
+  may raise the same kind at more than one place, and the one nearest the edit
+  is the one that found it; the arithmetic takes a maximum, not the first.
+
+- **`OVERLAP_THRESHOLD` is half, and is the module's own constant.**  It
+  separates a detector pointing at the region from one naming its label only,
+  and the mean is reported beside it so neither number hides the other.
+
+- **The manifest did not move.**  `tampering[].box` was already the region the
+  injection changed, and the overlap reads it -- nothing here restates where an
+  edit happened.
+
+### What is proved, and what is not
+
+121 cases across the whole corpus (three types, three seeds, a clean page and
+one page per injection each).  Three detectors that all catch every injection
+score overlap 1.000, 0.608 and 0.000, and the third has no region at all --
+so the mean is not recoverable from the catch rate.  Nine pairs of boxes are
+measured against the union by hand, and every case's own box is shown to
+overlap itself entirely.  Eight mutations of the module are red: intersection
+over intersection, intersection over the union without subtracting the
+intersection, half-open boxes closed, the worst alert scored rather than the
+best, an absent box measured as 1.0, an empty mean reported as 0.0, the overlap
+taken over every injection rather than the catches, and `localized` counted
+over every injection.  `check-all.ps1` exits 0 (7726 backend passed and 4
+skipped, 700 frontend).
+
+Not proved, and not claimed: that any detector localises anything.  `read_zone`
+raises no box, so it is measured over nothing at all -- the metric is exercised
+entirely by detectors the tests hand regions to.  Every region measured so far
+is synthetic; nothing here has run Tier 1's OCR, Tier 2's stamp, face or morph
+modules over a tampered page, which is still what would make the mean a
+statement about the pipeline rather than about the harness.  A mean also
+hides its spread, so a detector good on one kind and poor on another is
+flattened here; per-kind overlap is not reported and would be the next thing to
+add if a real detector makes it matter.
+
+### Revisit condition
+
+If a detector ever raises a region that is not the injection's own box -- a
+bounding region over several edits, or a mask -- this measures the worst of it
+against each injection it names, and a threshold over the union stops being the
+thing that says "found it".  Then the metric wants to become a recall over
+regions rather than an IoU per injection.
+
+## D227 -- A latency row is either measured on this machine or the abstract's target, and never both
+
+`backend/tests/fixtures/latency_benchmark.py` and
+`backend/tests/unit/test_latency_benchmark.py`.
+
+**Context.**  The abstract bounds the three tiers -- Tier 0 under 0.3 s, Tier 1
+0.5-1 s, Tier 2 1-2 s -- and in the same paragraph says those figures "are
+design targets and will be reported as measurements once evaluated".  6.6
+already put a duration on Tier 0's own record, and took the decision there that
+the figure against the target must be measured inside the run rather than by a
+stopwatch held outside the call.  Nothing yet joined the two: no task had put
+a measured number beside a designed one, which is the join ROADMAP V5 asks for.
+
+**Decision.**  One :class:`Row` per tier carries the median, the p95, the
+sample count, the abstract's :class:`Target`, and a ``source`` naming which of
+the two kinds of number the row is.
+
+### What is decided
+
+- **`measured` and `designed` are the only two sources, and a row is one or the
+  other.**  A tier with no reader on this box -- Tier 1 needs an OCR engine,
+  Tier 2 a configured deep-module registry -- is `designed`, carries no median,
+  no p95 and no verdict, and prints ``--`` in both measured columns.  The
+  table prints that note under itself while any such row stands.
+
+- **A measured row is only ever built from at least one sample.**
+  :func:`summarise` refuses an empty tuple, so "measured" with nothing measured
+  in it cannot be constructed at all; :func:`benchmark` turns the empty case
+  into the designed row instead.
+
+- **Tier 0's figure is ``run_tier0``'s own in-run ``total``,** read off the
+  record rather than timed from outside, which is 6.6's own rule applied one
+  level up.  A reader takes a drawn page and answers one duration, so the
+  harness times nothing itself.
+
+- **The p95 is nearest-rank and interpolates nothing.**  A tier is read over a
+  handful of pages here, and a fraction between two of them would be a duration
+  no run produced; the two-sample case is the one that shows it, where
+  interpolation would report 0.95.
+
+- **The seam is a drawn page, not an evaluation ``Case``.**  The manifest is
+  ground truth for accuracy, and a benchmark needs no ground truth: it draws
+  pages itself and hands them to a reader.
+
+- **The targets live here, once, as `TARGETS`.**  6.6's runner holds no
+  threshold and enforces nothing, so the windows are the benchmark's to print
+  and are not a gate any run can fail.
+
+### The gap this leaves, on purpose
+
+Tier 1 and Tier 2 have never run here, so two thirds of the table is the
+abstract's own figures and the module measures the harness for Tier 0 over
+three synthetic pages.  Nothing here is a claim about checkpoint hardware, and
+a p95 over three pages is a p95 over three pages.  `scripts/benchmark.py` from
+V5 is still not a file: this follows the V1-V4 precedent of
+``tests/fixtures/``, and the entry point is :func:`main`.
+
+### Revisit condition
+
+When an OCR engine or a deep-module registry is configured, this gains readers
+rather than a new module, and the p95 starts describing something worth
+quoting.  If per-tier timings land on Tier 1's and Tier 2's records the way
+6.6 put them on Tier 0's, the readers here read those records too, and the
+in-run rule stops being something only Tier 0 keeps.
+---
+
+## D228 -- A face rate is measured or it is absent, and an unmeasured trial enters neither denominator
+
+`backend/tests/fixtures/face_evaluation.py` and
+`backend/tests/unit/test_face_evaluation.py`.
+
+**Context.**  The abstract's validation plan asks for face verification to be
+measured by "wrong-person-accepted and right-person-rejected rates, tuned on
+held-out data and reported per demographic group", and Section 11 names
+NISTIR 8280 as the reason the split is per group.  Part 13 built the seam those
+numbers would be read through -- an `Embedder`, a stub, and `match_score` --
+but nothing had yet put a number on it, and this box has none of the three
+inputs the abstract names: no demographic-labelled face dataset, no tuned
+threshold, and no insightface package.  27.9 had already decided the same shape
+of question for latency, where a tier that could not be measured printed the
+abstract's target instead and said which kind of number it was.
+
+**Decision.**  A :class:`Report` carries FAR and FRR overall and once per
+declared demographic slot, and a ``reasons`` tuple that is empty only where a
+rate was read.
+
+### What is decided
+
+- **A missing input is named, never rounded to a zero.**  A zero is a rate a
+  model achieves; a run with no trials, no threshold or no model has no rate at
+  all, so the cell prints ``--`` and ``reasons`` names which of the three was
+  missing.  All three are reported together, so a run that is short a model
+  says so even when it is also short a dataset.
+
+- **An unmeasured trial enters neither denominator and is counted.**  An absent
+  embedder answers ``None`` and a stub answers a labelled zero vector; 13.15
+  refuses the comparison either way.  Scoring that refusal as a rejection would
+  put an uninstalled model into the false-reject rate, which is the one number
+  a screening station would act on.
+
+- **The threshold is required and defaults to none.**  The abstract's 0.55 is
+  the worked example's illustrative figure, and ``D101`` already refuses a
+  threshold nobody supplied; adopting it here would have produced a table whose
+  rates were real but whose bar was a placeholder.
+
+- **Each dimension carries an ``unlabelled`` slot.**  A trial with no
+  demographic label still counts towards the overall rates and is shown in a row
+  of its own, so the per-group rows and the overall row are always over the
+  same trials and none is dropped for want of a label.
+
+- **The slots are a declared constant, and a label outside them is refused.**
+  ``age_band`` and ``gender`` are the dimensions NISTIR 8280 reports over;
+  a dataset's own bins are added to the constant rather than invented at the
+  call site.  A duplicate slot in one dimension, an undeclared dimension, and a
+  label outside the declared bands are all wiring mistakes, and all are checked
+  before the first crop is embedded.
+
+- **The comparison is 13.15's and the embedder is 13.13's.**  Nothing here
+  reimplements a cosine, re-thresholds a similarity, or holds a model;
+  ``CONFIGURED_EMBEDDER`` is the real ``InsightFaceEmbedder``, not the stub,
+  so the box answers through the seam it would answer through in production.
+
+### The gap this leaves, on purpose
+
+Nothing here has ever measured a face.  There is no face dataset in this
+repository and no face model installed, so the default run prints nine empty
+slots and the reasons each is empty -- which is the whole of what this task's
+Verify can mean on this box.  The arithmetic is proved against a stand-in
+embedder with known vectors, and by fourteen mutations, so the harness is known
+to compute a rate when handed one; it is not known to compute the right rate for
+any real model.
+
+### Revisit condition
+
+When a demographic-labelled face dataset and a tuned threshold are configured,
+this module reads real numbers without changing shape: the same slots fill in and
+the same ``reasons`` tuple empties.  If the dataset's bins do not match
+``AGE_BANDS``, that constant changes -- and the change is the record of which
+demographics were measured over.
+
+## D229 -- A morph rate is measured or absent, and a stand-in's rate is labelled a stand-in's
+
+`backend/tests/fixtures/morph_evaluation.py` and
+`backend/tests/unit/test_morph_evaluation.py`.
+
+**Context.**  Section 4.6 fixes the pair of numbers this task reads -- "the
+evaluation follows the NIST FATE MORPH approach: attacks missed versus genuine
+photographs wrongly flagged" (NISTIR 8292, with NISTIR 8584 carrying the
+operational framing) -- and the validation plan in Section 10 repeats it.
+Part 15 built the two seams those numbers would be read through, a
+`MorphClassifier` and a `DeepfakeClassifier` each behind a labelled stand-in,
+but nothing had put a number on either.  This box has none of what the numbers
+are read over: no morph or deepfake corpus, no set of genuine photographs, and
+no trained model of either kind.
+
+**Decision.**  A `Report` carries two rates over disjoint denominators,
+overall and once per attack kind, and a `reasons` tuple that is empty only
+where a rate was read.
+
+### What is decided
+
+- **The two numbers are the abstract's own, and they are counted over disjoint
+  sets.**  `missed` counts attacks of a kind that its own classifier did not
+  flag, over the attacks of that kind; `flagged` counts the genuine photographs
+  it flagged, over the genuine photographs.  Neither can stand in for the other,
+  which is what makes a miss rate and a false-alert rate separable numbers
+  rather than two views of one.
+
+- **A stand-in's rate is shown, and labelled `stub`.**  This is where this
+  differs from D228, and it is deliberate.  An absent embedder answers `None`,
+  so there is nothing to show at all; Part 15's heuristics *do* answer, and
+  what they answer is a measurement of this repository's own fixture.  Printing
+  `--` would claim nothing was measured when something was, and printing the
+  fraction unqualified would let a heuristic's number be quoted as a detector's.
+  So the number appears and says where it came from, on 27.9's
+  `measured`-or-`designed` precedent.
+
+- **An ensemble carrying one stand-in is a stand-in.**  `is_stub` is `any` over
+  the members rather than `all`, and `model_version` joins the members' own
+  versions.  A heuristic inside an ensemble can only add flags and never
+  suppress them, so a rate read over one is partly a heuristic's rate; and the
+  joined version is what names exactly which classifiers answered.
+
+- **An unreadable region enters neither denominator and is counted.**  Both
+  seams *raise* rather than answering an absence -- `MorphError` on a region
+  with no closed outline, `DeepfakeError` on one with no power to share -- so a
+  refusal is caught and the trial is counted unmeasured.  Scoring it as a miss
+  would invert the defect D122 and D123 measured directly: blank paper reads a
+  flat share of 1.000 and a block of body text reads 0.506, so an unreadable
+  region scored as clean would report the detector's weakest case as its best
+  one.
+
+- **An attack is measured by its own classifier only, and a genuine photograph
+  by both.**  A blend is not evidence about synthetic generation, and scoring
+  one as though it were would put a morph into the deepfake miss rate.  A
+  genuine photograph is measured by both because either one flagging it is an
+  officer seeing one alert on a real traveller, and the `all` row counts that
+  as one wrongly-flagged photograph rather than two.
+
+- **The decision is the verdict's own `suspect`.**  No threshold is accepted,
+  defaulted or invented here, unlike D228's face threshold: Part 15 already
+  reads its own score against its own `SUSPECT_LEVEL` inside the verdict, and
+  putting a second line between a score and its own decision is the defect
+  D125 records.
+
+- **An undeclared attack kind is refused before the first region is
+  classified.**  A kind nothing collects would leave a trial measured by no
+  classifier and counted in no row, which is the same wiring mistake D228
+  refuses for a demographic label.
+
+### The gap this leaves, on purpose
+
+Nothing here has ever measured a morph or a deepfake.  There is no morph or
+deepfake corpus and no set of genuine photographs in this repository, so the
+default run prints three empty rows and the reason each is empty.  The
+`classifier` column reads `heuristic-v0` even on that empty run, because the
+only classifiers behind either seam on this box are stand-ins and the table
+says so before any data arrives.
+
+The arithmetic is proved against stand-in classifiers with known readings and
+by fifteen mutations, so the harness is known to compute both numbers when
+handed them.  It is not proved against any real morphing attack or any real
+reconstruction, and no number here should be quoted as one.  Two further limits
+are inherited rather than solved: D122 records that the morph's boundary cue
+does not separate on its own, and D123 records that the deepfake cue would
+plausibly not fire on a real deepfake at all.
+
+### Revisit condition
+
+When a morph or deepfake corpus and a set of genuine photographs are
+configured, this module reads real numbers without changing shape: the same
+rows fill in and the same `reasons` tuple empties.  If a trained classifier is
+wired behind either seam -- 15.10 and 15.11 leave room for one -- the `source`
+column moves from `stub` to `measured` on its own, and that column moving is
+the record that the number changed kind.
+## D230 -- The results page reads a generated file, because `app` does not import a fixture and still will not
+
+**Status:** settled · **Settled by:** 27.12
+
+`frontend/results.html`, `frontend/results.js`, `frontend/results-metrics.js`,
+`backend/tests/fixtures/results_view.py`,
+`backend/tests/unit/test_results_view.py`.
+
+**Context.**  27.12 asks for a view in the app showing each measured metric
+with the dataset it came from, and Gate 27 asks that every number displayed
+anywhere has a dataset behind it and anything without one is a design target.
+The numbers already exist: 27.5-27.7 read them over the drawn corpus, 27.9
+times the tiers, 27.10 and 27.11 scaffold the face and morph rates. What did
+not exist was anywhere they were all *shown*.
+
+The numbers live in `tests/fixtures/`. D221 settled that `app` imports no test
+module anywhere in this repository and named the cost of the alternative: "If
+27.5's harness has to ship inside `app` to feed 27.12's results view, this
+generator moves with it and `app` grows a dependency it does not have today --
+and that is the moment to decide, rather than importing `tests.fixtures` from
+`app` and leaving the edge there quietly." Moving five harnesses and their
+corpus into `app` is a larger decision than one task can take, and the site is
+static, so a route would buy nothing but that edge.
+
+**Decision.** The harnesses are read at **authoring** time rather than at
+request time. `results_view.py` assembles the rows and renders
+`frontend/results-metrics.js`, which is committed and loaded by the page. The
+page therefore needs no API, the app grows no test edge, and one module owns
+every number on the screen.
+
+### What is decided
+
+- **A number is drawn only beside the dataset it was read over, and the
+  refusal is code.** `_checked` refuses a row showing a number and naming no
+  dataset, and `checkMetric` refuses the same row again in the browser, so a
+  file edited by hand fails the page rather than quietly shipping a bare
+  number. Gate 27 is one rule held in the two places it can be broken from.
+
+- **A design target is the one row that names no dataset, and says so.** The
+  abstract's latency windows are in the same table, tagged `designed`, with the
+  abstract named in the dataset column rather than a corpus. A target given a
+  dataset id is refused by both halves, because that is how a target starts
+  reading as a measurement.
+
+- **A rate with no denominator is `not measured`, never a measured zero.**
+  Nothing was caught over the drawn corpus, so region overlap and localization
+  have no denominator and print `--`. A row cannot claim `measured` while
+  showing nothing; that is the one lie the table is built not to tell, and
+  27.11's "a stand-in's rate is shown and labelled" rule is the same one.
+
+- **A dataset id nothing declares is refused in the browser too.** The view
+  checks a row against the datasets the file declares, because a row pointing
+  at an unnamed corpus is the failure this page exists to prevent.
+
+- **The detector is named on every row.** D225's revisit condition -- "the
+  report has to name which detector produced it before any of its numbers can
+  be shown beside another's" -- is met by a column, not a footnote: nothing
+  here yet runs Tier 1's OCR or Tier 2's modules over a page, so `read_zone` is
+  the floor every corpus number rests on and a reader is told so.
+
+- **Measured durations are deliberately absent.** Tier 0's median and p95 are
+  read on the machine that ran the benchmark, so committing them would make the
+  artefact machine-specific and force a rewrite on every regeneration, and the
+  freshness test would have to exempt them -- which is where a stale number
+  would hide. The latency rows carry the designed targets only and point at
+  `latency_benchmark.py`, where the reading is.
+
+- **The page ships a container and no sample row**, and the generated file is
+  listed in the build beside the view that reads it, so
+  `assertListedAssetsMatchThePages` holds the two together. The artefact count
+  in `check-artefacts.test.cjs` was written down and reddened when three
+  artefacts were added; it now reads its count out of the build's own list, so
+  the next page moves it instead of breaking three unrelated tests.
+
+### What is proved, and what is not
+
+Fifteen cases in `results.test.cjs` and ten in `test_results_view.py`.
+The headline claim is read off the drawn page rather than off the data: the
+test drives `draw()` over the committed file, walks the rows it produced and
+fails on any row showing a number whose dataset cell names neither a declared
+dataset nor the design-target sentence. That check is held to the way it could
+pass wrongly -- it is shown passing on the real rows, and shown reporting a row
+whose dataset cell has been emptied.
+
+Measured over the drawn corpus and written to the committed file: field
+accuracy 645/645, tamper catch 0/36, false-alert 0/9, each tamper kind 0/9,
+region overlap and localization not measured because nothing was caught.
+Every face and morph row is `not measured` and names no dataset, with the
+harness's own reasons carried in the row. `check-all.ps1` exits 0.
+
+The zero catch rate is 27.5's finding, unchanged: 27.3 guarantees no injection
+touches the MRZ, and the default detector reads the zone and nothing else.
+
+Not proved, and not claimed: that the page has been seen in a browser, or that
+any number here is a number about real documents. Every figure is a
+measurement of this repository's own synthetic corpus by a stand-in reader.
+The mutation sweep this project holds every task to has not been run over
+`results_view.py`; the refusals are proved by the three negative cases rather
+than by mutants.
+
+### Revisit condition
+
+If a measured latency has to appear on the page, or the numbers have to be
+current per request rather than per release, the edge D221 named becomes worth
+its cost: move `evaluation.py`, `latency_benchmark.py` and the corpus into
+`app/`, serve the rows from a route, and let this file be regenerated
+per-deploy instead of committed. That is a change to D221, and it should be
+made as one.
+
+## D231 -- The environment variables are listed once in the README, mirrored by
+`.env.example`, and a test holds the two together
+
+`README.md` carries the list, under `## Environment variables`: two tables, one
+for the frontend build and one for the backend, each row a variable with the
+function that reads it, whether it is live, planned or held, and the value it
+ships as. `.env.example` carries the same names in copy-pasteable form with the
+full rules for each value. The root README is the index because it is where a
+reader arrives; the example file stays the thing an operator copies.
+
+### What is decided
+
+- **Both lists are authoritative for names, and only the test reconciles them.**
+  A second table is the failure mode this task exists to stop: the third
+  description of the same variables is one more place to forget.
+
+- **A status is part of a name, not a footnote.** `live` means a function in
+  `app/config.py` or `frontend/build.cjs` reads it now; `planned` means a task
+  in `tasks.md` names it and nothing reads it; `held` means deliberately empty
+  and to be left unset. The example file writes the tags as `[LIVE]`, `[PLAN]`
+  and `[HOLD]`; the README writes the words. The test maps one to the other and
+  compares, because a variable promoted from planned to live in the code is
+  drift in whichever file nobody edited.
+
+- **The code is read as the third list.** The test scans `app/config.py` for its
+  `*_ENV_VAR` constants and its two inline `os.getenv` calls, and
+  `frontend/build.cjs` for `process.env` and its own constants. A variable that
+  is read and documented in neither file fails, which is how `DRISHTI_STATION_LABEL`
+  was found: the build has read it since the results page shipped and no document
+  in the tree named it.
+
+- **`DRISHTI_STATION_LABEL` and `STATION_LABEL` are two variables.** The first is
+  live in the build and names the station a deployed page shows; the second is
+  planned for the backend audit actor (tasks 10.7 and 23.12). Neither reads the
+  other, and the two files now say so where each is listed.
+
+- **`LOCAL_LLM_ENABLED` is live, not planned.** `app/explain/summarizer.py` reads
+  it through `config.get_local_llm_enabled()`, so the example file's `[PLAN]`
+  tag was stale and is now `[LIVE]`. Three section headings that still said
+  "planned" over groups of live variables were corrected the same way.
+
+- **No value moved.** Every row states the value the code already defaults to,
+  and no default changed, because this task documents the build rather than
+  changing it. No local setup needs any of them: a clean checkout runs with
+  nothing configured, which is what 28.7 writes down.
+
+### What is proved, and what is not
+
+Six cases in `tests/unit/test_env_reference_contract.py`. Both files are parsed
+into `(name, status)` pairs -- `.env.example` by its `NAME=` lines and the tag
+comment above each, the README by the name and status cells of every table row
+in the section, which ends at the next `## ` heading. Covered: set equality in
+both directions; no name listed twice in either file, which a set comparison
+would otherwise hide; the two statuses for a shared name agreeing; every status
+being one of the three words; and every variable the backend and the build read
+appearing in both lists.
+
+The test was shown red on a variable added to `.env.example` alone
+(`DRISHTI_MUTANT_CHECK`), naming it as listed in one file and not the other, and
+green again once the file was restored. Two real drifts were found by writing
+the README table rather than by the test: the missing `DRISHTI_STATION_LABEL`
+and the stale `[PLAN]` on `LOCAL_LLM_ENABLED`.
+
+Not proved: that the two files describe the same variable the same way in prose.
+The test compares names and statuses, not sentences, so a row whose reader or
+shipped value has gone stale is outside it. Nor is anything proved about the
+values themselves -- the shipped values in the table were read out of
+`.env.example` and the `DEFAULT_` constants in `app/config.py`, not measured.
+
+### Revisit condition
+
+If the four planned variables are implemented, they are promoted from planned to
+live in both files in one change, and the test enforces that they are one change.
+If a variable ever needs a value that is not derivable from the code -- a
+per-deployment secret, say -- its shipped value belongs in `.env.example` and
+its row should say where the real one comes from, rather than the table growing a
+column for values it cannot hold.
+
+## D232 -- The committed `api-config.js` and the one the build writes name the same port, and a test holds the README's run path to both
+
+Task 28.7 documented the local run path and then re-ran it from a copy of the
+tree with every gitignored path removed. Two things did not hold. The committed
+`frontend/api-config.js` -- the copy a served-from-source checkout reads -- named
+`http://localhost:9090`, while `build.cjs` has always written
+`http://localhost:8080` into `dist/api-config.js`. Nothing tested the two against
+each other, so the checkout served from source and the built site called
+different ports. Separately, the README's allowed-origins table listed 5500 and
+5501 and not the 5173 pair that `LOCAL_CORS_ORIGINS` allows.
+
+**Decision.** 8080 is the local API port, in the source copy as well as the
+generated one, and the README's `## Run locally` section names every origin
+`LOCAL_CORS_ORIGINS` allows rather than a chosen subset. 8080 was chosen because
+it is what the Dockerfile exposes, what `cloudrun.yaml` publishes, and what
+`backend/README.md`, `DEMO.md` and the whole test suite already assume; 9090
+appears in no other file in the repository and is treated as the drift.
+
+**Why the README and not the code.** The alternative -- documenting 9090, or
+widening the allowlist -- would have made the documentation agree with an
+outlier rather than with the twelve-odd places already fixed on 8080.
+
+### The test that holds it
+
+`backend/tests/unit/test_local_run_contract.py` reads the README section and
+compares it to the three constants it must match: `LOCAL_CORS_ORIGINS`, the port
+in `api-config.js`, and `DEFAULT_PORT` in `preview.cjs`. It asserts the README
+names every allowed origin, so an origin added to the allowlist without being
+documented fails; and it asserts the documented port is the port the frontend
+calls, so the source copy and the generated one cannot drift apart again. A
+fifth case holds `.env.example`'s shipped `CORS_ORIGINS` inside the local
+allowlist, so the copy-pasteable value cannot name an origin a local run would
+be refused.
+
+Both failures above were real when the test was first run, which is the state it
+is kept in: it found the 9090 port and the two undocumented origins rather than
+confirming a section that already happened to be right.
+
+### Not proved
+
+That the documented commands work from a clean clone was verified by running
+them, not by this test. The test reads files; it does not install, migrate or
+serve. A dependency that stops installing is outside what it can see.

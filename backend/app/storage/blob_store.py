@@ -186,6 +186,14 @@ _WIRE_PATTERN = re.compile(
     r"\Asha256:([0-9a-f]{" + str(BLOB_DIGEST_HEX_CHARS) + r"}):(0|[1-9][0-9]*)\Z"
 )
 
+#: What a file in the store root must be called to be one of ours: the digest
+#: and the one suffix, in one pattern rather than as a suffix test beside a
+#: digest test, so the name is checked once and neither half is left to the
+#: reader.
+_BLOB_NAME_PATTERN = re.compile(
+    r"\A[0-9a-f]{" + str(BLOB_DIGEST_HEX_CHARS) + r"}" + re.escape(BLOB_SUFFIX) + r"\Z"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BlobRef:
@@ -373,6 +381,24 @@ class EvidenceStore:
         """
         return self._path_of(_checked_reference(reference))
 
+    def blob_paths(self) -> tuple[Path, ...]:
+        """Every blob this store holds right now, in the order put wrote them.
+
+        :returns: one path per file in the root whose name is a blob
+            address -- :data:`BLOB_DIGEST_HEX_CHARS` lowercase hex characters
+            and :data:`BLOB_SUFFIX` -- sorted by name.  A file beside them
+            that is not named like one is not returned and no directory is
+            descended into, so a caller walking the store walks only what
+            this module wrote.
+        """
+        return tuple(
+            sorted(
+                entry
+                for entry in self._root.iterdir()
+                if entry.is_file() and _is_blob_name(entry.name)
+            )
+        )
+
     def _path_of(self, reference: BlobRef) -> Path:
         """The file one reference addresses.
 
@@ -407,6 +433,17 @@ def _associated_data(digest: bytes) -> bytes:
         address it was written under as well as to the rules that wrote it.
     """
     return BLOB_FORMAT_TAG + digest
+
+
+def _is_blob_name(name: str) -> bool:
+    """Whether one entry in the store root is named like a blob.
+
+    :param name: a single file name, never a path.
+    :returns: `True` when :data:`_BLOB_NAME_PATTERN` matches it, and `False`
+        for anything else -- a half-written `.partial`, a backup, a document
+        an operator copied in.
+    """
+    return _BLOB_NAME_PATTERN.match(name) is not None
 
 
 def _checked_bytes(value: Any, subject: str) -> bytes:

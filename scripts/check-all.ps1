@@ -1,14 +1,15 @@
 # scripts/check-all.ps1
 # Master verification script for DRISHTI.
 #
-# Runs three stages, in order:
+# Runs four stages, in order:
 #   1. backend tests   -- python -m pytest backend/tests -q  (from the repo root)
 #   2. frontend tests  -- npm test                            (in frontend/)
 #   3. frontend build  -- npm run build                      (in frontend/)
+#   4. built artefacts -- npm run check-artefacts             (in frontend/)
 #
 # Every stage runs even when an earlier one fails, so a single invocation
 # reports the whole picture instead of stopping at the first failure. The
-# script exits 1 if any stage failed, and 0 only when all three passed.
+# script exits 1 if any stage failed, and 0 only when all four passed.
 #
 # Usage:  ./scripts/check-all.ps1
 #
@@ -87,10 +88,14 @@ Invoke-Stage -Name "Frontend build (npm run build)" -WorkingDirectory $frontendD
     npm run build
 }
 
+Invoke-Stage -Name "Built artefacts (npm run check-artefacts)" -WorkingDirectory $frontendDir -Command {
+    npm run check-artefacts
+}
+
 Write-Host ""
 Write-Host "=========================================="
 if ($failed.Count -gt 0) {
-    Write-Host " VERIFICATION FAILED - $($failed.Count) of 3 stages" -ForegroundColor Red
+    Write-Host " VERIFICATION FAILED - $($failed.Count) of 4 stages" -ForegroundColor Red
     foreach ($name in $failed) {
         Write-Host "   - $name" -ForegroundColor Red
     }
@@ -98,7 +103,7 @@ if ($failed.Count -gt 0) {
     exit 1
 }
 else {
-    Write-Host " ALL CHECKS PASSED SUCCESSFULLY - 3 of 3 stages" -ForegroundColor Green
+    Write-Host " ALL CHECKS PASSED SUCCESSFULLY - 4 of 4 stages" -ForegroundColor Green
     Write-Host "==========================================" -ForegroundColor Green
     exit 0
 }

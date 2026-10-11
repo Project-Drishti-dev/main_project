@@ -5,6 +5,21 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const homePath = path.join(__dirname, "home.html");
+const { renderPage } = require("./build.cjs");
+
+// The shell reaches a page at build time, so the markup a page ships is
+// the rendered page rather than the fragment the build reads.
+function readHomePage() {
+  return renderPage(fs.readFileSync(homePath, "utf8"), "home.html");
+}
+// The start action is a link, so its destination lives in the rendered
+// markup rather than in a handler that could disagree with it (D183).
+const START_HREF = 'href=\"./screening.html\"';
+
+function startActionTag(html) {
+  return html.match(/<a\b[^>]*\bid="start-screening"[^>]*>/)?.[0] ?? "";
+}
+
 const MODULE_KEYS = [
   "sharpness",
   "noise",
@@ -192,18 +207,57 @@ function loadHomeScript({
       objectUrls.push({ revoked: url });
     },
   };
-  const source = fs.readFileSync(path.join(__dirname, "home.js"), "utf8");
-  vm.runInNewContext(source, {
+  const armedTimers = new Map();
+  let nextTimerId = 1;
+  const clock = {
+    pending: () => armedTimers.size,
+    fire() {
+      const callbacks = Array.from(armedTimers.values());
+      armedTimers.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+  const sandbox = {
     document,
     URL: urlApi,
     FormData: MockFormData,
     fetch: fetchImpl,
-    window: { DRISHTI_CONFIG: { apiBaseUrl } },
-    setTimeout(callback) {
-      callback();
+    // Loaded empty on purpose: status.js probes at load, and an empty base
+    // settles "unconfigured" without dialling, so the probe puts no request
+    // and no timer into the counts the cases below assert on. The base is
+    // filled in once that module has settled, before home.js reads it.
+    window: { DRISHTI_CONFIG: {} },
+    AbortController,
+    // api.js arms an abort timer for its request budget; a case never fires
+    // it unless it asks for it, while home.js's zero-delay focus call runs.
+    setTimeout(callback, delay) {
+      if (delay === 0) {
+        callback();
+        return 0;
+      }
+      const id = nextTimerId;
+      nextTimerId += 1;
+      armedTimers.set(id, callback);
+      return id;
     },
-  });
-  return { elements, document, metricCards, objectUrls };
+    clearTimeout(id) {
+      armedTimers.delete(id);
+    },
+  };
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "api.js"), "utf8"),
+    sandbox,
+  );
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "status.js"), "utf8"),
+    sandbox,
+  );
+  sandbox.window.DRISHTI_CONFIG.apiBaseUrl = apiBaseUrl;
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "home.js"), "utf8"),
+    sandbox,
+  );
+  return { elements, document, metricCards, objectUrls, clock };
 }
 
 function makeAnalysisResponse(overrides = {}) {
@@ -247,7 +301,7 @@ function selectPreviewImage(elements, file = {
 }
 
 test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
-  const html = fs.readFileSync(homePath, "utf8");
+  const html = readHomePage();
 
   assert.match(html, /<html lang="en" data-theme="light">/);
   assert.match(html, /node_modules\/ux4g-web-components\/styles\/ux4g\.css/);
@@ -258,14 +312,34 @@ test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
   assert.match(html, /DRISHTI image-quality demo/);
   assert.match(html, /Experimental image-quality checks only—not identity\s+verification/);
   assert.match(html, /Use synthetic images; do not upload real identity\s+documents/);
-  assert.match(html, /id="start-screening"[^>]*data-modal-target="#screening-modal"/);
+  assert.match(html, /<a\b[^>]*id="start-screening"[^>]*href="\.\/screening\.html"/);
   assert.match(html, /id="screening-modal"[^>]*role="dialog"/);
   assert.match(html, /id="results-modal"[^>]*role="dialog"/);
   assert.doesNotMatch(html, /type="password"|Forgot password\?|Personnel ID|Register/);
 });
 
+test("the home page start action navigates to the screening page", () => {
+  const tag = startActionTag(readHomePage());
+
+  assert.notEqual(tag, "", "the start action must be a link on the rendered page");
+  assert.match(tag, /href="\.\/screening\.html"/);
+  assert.doesNotMatch(tag, /data-modal-target/);
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(__dirname, "home.js"), "utf8"),
+    /startScreeningButton\.addEventListener\("click"/,
+  );
+});
+
+test("a start action aimed at another page turns the navigation case red", () => {
+  const html = readHomePage();
+  const mutated = html.replace(START_HREF, 'href=\"./screenings.html\"');
+  assert.notEqual(mutated, html, "the mutation must have landed");
+
+  assert.doesNotMatch(startActionTag(mutated), /href="\.\/screening\.html"/);
+});
+
 test("homescreen includes a compact expandable sidebar with working navigation", () => {
-  const html = fs.readFileSync(homePath, "utf8");
+  const html = readHomePage();
   const css = fs.readFileSync(path.join(__dirname, "home.css"), "utf8");
 
   assert.match(html, /id="sidebar-toggle"[^>]*aria-expanded="false"/);
@@ -309,7 +383,8 @@ test("selected images preview locally and are sent only when analysis is request
 
   assert.match(script, /URL\.createObjectURL/);
   assert.match(script, /URL\.revokeObjectURL/);
-  assert.match(script, /\bfetch\s*\(/);
+  assert.match(script, /window\.DRISHTI_API/);
+  assert.match(script, /api\.request\(/);
   assert.match(script, /new FormData/);
   assert.doesNotMatch(script, /localStorage|sessionStorage|indexedDB/);
 });
@@ -383,7 +458,6 @@ test("screening modal traps keyboard focus within the open dialog", () => {
   modal.focusableElements = [closeButton, uploadButton, cameraButton];
   modal.classList.add("is-open");
 
-  elements.get("start-screening").listeners.click();
   closeButton.focus();
   const event = {
     key: "Tab",
@@ -399,7 +473,7 @@ test("screening modal traps keyboard focus within the open dialog", () => {
   assert.equal(document.activeElement, cameraButton);
 });
 
-test("closing and reopening screening returns to the source choices", () => {
+test("closing the screening modal returns to the source choices", () => {
   const { elements } = loadHomeScript();
   const sourceChooser = elements.get("source-chooser");
   const uploadStep = elements.get("upload-step");
@@ -410,7 +484,6 @@ test("closing and reopening screening returns to the source choices", () => {
   assert.equal(uploadStep.hidden, false);
 
   modal.listeners.click({ target: modal });
-  elements.get("start-screening").listeners.click();
 
   assert.equal(sourceChooser.hidden, false);
   assert.equal(uploadStep.hidden, true);
@@ -607,16 +680,26 @@ test("API and network errors stay in the upload flow and allow retry", async () 
       fetchImpl: async () => {
         throw new TypeError("Failed to fetch");
       },
-      expectedMessage: /could not connect|unable to reach/i,
+      expectedMessage: /CORS/,
     },
     {
       fetchImpl: async () => ({
         ok: false,
-        json: async () => ({
-          error: { code: "IMAGE_TOO_LARGE", message: "The image is too large." },
-        }),
+        status: 413,
+        text: async () =>
+          JSON.stringify({
+            error: { code: "IMAGE_TOO_LARGE", message: "The image is too large." },
+          }),
       }),
       expectedMessage: /too large/i,
+    },
+    {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 502,
+        text: async () => "<html>Bad Gateway</html>",
+      }),
+      expectedMessage: /502/,
     },
   ];
 
@@ -634,6 +717,110 @@ test("API and network errors stay in the upload flow and allow retry", async () 
     assert.equal(elements.get("analysis-status").textContent, "");
     assert.equal(runButton.focused, true);
   }
+});
+
+test("a CORS refusal reads unlike a 5xx, a validation error and no configuration", async () => {
+  const cases = [
+    {
+      name: "a CORS refusal or a service that is down",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => {
+            throw new TypeError("Failed to fetch");
+          },
+        }),
+      expected: /CORS/,
+    },
+    {
+      name: "a server error",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => ({
+            ok: false,
+            status: 503,
+            text: async () => "<html>Service Unavailable</html>",
+          }),
+        }),
+      expected: /503/,
+    },
+    {
+      name: "a validation error",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => ({
+            ok: false,
+            status: 400,
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: "INVALID_IMAGE",
+                  message: "The image could not be decoded.",
+                },
+              }),
+          }),
+        }),
+      expected: /could not be decoded/,
+    },
+    {
+      name: "a build with no configured service",
+      load: () => loadHomeScript({ apiBaseUrl: "" }),
+      expected: /no quality service configured/,
+    },
+  ];
+
+  const shown = [];
+  for (const { name, load, expected } of cases) {
+    const { elements } = load();
+    selectPreviewImage(elements);
+    await elements.get("run-screening").listeners.click();
+    const text = elements.get("file-error").textContent;
+    assert.match(text, expected, name);
+    shown.push({ name: name, text: text });
+  }
+
+  // The browser raises a CORS refusal and an unreachable host as one
+  // TypeError, so the sentence names both causes and both checks. The text it
+  // replaced named one cause and told an operator to start a running backend.
+  assert.match(shown[0].text, /running/);
+  assert.match(shown[0].text, /allows this site's origin/);
+  assert.doesNotMatch(shown[0].text, /Could not connect/);
+
+  for (let i = 0; i < shown.length; i += 1) {
+    for (let j = i + 1; j < shown.length; j += 1) {
+      assert.notEqual(
+        shown[i].text,
+        shown[j].text,
+        shown[i].name + " and " + shown[j].name + " must not read alike",
+      );
+    }
+  }
+});
+
+test("a request that outruns its budget is named as a timeout, not a lost connection", async () => {
+  const { elements, clock } = loadHomeScript({
+    fetchImpl: (url, options) =>
+      new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () =>
+          reject(
+            Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+            }),
+          ),
+        );
+      }),
+  });
+  selectPreviewImage(elements);
+  const runButton = elements.get("run-screening");
+
+  const pending = runButton.listeners.click();
+  assert.equal(clock.pending(), 1);
+  clock.fire();
+  await pending;
+
+  assert.match(elements.get("file-error").textContent, /timed out/i);
+  assert.doesNotMatch(elements.get("file-error").textContent, /CORS/i);
+  assert.equal(elements.get("results-modal").classList.contains("is-open"), false);
+  assert.equal(runButton.disabled, false);
 });
 
 test("malformed API responses are rejected without rendering partial results", async () => {

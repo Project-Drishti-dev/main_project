@@ -9,6 +9,11 @@ paged by 11.3; ``GET`` on the item is one stored result, read back off the
 row the create left and nothing recomputed except the terms, which the row
 holds the two halves of.  Rationale in ``docs/DECISIONS.md`` D71 to D73.
 
+``POST`` stores the upload as an encrypted blob before the cascade runs
+(19.6): the route hands :func:`app.screening.run_screening` the bytes it read
+and the store :func:`app.api.get_evidence_store` answered, and the row the
+flow writes carries the blob's address rather than the document.
+
 ``POST /api/screenings/{id}/decision`` is 18.1: the choice an officer makes,
 taken at a URL and refused in the same envelope, and since 18.2 the band it was
 shown beside refuses a choice the officer has not claimed as their own.  Since 18.3 a taken choice reaches the trail as an event of
@@ -42,7 +47,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
 from app.analysis import read_uploaded_image
-from app.api import get_sessions
+from app.api import get_evidence_store, get_sessions
 from app.api.rate_limit import enforce_analysis_rate_limit
 from app.audit.decision import (
     DECISION_CURRENT,
@@ -69,6 +74,7 @@ from app.schemas import (
     ScreeningResultResponse,
 )
 from app.screening import run_screening, screening_contributions
+from app.storage.blob_store import EvidenceStore
 from app.storage.repository import ScreeningRepository
 
 __all__ = [
@@ -127,6 +133,7 @@ async def create_screening(
     document_type: str = Form(default=DEFAULT_DOCUMENT_TYPE),
     _within_rate_limit: None = Depends(enforce_analysis_rate_limit),
     sessions: sessionmaker[Session] = Depends(get_sessions),
+    evidence_store: EvidenceStore = Depends(get_evidence_store),
 ) -> dict[str, Any]:
     """Screen one upload and answer with the row and the event beside it.
 
@@ -142,6 +149,9 @@ async def create_screening(
     :param _within_rate_limit: 11.8's guard, ahead of the session factory
         so a refused request never opens one.
     :param sessions: the factory every write below goes through.
+    :param evidence_store: where the uploaded bytes are stored encrypted
+        before the cascade runs, so the row carries the blob's address and
+        none of the document (19.6).
     :returns: ``screening_id`` and ``audit_id`` -- the row, and the one
         ``analysis_completed`` event beside it.  Nothing else: the result is
         11.2's answer, from the screening id.
@@ -168,6 +178,8 @@ async def create_screening(
             frame,
             document_type.strip(),
             image.filename or "",
+            contents,
+            evidence_store,
         )
     except APIError:
         raise
@@ -494,6 +506,8 @@ def _screen(
     frame: Any,
     document_type: str,
     filename: str,
+    document: bytes,
+    evidence_store: EvidenceStore,
 ) -> dict[str, uuid.UUID]:
     """Run the cascade over one frame and answer the two ids it left.
 
@@ -502,6 +516,9 @@ def _screen(
     the event loop.  The audit id is read back out of the trail rather than
     recomputed, so it is the id of the row ``emit`` stored.
 
+    :param document: the uploaded bytes, stored as an encrypted blob before
+        the cascade runs (19.6).  Never logged and never answered with.
+    :param evidence_store: the store ``document`` is written into.
     :returns: ``screening_id`` and ``audit_id``.
     :raises RuntimeError: when a completed screening left no
         ``analysis_completed`` event, which is a fault in the flow rather
@@ -512,6 +529,8 @@ def _screen(
         image=frame,
         document_type=document_type,
         filename=filename,
+        document=document,
+        evidence_store=evidence_store,
     )
     audit_id = completed_event_id(row.id, sessions=sessions)
     if audit_id is None:

@@ -92,6 +92,55 @@ DEFAULT_APP_ENV = ENV_DEVELOPMENT
 #: module answers rather than the variable itself.
 EVIDENCE_ENCRYPTION_KEY_ENV_VAR = "EVIDENCE_ENCRYPTION_KEY"
 
+#: The variable naming the directory evidence blobs are written into (19.6).
+#: Named for the same reason as :data:`EVIDENCE_ENCRYPTION_KEY_ENV_VAR`:
+#: this module is the only reader of the environment, and :mod:`app.api`
+#: builds the store from what this answers rather than the variable itself.
+EVIDENCE_STORE_ROOT_ENV_VAR = "EVIDENCE_STORE_ROOT"
+
+#: The directory used when the variable is unset or blank.  Beside the
+#: backend package rather than beside the working directory, on
+#: :data:`DEFAULT_DATABASE_PATH`'s reasoning: the same store whichever
+#: directory the process was started from.
+DEFAULT_EVIDENCE_STORE_ROOT = BACKEND_DIR / "evidence"
+
+#: The variable holding how many days each record class is kept before a
+#: purge may remove it (19.7).  Written as :data:`class=days` pairs separated
+#: by commas -- an integer per record class, as `.env.example` says -- and
+#: named for the same reason as :data:`EVIDENCE_STORE_ROOT_ENV_VAR`: this
+#: module is the only reader of the environment, and
+#: :mod:`app.storage.retention` asks this one for a window rather than
+#: reading the variable itself.
+RETENTION_DAYS_ENV_VAR = "RETENTION_DAYS"
+
+#: The record class a stored document belongs to: the blob
+#: :mod:`app.storage.blob_store` writes.  The only class a purge may remove.
+RECORD_CLASS_EVIDENCE = "evidence"
+
+#: The record classes a window may never be set for: the audit events and the
+#: ledger entries.  Gate 19 asks for retention "without touching the audit
+#: trail", so they are named here to be refused rather than left to a purge
+#: that happens not to reach them.
+RECORD_CLASS_AUDIT_EVENTS = "audit_events"
+RECORD_CLASS_LEDGER_ENTRIES = "ledger_entries"
+
+#: Every record class this service retains: the ones a window may be set for,
+#: then the ones it may not.  Spelled once, so a caller cannot name a class
+#: this module has not heard of.
+PURGEABLE_RECORD_CLASSES = (RECORD_CLASS_EVIDENCE,)
+NEVER_PURGED_RECORD_CLASSES = (RECORD_CLASS_AUDIT_EVENTS, RECORD_CLASS_LEDGER_ENTRIES)
+RECORD_CLASSES = PURGEABLE_RECORD_CLASSES + NEVER_PURGED_RECORD_CLASSES
+
+#: The window each class carries when the operator names none.  Evidence is
+#: ninety days -- long enough for a case to be worked, short enough that an
+#: identity image nobody needs is not kept forever -- and the two audit
+#: classes are None, which is how never is spelled here.
+DEFAULT_RETENTION_DAYS = {
+    RECORD_CLASS_EVIDENCE: 90,
+    RECORD_CLASS_AUDIT_EVENTS: None,
+    RECORD_CLASS_LEDGER_ENTRIES: None,
+}
+
 #: The variable holding how many analysis requests one address may make per
 #: minute (11.8).  Named here for the same reason as
 #: :data:`LOG_LEVEL_ENV_VAR`: this module is the only reader of the
@@ -283,6 +332,88 @@ def get_evidence_encryption_key() -> str | None:
     if configured is None or not configured.strip():
         return None
     return configured
+
+
+def get_evidence_store_root() -> pathlib.Path:
+    """The directory evidence blobs are written into.
+
+    :returns: ``EVIDENCE_STORE_ROOT`` when it is set to a non-blank path, and
+        :data:`DEFAULT_EVIDENCE_STORE_ROOT` otherwise.  Nothing is created
+        and nothing is checked here: whether the root is a directory this
+        process can write is
+        :class:`~app.storage.blob_store.EvidenceStore`'s own answer, given
+        one.
+    """
+    configured = os.getenv(EVIDENCE_STORE_ROOT_ENV_VAR)
+    if configured is None or not configured.strip():
+        return DEFAULT_EVIDENCE_STORE_ROOT
+    return pathlib.Path(configured.strip())
+
+
+def get_retention_days() -> dict[str, int | None]:
+    """How many days each record class is kept.
+
+    :returns: every class in :data:`RECORD_CLASSES` mapped to the whole
+        number of days a purge may act after, or `None` for the classes that
+        are never purged.  :data:`DEFAULT_RETENTION_DAYS` when the variable
+        is unset or blank -- the value `.env.example` ships -- and a fresh
+        mapping on every call, so nothing a caller does to the answer is
+        what the next call reads.
+    :raises ValueError: when a pair is not `class=days`, when a class is not
+        one of :data:`RECORD_CLASSES`, when one class is named twice, when a
+        window is not a whole number of days, when it is below one, or when
+        one is set for a class in :data:`NEVER_PURGED_RECORD_CLASSES`.  Every
+        message names the variable.
+    """
+    windows = dict(DEFAULT_RETENTION_DAYS)
+    configured = os.getenv(RETENTION_DAYS_ENV_VAR)
+    if configured is None or not configured.strip():
+        return windows
+
+    named: set[str] = set()
+    for pair in configured.split(","):
+        if not pair.strip():
+            continue
+        record_class, separator, days_written = pair.partition("=")
+        if not separator:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} takes class=days pairs separated by "
+                f"commas; {pair.strip()!r} is not one."
+            )
+        record_class = record_class.strip()
+        if record_class not in RECORD_CLASSES:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} must name one of "
+                f"{', '.join(RECORD_CLASSES)}; {record_class!r} is not one."
+            )
+        if record_class in NEVER_PURGED_RECORD_CLASSES:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} must not set {record_class!r}: the "
+                f"audit trail is never purged, so a window for it is a promise "
+                f"no purge could keep. Remove {record_class!r} from the "
+                f"variable."
+            )
+        if record_class in named:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} names {record_class!r} twice, and "
+                f"whichever was written last would be the window that counts."
+            )
+        named.add(record_class)
+        try:
+            days = int(days_written.strip())
+        except ValueError:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} must give {record_class!r} a whole "
+                f"number of days; {days_written.strip()!r} is not one."
+            ) from None
+        if days < 1:
+            raise ValueError(
+                f"{RETENTION_DAYS_ENV_VAR} must give {record_class!r} at least "
+                f"one day; {days} expires a document the moment it is stored "
+                f"rather than after a window."
+            )
+        windows[record_class] = days
+    return windows
 
 
 def get_local_llm_base_url() -> str:

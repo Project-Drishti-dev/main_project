@@ -1,0 +1,42 @@
+# Builds the image `backend/cloudrun.yaml` deploys.
+#
+# Submitted with:
+#   gcloud builds submit --config cloudbuild.yaml
+#
+# The Dockerfile this builds is the pinned one `tests/unit/
+# test_dockerfile_contract.py` reads, so the image that reaches a revision is
+# the image those tests describe. Only the tag lives here; the image name is
+# spelled once, in the `${_IMAGE}` substitution below and in cloudrun.yaml.
+
+substitutions:
+  _REGION: asia-south1
+  _REPOSITORY: drishti
+  _IMAGE: drishti-backend:latest
+
+steps:
+  # Built from backend/ so the build context is the Dockerfile's directory,
+  # exactly as `docker build` and the deploy test build it.
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      # -t tags the image; the context is the last argument.
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}
+      - .
+
+  # Pushed by tag, so the revision below can name it without a digest. The
+  # digest the image resolves to is recorded by the registry itself.
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}
+
+options:
+  # Cloud Build runs privileged by default; this build needs neither Docker
+  # socket access nor root, so it does not ask for either.
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,110 @@
+{{pageTitle}}Audit trail
+{{pageDescription}}The audit trail of one recorded screening, read from the verification route.
+{{pageHeading}}Audit trail
+{{activeNavKey}}screenings
+{{content}}
+<section class="page-header" aria-labelledby="audit-title">
+  <div class="page-header__copy">
+    <p class="eyebrow">AUDIT TRAIL</p>
+    <h1 id="audit-title">Audit trail</h1>
+    <p class="page-header__description">
+      The events recorded for a screening, oldest first. Every row is read
+      back from the log rather than from this page.
+    </p>
+  </div>
+</section>
+
+<section class="table-panel ux4g-card" aria-labelledby="audit-records-title">
+  <h2 id="audit-records-title" class="visually-hidden">Recorded audit events</h2>
+  <div class="ux4g-card-body">
+    <div class="table-toolbar">
+      <p class="table-toolbar__meta" id="audit-count" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- 24.8: the event list. The markup is a container, not a record --
+       `audit.js` reads `GET /api/audit/{id}/verify` and draws the tbody, so
+       the page ships no sample row. G13: that route answers about one stored
+       event and no route lists a screening's whole trail. 24.9 added the
+       Result and What was checked columns; 24.10 added the batch id, the
+       batch root and the proof length, in the order the walk reaches them. -->
+  <div class="table-scroll">
+    <table class="ux4g-table ux4g-table-m ux4g-table-responsive" id="audit-events">
+      <caption class="visually-hidden">
+        Recorded audit events, in the order they were recorded
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Event</th>
+          <th scope="col">Result</th>
+          <th scope="col">Batch id</th>
+          <th scope="col">Batch root</th>
+          <th scope="col">Proof length</th>
+          <th scope="col">What was checked</th>
+        </tr>
+      </thead>
+
+      <tbody id="audit-events-body"></tbody>
+    </table>
+  </div>
+
+  <!-- 24.8: the loading state, 24.7's composition. `aria-busy` on the
+       container and `aria-hidden` on every shape, written by the same call
+       that switches them, because the skeleton ships no ARIA (G2). G8: all
+       seven shapes only carry size and colour inside
+       .ux4g-application-submission, so these draw nothing until that rule
+       lands. The same debt result.html and screenings.html carry. -->
+  <div class="ux4g-card-body" id="audit-loading" aria-busy="true">
+    <p class="visually-hidden">Loading the audit trail.</p>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+  </div>
+
+  <!-- 24.8: the error state, said in the failure's own words. `audit.js`
+       writes the message the service wrote into the paragraph. role="alert"
+       because it arrives after a read, not on page load. -->
+  <div class="ux4g-card-body" id="audit-error" hidden>
+    <div class="ux4g-alert ux4g-alert-error" role="alert">
+      <div class="ux4g-alert-content">
+        <h2 class="ux4g-alert-title">Could not load the audit trail</h2>
+        <p class="ux4g-alert-message" id="audit-error-message"></p>
+      </div>
+      <div class="ux4g-alert-actions">
+        <button
+          class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+          id="audit-retry"
+          type="button"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 24.8: the empty state. A page opened with no `id` in its query string
+       was never asked about a record, which is an answer rather than a
+       failure. The sheet's own composition and no icon: Design.md 13 forbids
+       a bespoke illustration, and G12 -- which screenings.html still carries --
+       is not repeated here. -->
+  <div class="ux4g-card-body" id="audit-empty" hidden>
+    <div class="ux4g-empty-state">
+      <div class="ux4g-empty-state-content">
+        <h2>No record was named</h2>
+        <p>
+          This page was opened without an event to read. Open it from a
+          screening to see the events recorded against it.
+        </p>
+        <a class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" href="./screenings.html">
+          Previous screenings
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+{{/content}}
+{{overlays}}
+{{/overlays}}
+{{pageScripts}}
+<script src="./audit.js"></script>
+{{/pageScripts}}

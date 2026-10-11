@@ -1,0 +1,779 @@
+/* Shared styles for the DRISHTI secondary pages.
+   Loaded after home.css so it can extend the workspace shell.
+   UX4G supplies every component, token and theme value used here.
+   Custom rules are limited to page-level layout that UX4G does not provide. */
+
+/* Text size preference.
+   UX4G has no text-size component or token override. Every UX4G type token
+   resolves to a rem value and the package sets no root font-size, so scaling
+   the root font-size scales the whole type scale without overriding tokens. */
+html[data-text-size="large"] {
+  font-size: 112.5%;
+}
+
+html[data-text-size="x-large"] {
+  font-size: 125%;
+}
+
+/* Sidebar navigation.
+   UX4G has no "current page" indicator for sidebar links. */
+.sidebar-link[aria-current="page"] {
+  background: var(--ux4g-bg-primary-soft);
+  color: var(--ux4g-bg-primary-strong);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.sidebar-link[aria-current="page"]:hover,
+.sidebar-link[aria-current="page"]:focus-visible {
+  color: var(--ux4g-bg-primary-strong);
+}
+
+.sidebar-divider {
+  height: var(--ux4g-border-width-sm);
+  margin: var(--ux4g-gap-row-xs) var(--ux4g-gap-column-xs);
+  border: 0;
+  background: var(--ux4g-border-color-neutral-subtle);
+}
+
+/* Page header. */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ux4g-gap-column-l);
+}
+
+.page-header__copy {
+  max-width: 46rem;
+}
+
+.page-header h1 {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: clamp(var(--ux4g-font-size-28), 3vw, var(--ux4g-font-size-36));
+  font-weight: var(--ux4g-font-weight-bold);
+  line-height: var(--ux4g-line-height-36);
+}
+
+.page-header__description {
+  margin: var(--ux4g-gap-row-s) 0 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-16);
+  line-height: var(--ux4g-line-height-24);
+}
+
+.page-header__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: var(--ux4g-gap-column-s);
+}
+
+/* Summary tiles above the screenings table. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ux4g-gap-column-l);
+}
+
+.stat-tile__label {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-semibold);
+  letter-spacing: var(--ux4g-letter-spacing-wider);
+  text-transform: uppercase;
+}
+
+.stat-tile__value {
+  display: block;
+  margin-top: var(--ux4g-gap-row-xs);
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-32);
+  font-weight: var(--ux4g-font-weight-bold);
+  line-height: var(--ux4g-line-height-36);
+}
+
+.stat-tile__hint {
+  display: block;
+  margin-top: var(--ux4g-gap-row-xs);
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+}
+
+/* Screenings toolbar. */
+.table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ux4g-gap-column-m);
+}
+
+.table-toolbar__filters {
+  display: flex;
+  flex: 1 1 18rem;
+  flex-wrap: wrap;
+  gap: var(--ux4g-gap-column-s);
+}
+
+.table-toolbar__meta {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+}
+
+.table-panel {
+  overflow: hidden;
+  padding: 0;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.screenings-table {
+  min-width: 52rem;
+}
+
+.screenings-table th[aria-sort] .ux4g-table-sort-icon {
+  margin-inline-start: var(--ux4g-gap-column-2xs);
+}
+
+.cell-primary {
+  display: grid;
+  gap: var(--ux4g-gap-row-2xs);
+  text-align: start;
+}
+
+.cell-primary strong {
+  color: var(--ux4g-text-neutral-primary);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.cell-primary small {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+}
+
+.cell-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ux4g-gap-column-xs);
+}
+
+.table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ux4g-gap-column-m);
+  padding: var(--ux4g-padding-m) var(--ux4g-padding-l);
+  border-top: var(--ux4g-border-width-sm) solid
+    var(--ux4g-border-color-neutral-subtle);
+}
+
+.table-footer__note {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+}
+
+.empty-panel {
+  text-align: center;
+}
+
+.empty-panel .ux4g-empty-state {
+  padding: var(--ux4g-padding-xl) var(--ux4g-padding-l);
+}
+
+.empty-panel__icon {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  margin: 0 auto var(--ux4g-gap-row-m);
+  place-items: center;
+  border-radius: var(--ux4g-radius-full);
+  background: var(--ux4g-bg-primary-soft);
+  color: var(--ux4g-bg-primary-strong);
+}
+
+.empty-panel__icon svg {
+  width: 1.75rem;
+  height: 1.75rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.empty-panel h2 {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-20);
+  font-weight: var(--ux4g-font-weight-semibold);
+  line-height: var(--ux4g-line-height-28);
+}
+
+.empty-panel p {
+  margin: var(--ux4g-gap-row-s) auto 0;
+  max-width: 32rem;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.empty-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--ux4g-gap-column-s);
+  margin-top: var(--ux4g-gap-row-l);
+}
+
+/* Settings. */
+.settings-group {
+  display: grid;
+  gap: var(--ux4g-gap-row-m);
+}
+
+.settings-group__title {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-20);
+  font-weight: var(--ux4g-font-weight-semibold);
+  line-height: var(--ux4g-line-height-28);
+}
+
+.settings-group__hint {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ux4g-gap-column-l);
+  padding: var(--ux4g-padding-m) 0;
+  border-bottom: var(--ux4g-border-width-sm) solid
+    var(--ux4g-border-color-neutral-subtle);
+}
+
+.settings-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings-row__copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ux4g-gap-row-2xs);
+}
+
+.settings-row__copy strong {
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-16);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.settings-row__copy small {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.settings-row__control {
+  flex: 0 0 auto;
+}
+
+.choice-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ux4g-gap-column-m);
+}
+
+.choice-group .ux4g-radio-content {
+  white-space: nowrap;
+}
+
+/* Guide. */
+.guide-stepper {
+  margin-top: var(--ux4g-gap-row-l);
+}
+
+/* Workaround for a malformed selector in ux4g-web-components@2.1.0.
+   The shipped rule `.ux4g-stepper-center):not(...)` has an unbalanced
+   parenthesis, so the browser drops it and the horizontal connector falls back
+   to the vertical rule. UX4G provides no working alternative here, so the
+   connector is redrawn for this stepper only. */
+.guide-stepper .ux4g-stepper-step:not(:last-child)::after {
+  background-color: var(--ux4g-bg-neutral-subtle);
+  content: "";
+  height: var(--ux4g-border-width-sm);
+  left: 39px;
+  position: absolute;
+  right: calc(var(--ux4g-gap-column-s, 16px) * -1 + 8px);
+  top: 13.5px;
+  width: auto;
+}
+
+.guide-stepper .ux4g-stepper-step.ux4g-stepper-done:not(:last-child)::after {
+  background-color: var(--ux4g-bg-primary-strong);
+}
+
+.guide-stepper .ux4g-stepper-label,
+.guide-stepper .ux4g-stepper-label-success,
+.guide-stepper .ux4g-stepper-label-inprogress {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.guide-stepper .ux4g-stepper-label-inprogress {
+  color: var(--ux4g-text-brand-primary-default);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.guide-stepper .ux4g-stepper-head {
+  gap: var(--ux4g-gap-column-s);
+}
+
+.guide-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  align-items: start;
+  gap: var(--ux4g-gap-column-l);
+}
+
+.guide-aside {
+  position: sticky;
+  top: var(--ux4g-gap-row-l);
+  display: grid;
+  gap: var(--ux4g-gap-row-m);
+}
+
+.checklist {
+  display: grid;
+  gap: var(--ux4g-gap-row-s);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checklist li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ux4g-gap-column-s);
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.checklist__index {
+  display: grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  border-radius: var(--ux4g-radius-full);
+  background: var(--ux4g-bg-primary-soft);
+  color: var(--ux4g-bg-primary-strong);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-bold);
+}
+
+.guide-accordion .ux4g-accordion__body {
+  display: grid;
+  gap: var(--ux4g-gap-row-s);
+  padding-top: var(--ux4g-gap-row-s);
+}
+
+.guide-accordion .ux4g-accordion__body > p {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+.guide-accordion .ux4g-accordion__item {
+  border-radius: var(--ux4g-radius-m);
+}
+
+.guide-accordion .ux4g-accordion__button {
+  gap: var(--ux4g-gap-column-m);
+}
+
+.guide-accordion .ux4g-accordion__button-content {
+  display: grid;
+  gap: var(--ux4g-gap-row-2xs);
+  padding: var(--ux4g-padding-s) var(--ux4g-padding-xs);
+  text-align: start;
+}
+
+.check-index {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--ux4g-radius-full);
+  background: var(--ux4g-bg-neutral-soft);
+  color: var(--ux4g-bg-primary-strong);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-bold);
+}
+
+.ux4g-accordion__button[aria-expanded="true"] .check-index {
+  background: var(--ux4g-bg-primary-soft);
+}
+
+.check-summary {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-regular);
+  line-height: var(--ux4g-line-height-16);
+}
+
+.check-fix {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ux4g-gap-column-s);
+  padding: var(--ux4g-padding-s);
+  border-radius: var(--ux4g-radius-m);
+  background: var(--ux4g-bg-primary-soft);
+  color: var(--ux4g-text-neutral-primary);
+}
+
+.check-fix__label {
+  flex: 0 0 auto;
+  padding: var(--ux4g-padding-2xs) var(--ux4g-gap-column-s);
+  border-radius: var(--ux4g-radius-full);
+  background: var(--ux4g-bg-primary-strong);
+  color: var(--ux4g-text-neutral-inverse);
+  font-size: var(--ux4g-font-size-11);
+  font-weight: var(--ux4g-font-weight-bold);
+  letter-spacing: var(--ux4g-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.check-signal {
+  display: flex;
+  align-items: center;
+  gap: var(--ux4g-gap-column-s);
+}
+
+.check-signal strong {
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-14);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+/* About. */
+.about-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 13rem;
+  align-items: center;
+  gap: var(--ux4g-gap-column-l);
+  background: linear-gradient(
+    110deg,
+    var(--ux4g-bg-neutral-elevated) 0%,
+    var(--ux4g-bg-primary-soft) 100%
+  );
+}
+
+.spec-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ux4g-gap-row-m) var(--ux4g-gap-column-l);
+  margin: 0;
+}
+
+.spec-grid > div {
+  display: grid;
+  gap: var(--ux4g-gap-row-2xs);
+}
+
+.spec-grid dt {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-semibold);
+  letter-spacing: var(--ux4g-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.spec-grid dd {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-16);
+  overflow-wrap: anywhere;
+}
+
+.link-card {
+  display: grid;
+  gap: var(--ux4g-gap-row-s);
+  align-content: start;
+}
+
+.link-card p {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  line-height: var(--ux4g-line-height-20);
+}
+
+/* Profile. */
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ux4g-gap-column-l);
+}
+
+.profile-header__copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--ux4g-gap-row-xs);
+}
+
+.profile-header__copy h2 {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-24);
+  font-weight: var(--ux4g-font-weight-semibold);
+  line-height: var(--ux4g-line-height-32);
+}
+
+.profile-header__copy p {
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-14);
+  overflow-wrap: anywhere;
+}
+
+.profile-avatar-large {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.profile-avatar-large .ux4g-avatar {
+  background: var(--ux4g-bg-primary-soft);
+  color: var(--ux4g-bg-primary-strong);
+  font-size: var(--ux4g-font-size-24);
+  font-weight: var(--ux4g-font-weight-bold);
+  justify-content: center;
+}
+
+.profile-avatar-large .ux4g-avatar img {
+  height: 100%;
+  width: 100%;
+}
+
+/* UX4G sizes .ux4g-avatar img at 100% of the circle. The placeholder image
+   stays in the DOM until a photo is chosen, so it must be removed from layout
+   explicitly or it claims the whole circle and pushes the initials off-centre. */
+.profile-avatar-large .ux4g-avatar img[hidden] {
+  display: none;
+}
+
+.profile-avatar-large .avatar-initials {
+  line-height: 1;
+}
+
+.profile-avatar-large__overlay {
+  position: absolute;
+  right: -0.25rem;
+  bottom: -0.25rem;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: var(--ux4g-radius-full);
+  background: var(--ux4g-bg-primary-strong);
+  color: var(--ux4g-text-neutral-inverse);
+}
+
+.profile-avatar-large__overlay svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--ux4g-gap-column-l);
+  align-items: start;
+}
+
+.field-grid {
+  display: grid;
+  gap: var(--ux4g-gap-row-l);
+}
+
+.field-grid .ux4g-input-container {
+  margin-top: 0;
+  max-width: none;
+}
+
+.field-grid .ux4g-label-m-default {
+  color: var(--ux4g-text-neutral-primary);
+  font-weight: var(--ux4g-font-weight-semibold);
+}
+
+.field-grid .ux4g-input {
+  background: var(--ux4g-bg-neutral-elevated);
+}
+
+.field-grid .ux4g-input:focus-within {
+  border-color: var(--ux4g-bg-primary-strong);
+}
+
+.field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ux4g-gap-column-s);
+}
+
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ux4g-gap-column-l);
+}
+
+.security-grid .settings-row {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: var(--ux4g-gap-row-m);
+  padding: 0;
+  border-bottom: 0;
+}
+
+.readonly-value {
+  display: grid;
+  gap: var(--ux4g-gap-row-2xs);
+  padding: var(--ux4g-padding-s) 0;
+  border-bottom: var(--ux4g-border-width-sm) solid
+    var(--ux4g-border-color-neutral-subtle);
+}
+
+.readonly-value dt {
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+  font-weight: var(--ux4g-font-weight-semibold);
+  letter-spacing: var(--ux4g-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.readonly-value dd {
+  margin: 0;
+  color: var(--ux4g-text-neutral-primary);
+  font-size: var(--ux4g-font-size-16);
+  overflow-wrap: anywhere;
+}
+
+.readonly-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+@media (max-width: 64rem) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .guide-layout,
+  .profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .guide-aside {
+    position: static;
+  }
+
+  .security-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ux4g-gap-row-l);
+  }
+
+  .security-grid .settings-row {
+    padding-bottom: var(--ux4g-padding-m);
+    border-bottom: var(--ux4g-border-width-sm) solid
+      var(--ux4g-border-color-neutral-subtle);
+  }
+
+  .security-grid .settings-row:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .guide-stepper {
+    flex-direction: column;
+    gap: var(--ux4g-gap-row-s);
+  }
+
+  .guide-stepper .ux4g-stepper-step {
+    width: 100%;
+  }
+
+  .guide-stepper .ux4g-stepper-step:not(:last-child)::after {
+    height: calc(100% - 2.45rem);
+    left: var(--ux4g-space-10);
+    right: auto;
+    top: 3.25rem;
+    width: var(--ux4g-border-width-sm);
+  }
+}
+
+@media (max-width: 48rem) {
+  .page-header {
+    flex-direction: column;
+  }
+
+  .page-header__actions {
+    width: 100%;
+  }
+
+  .page-header__actions .ux4g-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .settings-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--ux4g-gap-row-m);
+  }
+
+  .settings-row__control {
+    width: 100%;
+  }
+
+  .about-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 34rem) {
+  .stat-grid,
+  .spec-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .profile-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .table-footer {
+    justify-content: center;
+  }
+}

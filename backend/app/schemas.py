@@ -32,11 +32,18 @@ class ModuleResult(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
+    """What one analysis found, and the advisory that travels with it.
+
+    ``notice`` is :data:`app.analysis.SYNTHETIC_IMAGE_NOTICE` on every
+    answer: these checks are advisory, not an identity verdict.
+    """
+
     mode: Literal["photo", "scan"]
     image: ImageDimensions
     trim_box: list[int] | None
     overall_pass: bool
     modules: list[ModuleResult]
+    notice: str
 
 
 class ScreeningCreatedResponse(BaseModel):

@@ -1,0 +1,33 @@
+# The build context is the backend directory. Everything listed here is left
+# out of the context, so it never reaches an image layer.
+
+# Tests and dev-only dependencies: not part of the service.
+tests/
+requirements-dev.txt
+Procfile
+
+# Local virtual environments. A Windows .venv reaching a Linux image is a
+# build failure at best and a wrong interpreter at worst.
+.venv/
+venv/
+env/
+
+# Python caches and test runs.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest-tmp/
+.pytest_tmp/
+
+# Local runtime state. A database, its evidence blobs and their keys belong to
+# one deployment and are never built into an image.
+*.db
+*.sqlite3
+evidence/
+
+# Deployment and documentation files the service does not read at runtime.
+.gcloudignore
+README.md
+.env
+.env.*

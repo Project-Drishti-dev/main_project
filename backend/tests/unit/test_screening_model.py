@@ -12,12 +12,15 @@ and this file is that plus the four claims the row is worth having:
   ``sqlite://`` is a per-thread one, so a second thread would find an empty
   database rather than the row -- which is asserted here by reading it from
   a thread, and is what ``build_engine``'s ``StaticPool`` answers.
-- **the row is the sixteen columns the task names, in that order, and no
+- **the row is the eighteen columns its tasks name, in that order, and no
   others.** The claim is held against the table's own column list rather
   than against the model class, so a column added for a field nobody named
-  -- an officer's decision, an outcome -- fails here.
+  -- an officer's decision, an outcome -- fails here.  19.6 appended
+  ``image_blob_ref``, the address the document was stored at, and 26.8
+  appended ``request_id``, the correlation id of the asking request.
 - **a row exists before the analysis does.** 11.1 hands back an id
-  immediately, so the nine result columns and ``deleted_at`` are ``None`` on
+  immediately, so the nine result columns, ``request_id`` and ``deleted_at``
+  are ``None`` on
   a row that has only been uploaded, and only ``document_type``,
   ``filename`` and the two dimensions are required.
 """
@@ -38,6 +41,7 @@ from sqlalchemy.schema import CreateTable
 
 from app.schemas import AnalysisResponse, ModuleResult
 from app.storage import db
+from app.storage.blob_store import BlobRef
 from app.storage.models import (
     DEFAULT_SCREENING_STATUS,
     NAMING_CONVENTION,
@@ -50,7 +54,8 @@ from app.storage.models import (
 )
 
 
-#: The columns 8.4 names, in the order it names them.  Held as one tuple so
+#: The columns 8.4 names, in the order it names them, with 19.6's
+#: ``image_blob_ref`` beside the two it sits next to.  Held as one tuple so
 #: the table's own column list is checked against a list written once here:
 #: restating the model's fields beside the model's fields would pass on a
 #: table that had grown one.
@@ -65,12 +70,14 @@ THE_TASK_S_COLUMNS = (
     "filename",
     "image_width",
     "image_height",
+    "image_blob_ref",
     "ruleset_version",
     "model_versions",
     "quality",
     "flags",
     "summary",
     "deleted_at",
+    "request_id",
 )
 
 #: The columns a caller cannot write a row without: what the upload carried.
@@ -93,6 +100,7 @@ FILLED_BY_A_STAGE = (
     "flags",
     "summary",
     "deleted_at",
+    "request_id",
 )
 
 #: The three ORMs-written defaults, named so the "nothing else is written"
@@ -259,6 +267,23 @@ def test_the_table_carries_exactly_the_columns_the_task_names() -> None:
     assert tuple(Screening.__table__.columns.keys()) == THE_TASK_S_COLUMNS
 
 
+def test_the_reference_column_is_the_only_one_a_blob_address_can_reach() -> None:
+    """19.6: a row names the document rather than holding it.
+
+    Held against the column list rather than against one column, so a second
+    column added later for a document is a failure here rather than something
+    a reader has to notice.
+    """
+    image_columns = [
+        name for name in THE_TASK_S_COLUMNS if "image" in name or "blob" in name
+    ]
+
+    assert image_columns == ["image_width", "image_height", "image_blob_ref"]
+    assert (
+        Screening.__table__.columns["image_blob_ref"].nullable is True
+    ), "a column added to a populated table cannot be required"
+
+
 def test_the_table_is_named_for_the_table_the_task_and_routes_use() -> None:
     """8.5 added ``audit_events`` beside this one, on the same base, and the
     claim is now that the schema holds exactly the tables the tasks name --
@@ -295,11 +320,43 @@ def test_only_the_columns_the_task_names_are_required(
 
 def test_no_column_holds_image_bytes() -> None:
     """``AGENTS.md``'s "no image bytes in the database": the schema has no
-    binary column for them to arrive in."""
+    binary column for them to arrive in, and 19.6's column is text naming a
+    blob rather than a column carrying one."""
     assert not any(
         isinstance(column.type, LargeBinary)
         for column in Screening.__table__.columns
     )
+    assert not isinstance(
+        Screening.__table__.columns["image_blob_ref"].type, LargeBinary
+    )
+
+
+def test_the_reference_column_holds_the_token_and_nothing_else(
+    sessions: sessionmaker[Session],
+) -> None:
+    """One spelling, round-tripped through the store's own reader.
+
+    The column is written by the flow with
+    :meth:`~app.storage.blob_store.BlobRef.to_wire`, so a value that
+    :meth:`~app.storage.blob_store.BlobRef.from_wire` refuses is not one this
+    table should ever hold -- and ``None`` is what a row screened before 19.6
+    carries.
+    """
+    reference = BlobRef(digest="ab" * 32, size=4096)
+
+    with sessions() as session:
+        session.add(_an_upload(image_blob_ref=reference.to_wire()))
+        session.add(_an_upload(document_type="visa", filename="v.png"))
+        session.commit()
+
+    with sessions() as session:
+        stored = session.execute(select(Screening.image_blob_ref)).scalars().all()
+
+    assert sorted(value for value in stored if value is not None) == [
+        reference.to_wire()
+    ]
+    assert None in stored
+    assert BlobRef.from_wire(reference.to_wire()) == reference
 
 
 # --- a row exists before the analysis does -------------------------------
@@ -341,6 +398,12 @@ def test_the_only_columns_the_orm_writes_are_its_three_defaults(
             "image_width": 1240,
             "image_height": 1754,
             "status": DEFAULT_SCREENING_STATUS,
+            # 19.6's column, absent rather than empty: this row was
+            # written with no evidence store wired.
+            "image_blob_ref": None,
+            # 26.8's column, absent for the same reason: nothing bound a
+            # correlation id around this write.
+            "request_id": None,
         }
     )
     for name in ("id", "created_at"):

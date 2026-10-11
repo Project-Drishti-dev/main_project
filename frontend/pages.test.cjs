@@ -11,6 +11,7 @@ const PAGE_FILES = [
   "guide.html",
   "about.html",
   "profile.html",
+  "results.html",
 ];
 const NAV_LINKS = [
   ["./home.html", "Overview"],
@@ -19,6 +20,7 @@ const NAV_LINKS = [
   ["./settings.html", "Settings"],
   ["./guide.html", "Guide"],
   ["./about.html", "About"],
+  ["./results.html", "Results"],
 ];
 const NAV_ACTIVE_FOR = {
   "home.html": "home",
@@ -27,6 +29,7 @@ const NAV_ACTIVE_FOR = {
   "guide.html": "guide",
   "about.html": "about",
   "profile.html": "profile",
+  "results.html": "results",
 };
 
 function readFront(fileName) {
@@ -51,7 +54,12 @@ function createStorage(initial = {}) {
   };
 }
 
-function loadPreferences({ storage = createStorage(), matchMedia } = {}) {
+function loadPreferences({
+  storage = createStorage(),
+  matchMedia,
+  denied = false,
+  absent = false,
+} = {}) {
   const root = {
     attributes: {},
     setAttribute(name, value) {
@@ -61,7 +69,23 @@ function loadPreferences({ storage = createStorage(), matchMedia } = {}) {
       return this.attributes[name] ?? null;
     },
   };
-  const window = { localStorage: storage };
+  const window = {};
+  if (absent === true) {
+    // No property at all, which is what a window reports when storage is
+    // switched off rather than merely failing a write.
+  } else if (denied === true) {
+    // Reading the property itself raises, which is what a browser does
+    // for an opaque origin or a document whose site data is blocked.
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        const failure = new Error("storage is blocked for this document");
+        failure.name = "SecurityError";
+        throw failure;
+      },
+    });
+  } else {
+    window.localStorage = storage;
+  }
   if (matchMedia) window.matchMedia = matchMedia;
 
   vm.runInNewContext(readFront("preferences.js"), {
@@ -167,6 +191,34 @@ test("preferences fall back to defaults when storage is unavailable", () => {
   assert.equal(root.getAttribute("data-theme"), "dark");
 });
 
+test("preferences survive a window whose localStorage cannot be read at all", () => {
+  const { root, window } = loadPreferences({ denied: true });
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(window.DRISHTI_PREFERENCES.read())),
+    { theme: "light", textSize: "default" },
+  );
+  assert.equal(root.getAttribute("data-theme"), "light");
+
+  window.DRISHTI_PREFERENCES.set({ theme: "dark", textSize: "large" });
+  assert.equal(root.getAttribute("data-theme"), "dark");
+
+  window.DRISHTI_PREFERENCES.reset();
+  assert.equal(root.getAttribute("data-theme"), "light");
+});
+
+test("preferences survive a window that carries no localStorage at all", () => {
+  const { root, window } = loadPreferences({ absent: true });
+
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(window.DRISHTI_PREFERENCES.read())),
+    { theme: "light", textSize: "default" },
+  );
+
+  window.DRISHTI_PREFERENCES.set({ textSize: "x-large" });
+  assert.equal(root.getAttribute("data-text-size"), "x-large");
+});
+
 test("resetting preferences restores the defaults", () => {
   const { root, window } = loadPreferences();
   window.DRISHTI_PREFERENCES.set({ theme: "dark", textSize: "large" });
@@ -179,56 +231,48 @@ test("resetting preferences restores the defaults", () => {
 
 /* ---------- shared page shell ---------- */
 
-test("every page ships the shared shell, theme default and local UX4G assets", () => {
+test("the shared shell ships the theme default and the local UX4G assets", () => {
+  const shell = readFront("shell.html");
+  assert.match(shell, /<html lang="en" data-theme="light">/);
+  assert.match(shell, /node_modules\/ux4g-web-components\/styles\/ux4g\.css/);
+  assert.match(
+    shell,
+    /node_modules\/ux4g-web-components\/dist\/runtime\/design-system\.js/,
+  );
+  assert.doesNotMatch(shell, /cdn\.ux4g\.gov\.in/);
+  assert.match(shell, /href=".\/pages\.css"/);
+  assert.match(shell, /src=".\/preferences\.js"/);
+  assert.match(shell, /id="sidebar-toggle"/);
+  assert.match(shell, /aria-label="Workspace sidebar"/);
+  assert.match(shell, /class="workspace-footer"/);
   for (const fileName of PAGE_FILES) {
-    const html = readFront(fileName);
-    assert.match(html, /<html lang="en" data-theme="light">/, fileName);
-    assert.match(html, /node_modules\/ux4g-web-components\/styles\/ux4g\.css/, fileName);
-    assert.match(
-      html,
-      /node_modules\/ux4g-web-components\/dist\/runtime\/design-system\.js/,
-      fileName,
-    );
-    assert.doesNotMatch(html, /cdn\.ux4g\.gov\.in/, fileName);
-    assert.match(html, /href="\.\/pages\.css"/, fileName);
-    assert.match(html, /src="\.\/preferences\.js"/, fileName);
-    assert.match(html, /src="\.\/(home|pages)\.js"/, fileName);
-    assert.match(html, /id="sidebar-toggle"/, fileName);
-    assert.match(html, /aria-label="Workspace sidebar"/, fileName);
-    assert.match(html, /class="workspace-footer"/, fileName);
+    assert.match(readFront(fileName), /\{\{content\}\}/, fileName);
   }
 });
 
-test("secondary pages load the shared page script and the demo keeps home.js", () => {
-  assert.match(readFront("home.html"), /src="\.\/home\.js"/);
-  for (const fileName of PAGE_FILES.filter((name) => name !== "home.html")) {
-    assert.match(readFront(fileName), /src="\.\/pages\.js"/, fileName);
-  }
+test("the shell loads the shared page script and the pages keep their own", () => {
+  assert.match(readFront("shell.html"), /src=".\/pages\.js"/);
+  assert.match(readFront("home.html"), /src=".\/home\.js"/);
+  assert.match(readFront("screenings.html"), /src=".\/format\.js"/);
+  assert.match(readFront("screenings.html"), /src=".\/screenings-list\.js"/);
 });
 
-test("every page exposes the same navigation and marks only itself current", () => {
+test("the shell holds the navigation and every page names the section it is in", () => {
+  const shell = readFront("shell.html");
+  for (const [href, label] of NAV_LINKS) {
+    assert.ok(shell.includes(href), "the shell should link to " + href);
+    assert.ok(shell.includes(label), "the shell should label " + href);
+  }
   for (const fileName of PAGE_FILES) {
     const html = readFront(fileName);
-    for (const [href, label] of NAV_LINKS) {
-      assert.ok(html.includes(label), `${fileName} should link to ${label}`);
-      assert.ok(
-        html.includes(`href="${href}"`),
-        `${fileName} should link to ${href}`,
-      );
-    }
-    const currentMatches = html.match(/aria-current="page"/g) ?? [];
-    const sidebarCurrent = (html.match(
-      /class="sidebar-link[^"]*"[\s\S]{0,220}?aria-current="page"/g,
-    ) ?? []).length;
-    assert.equal(sidebarCurrent, 1, `${fileName} should mark one nav item`);
     assert.ok(
-      currentMatches.length >= 1,
-      `${fileName} should mark the current page`,
+      html.includes("{{activeNavKey}}" + NAV_ACTIVE_FOR[fileName]),
+      fileName + " should name the " + NAV_ACTIVE_FOR[fileName] + " section",
     );
-    assert.match(
-      html,
-      new RegExp(`data-nav="${NAV_ACTIVE_FOR[fileName]}"`),
-      `${fileName} should mark its own nav item`,
+    assert.equal(
+      (html.match(/class="sidebar-link[^"]*"[\s\S]{0,220}?aria-current="page"/g) ?? []).length,
+      0,
+      fileName + " marks a nav item the shell owns",
     );
   }
 });
@@ -248,7 +292,7 @@ test("no page collects credentials or offers a sign-out", () => {
 test("alerts use the documented UX4G composition rather than custom markup", () => {
   for (const fileName of PAGE_FILES) {
     const html = readFront(fileName);
-    const alerts = html.match(/<div class="ux4g-alert[^"]*"[^>]*>/g) ?? [];
+    const alerts = html.match(/<div class="ux4g-alert(?:\s[^"]*)?"[^>]*>/g) ?? [];
     for (const alert of alerts) {
       assert.match(alert, /class="ux4g-alert ux4g-alert-(info|success|warning|error)"/);
     }
@@ -322,28 +366,23 @@ test("hidden rows and panels stay hidden under the installed UX4G stylesheet", (
 
 /* ---------- page content ---------- */
 
-test("previous screenings renders a table of sample records with filters", () => {
+test("previous screenings renders an empty history table with filters", () => {
   const html = readFront("screenings.html");
 
   assert.match(html, /<table class="ux4g-table ux4g-table-m/);
   assert.match(html, /<caption class="visually-hidden">/);
-  assert.equal((html.match(/<tbody id="screenings-body">/) ?? []).length, 1);
-  assert.equal((html.match(/<tr data-result="/g) ?? []).length, 6);
+  assert.match(html, /<tbody id="screenings-body"><\/tbody>/);
+  assert.equal((html.match(/<tr data-result="/g) ?? []).length, 0);
   assert.equal((html.match(/<th scope="col"/g) ?? []).length, 7);
-  assert.match(html, /ux4g-tag-filled-success/);
-  assert.match(html, /ux4g-tag-filled-warning/);
   assert.match(html, /id="screening-search"/);
-  assert.match(html, /data-filter="all"/);
-  assert.match(html, /data-filter="pass"/);
-  assert.match(html, /data-filter="attention"/);
+  for (const band of ["all", "low", "review", "high"]) {
+    assert.match(html, new RegExp('data-filter="' + band + '"'));
+  }
   assert.match(html, /id="screenings-empty"[^>]*hidden/);
   assert.match(html, /ux4g-empty-state/);
   assert.match(html, /id="result-count"[^>]*aria-live="polite"/);
   assert.match(html, /class="ux4g-pagination/);
-  assert.match(html, /<time datetime="2026-09-30T09:12">/);
-  assert.match(html, /Sample data\./);
 });
-
 test("settings offers working theme and text size controls plus placeholder switches", () => {
   const html = readFront("settings.html");
 

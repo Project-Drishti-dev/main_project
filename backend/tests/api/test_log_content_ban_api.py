@@ -72,11 +72,28 @@ BANNED = {
 
 #: The fields a call site may hand to ``log_event``.  Each is vocabulary
 #: this repository chose -- a method, the handler that answered, a status, a
-#: duration, a module's name, a row's id -- and none of them is data a caller
+#: duration, a module's name, a row's id, a window in days, a count, and the
+#: addresses a retention sweep removed -- and none of them is data a caller
 #: supplied or a document carried.  Adding one is a decision to make here;
 #: adding a payload is not, and this set is where the two differ.
 ALLOWED_FIELDS = frozenset(
-    {"elapsed_ms", "handler", "method", "module", "screening_id", "status"}
+    {
+        "deleted",
+        "deleted_count",
+        "elapsed_ms",
+        "flags_found",
+        "handler",
+        "hard_failed",
+        "kept",
+        "method",
+        "module",
+        "outcome",
+        "retention_days",
+        "screening_id",
+        "status",
+        "tier",
+        "tiers_run",
+    }
 )
 
 #: ``log_event``'s own two options, which are not fields -- they steer the
@@ -358,7 +375,13 @@ def test_a_screened_document_carries_none_of_its_ocr(client, logged, sessions):
     lines = logged()
 
     assert response.status_code == 200
-    assert [line["message"] for line in lines] == ["http_request"]
+    # Named, and 26.8's two metrics included, so an empty capture cannot
+    # pass this as a clean bill of health.
+    assert [line["message"] for line in lines] == [
+        "cascade_tier_latency",
+        "cascade_outcome",
+        "http_request",
+    ]
     assert _carried_by(lines) == []
 
 

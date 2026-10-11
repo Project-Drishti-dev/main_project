@@ -10,7 +10,9 @@ mapped classes.
 
 **A row records what was measured and decides nothing.**  Every column is one
 of three kinds: something the caller handed over (``document_type``,
-``filename`` and the two dimensions), something a stage wrote when it
+``filename``, the two dimensions, since 19.6 the address the document itself
+was stored at, and since 26.8 the correlation id of the request that asked
+for the row), something a stage wrote when it
 finished (``score``, ``band``, ``mode``, ``flags``, ``quality``,
 ``model_versions``, ``ruleset_version``, ``summary``), or one of the two
 lifecycle stamps (``created_at``, ``deleted_at``).  There is no column for
@@ -80,8 +82,9 @@ that walk exists to protect.
 
 - :data:`Base` is the service's only declarative base, and every table is
   mapped against it.
-- ``screenings`` carries exactly the sixteen columns the task names, in the
-  order it names them.
+- ``screenings`` carries exactly the eighteen columns its tasks name, in the
+  order they name them: 8.4's sixteen, then the ``image_blob_ref`` 19.6
+  added and the ``request_id`` 26.8.
 - ``audit_events`` carries exactly the ten columns its tasks name, in the
   order they name them: 8.5's eight, then the ``record_salt`` and
   ``batch_index`` 10.2 added, then ``created_at``.
@@ -120,11 +123,13 @@ that walk exists to protect.
   length and PostgreSQL refuses an over-long value, so a length written here
   is a limit on one backend and a decoration on the other.  The closed
   vocabularies are the constants below and the writers' business.
-- No column holds image bytes, and no column is written by anything in this
-  module other than the defaults declared above: ``id``, ``created_at`` and
-  ``status`` on ``screenings``, ``id`` and ``created_at`` on ``audit_events``,
-  ``sequence`` and ``anchored_at`` on ``ledger_entries``, and ``id`` and
-  ``created_at`` on ``traveler_cases``.
+- No column holds image bytes: the document itself is an encrypted blob named
+  by the SHA-256 of its own plaintext, and the row carries that address and
+  nothing else (19.6).  No column is written by anything in this module other
+  than the defaults declared above: ``id``, ``created_at`` and ``status`` on
+  ``screenings``, ``id`` and ``created_at`` on ``audit_events``, ``sequence``
+  and ``anchored_at`` on ``ledger_entries``, and ``id`` and ``created_at`` on
+  ``traveler_cases``.
 """
 
 import uuid
@@ -292,6 +297,14 @@ class Screening(Base):
     #: The pixel height of the uploaded image.
     image_height: Mapped[int]
 
+    #: Where the document itself is: the one token
+    #: :meth:`app.storage.blob_store.BlobRef.to_wire` writes -- the SHA-256
+    #: of the plaintext, the size it opens to, and none of the document
+    #: (19.6).  Nullable because a column added to a table that already
+    #: holds rows cannot be required, and because a screening written with
+    #: no store wired carries no reference.
+    image_blob_ref: Mapped[str | None] = mapped_column(Text)
+
     #: The ruleset the score was produced under, or ``None`` while nothing
     #: has been scored.  Not defaulted from
     #: :data:`app.version.RULESET_VERSION`, which would claim a ruleset for a
@@ -316,6 +329,18 @@ class Screening(Base):
 
     #: When the row was soft-deleted, or ``None`` while it is live.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    #: The correlation id of the request that asked for this screening (26.8)
+    #: -- the value every line that run wrote already carried, so a row found
+    #: in the database can be joined to its own log.  Last because the task's
+    #: order is the order, and :attr:`deleted_at` was already last.
+    #:
+    #: **Nullable, and ``None`` is an absence rather than a value.**  A
+    #: screening run outside any request has no id to stamp, and a column
+    #: added to a table that already holds rows cannot be required.  No
+    #: maximum length, on :attr:`filename`'s reasoning: a limit written here
+    #: is a limit on PostgreSQL and a decoration on SQLite.
+    request_id: Mapped[str | None] = mapped_column(Text)
 
 
 class AuditEvent(Base):

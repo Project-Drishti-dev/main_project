@@ -17,16 +17,34 @@ ALLOWED_IMAGE_TYPES: Final = {
 }
 ALLOWED_MODES: Final = {"auto", "photo", "scan"}
 
+#: The advisory every analysis answers with, spelled once here so the route,
+#: the contract and the tests cannot drift. It travels beside the findings
+#: rather than replacing any of them.
+SYNTHETIC_IMAGE_NOTICE: Final = (
+    "Synthetic images only. These checks measure image quality and do not "
+    "verify identity, so never upload a real identity document."
+)
+
 
 def analyze_uploaded_image(
     contents: bytes,
     content_type: str | None,
     requested_mode: str = "auto",
 ) -> dict[str, Any]:
-    return analyze_image(
-        read_uploaded_image(contents, content_type, requested_mode),
-        requested_mode=requested_mode,
-    )
+    """The engine's findings for one upload, with the notice beside them.
+
+    :param contents: the uploaded bytes; ``content_type`` is what the client
+        declared and ``requested_mode`` its mode claim.
+    :returns: every key :func:`analyze_image` answers with, and
+        :data:`SYNTHETIC_IMAGE_NOTICE` under ``notice``.
+    """
+    return {
+        **analyze_image(
+            read_uploaded_image(contents, content_type, requested_mode),
+            requested_mode=requested_mode,
+        ),
+        "notice": SYNTHETIC_IMAGE_NOTICE,
+    }
 
 
 def read_uploaded_image(

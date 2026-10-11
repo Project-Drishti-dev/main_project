@@ -15,6 +15,47 @@ html[data-text-size="x-large"] {
   font-size: 125%;
 }
 
+/* Contrast corrections.
+   UX4G 2.1.0 pairs each soft alert background with the 600 step of its own
+   ramp, which lands at 1.9:1 to 2.8:1. These three rules move the failing
+   pairs to the step that clears 4.5:1 in the theme being rendered. Palette
+   tokens only: no new colour and no root override block. */
+.ux4g-alert-warning {
+  --ux4g-alert-text: var(--ux4g-color-orange-800);
+}
+
+.ux4g-alert-info {
+  --ux4g-alert-text: var(--ux4g-color-cyan-800);
+}
+
+html[data-theme="dark"] .ux4g-alert-warning {
+  --ux4g-alert-text: var(--ux4g-color-orange-50);
+}
+
+html[data-theme="dark"] .ux4g-alert-info {
+  --ux4g-alert-text: var(--ux4g-color-cyan-200);
+}
+
+/* UX4G draws helper text at the 500 neutral step, 4.35:1 on the 100 step.
+   The secondary step is the nearest one that clears 4.5:1. */
+.ux4g-input-helper {
+  color: var(--ux4g-text-neutral-secondary);
+}
+
+/* The current step's number is painted at the 300 neutral step, 1.29:1.
+   It is the only cue for which step is current, so it has to be readable. */
+.ux4g-stepper-head-icon-active {
+  color: var(--ux4g-text-neutral-secondary);
+}
+
+/* UX4G writes the completed stepper icon's outline as the 300 neutral ramp
+   step by name, so it stays light in the dark theme and lands on the same
+   neutral-800 as the step behind it. `border-color-neutral-strong` is 3.19:1
+   against that step, which is the WCAG minimum for a non-text boundary. */
+.ux4g-stepper-completed .ux4g-stepper-head-icon {
+  border-color: var(--ux4g-border-color-neutral-strong);
+}
+
 /* Sidebar navigation.
    UX4G has no "current page" indicator for sidebar links. */
 .sidebar-link[aria-current="page"] {
@@ -64,8 +105,9 @@ html[data-text-size="x-large"] {
 
 .page-header__actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-wrap: wrap;
+  min-width: 0;
   gap: var(--ux4g-gap-column-s);
 }
 
@@ -615,6 +657,7 @@ html[data-text-size="x-large"] {
 
 .field-grid {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--ux4g-gap-row-l);
 }
 

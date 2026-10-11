@@ -32,10 +32,11 @@
   const chooseAnotherButton = document.getElementById("choose-another-image");
   const startScreeningButton = document.getElementById("start-screening");
   const metricCards = Array.from(document.querySelectorAll(".metric-card"));
-  const apiBaseUrl =
-    typeof window.DRISHTI_CONFIG?.apiBaseUrl === "string"
-      ? window.DRISHTI_CONFIG.apiBaseUrl.trim().replace(/\/+$/, "")
-      : "";
+  const api = window.DRISHTI_API;
+  const apiBaseUrl = api.readApiBaseUrl();
+  // D165 owns every sentence about the connection, this one included: a page
+  // that writes its own would be a second home for the same words.
+  const status = window.DRISHTI_STATUS;
 
   const EXPECTED_MODULES = new Set([
     "sharpness",
@@ -65,12 +66,6 @@
   let previewUrl = null;
   let activeModal = null;
   let isAnalyzing = false;
-
-  startScreeningButton.addEventListener("click", () => {
-    showSourceChooser();
-    activeModal = screeningModal;
-    setTimeout(() => uploadButton.focus(), 0);
-  });
 
   sidebarToggle.addEventListener("click", () => {
     const expanded = sidebar.classList.toggle("is-expanded");
@@ -146,8 +141,7 @@
   runButton.addEventListener("click", async () => {
     if (!selectedFile || isAnalyzing) return;
     if (!apiBaseUrl) {
-      fileError.textContent =
-        "The quality API is not configured for this site yet.";
+      fileError.textContent = status.label("unconfigured");
       return;
     }
 
@@ -168,7 +162,7 @@
     clearMetricResults();
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/analyze`, {
+      const response = await api.request("/api/analyze", {
         method: "POST",
         body: formData,
       });
@@ -177,15 +171,6 @@
         payload = await response.json();
       } catch {
         payload = null;
-      }
-
-      if (!response.ok) {
-        const apiMessage = payload?.error?.message;
-        fileError.textContent =
-          typeof apiMessage === "string" && apiMessage.trim()
-            ? apiMessage
-            : `The quality API returned an error (${response.status}).`;
-        return;
       }
 
       if (!isAnalysisResponse(payload)) {
@@ -200,9 +185,10 @@
       document.body.style.overflow = "hidden";
       activeModal = resultsModal;
       resultsCloseButton.focus();
-    } catch {
-      fileError.textContent =
-        "Could not connect to the quality API. Make sure the local backend is running, then try again.";
+    } catch (error) {
+      // api.js composes the one refusal no server authored and quotes the
+      // envelope for the rest, so a page has no message of its own here.
+      fileError.textContent = error.message;
     } finally {
       isAnalyzing = false;
       analysisStatus.textContent = "";

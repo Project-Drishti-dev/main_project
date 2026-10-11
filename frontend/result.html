@@ -1,0 +1,39 @@
+{{pageTitle}}Screening result
+{{pageDescription}}Prototype result view for one screened document in the DRISHTI demo. No screening is loaded yet.
+{{pageHeading}}Screening result
+{{activeNavKey}}screenings
+{{content}}
+<section class="page-header" aria-labelledby="result-title">
+  <div class="page-header__copy">
+    <p class="eyebrow">SCREENING RESULT</p>
+    <h1 id="result-title">Screening result</h1>
+    <p class="page-header__description">
+      The findings, the score and where each one sits on the document. This
+      page is a skeleton: the tasks after 23.1 fill it in, and nothing is
+      loaded yet.
+    </p>
+  </div>
+</section>
+
+<!-- G8: the seven skeleton shapes only carry size and colour inside
+     .ux4g-application-submission, so these draw nothing until the rule
+     that task owes lands. D181: hidden is the starting state, because a
+     page opened on a finished screening has nothing to wait for. -->
+<div
+  class="ux4g-d-flex ux4g-flex-column ux4g-gap-y-l"
+  id="result-loading"
+  aria-busy="false"
+  hidden
+>
+  <div class="ux4g-skeleton-title"></div>
+  <div class="ux4g-skeleton-subtitle"></div>
+  <div class="ux4g-skeleton-main"></div>
+  <div class="ux4g-skeleton-sidebar-card"></div>
+</div>
+
+<div id="result-surface"></div>
+{{/content}}
+{{overlays}}
+{{/overlays}}
+{{pageScripts}}
+{{/pageScripts}}

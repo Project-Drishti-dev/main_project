@@ -114,6 +114,10 @@
                   "title": "Modules",
                   "type": "array"
                 },
+                "notice": {
+                  "title": "Notice",
+                  "type": "string"
+                },
                 "overall_pass": {
                   "title": "Overall Pass",
                   "type": "boolean"
@@ -138,7 +142,8 @@
                 "image",
                 "trim_box",
                 "overall_pass",
-                "modules"
+                "modules",
+                "notice"
               ],
               "title": "AnalysisResponse",
               "type": "object"

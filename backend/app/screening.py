@@ -8,6 +8,22 @@ on the row, and emits ``analysis_completed`` carrying that row's own columns.
 Rationale for the events and for the versions beside them:
 ``docs/DECISIONS.md`` D66, D67, D68 and D69.
 
+**What the run cost, and how the run ended, are metrics rather than events
+(26.8).**  :mod:`app.metrics` writes one line per tier the cascade ran and
+one naming how the whole of it ended, off a monotonic clock the flow reads
+itself; none of it reaches the trail, for the reason a score is scaled there
+(D48).  The same run stamps the request's correlation id on the row, read off
+the ambient binding rather than off the inbound header, so the row a reader
+finds in the database and the lines the same run wrote share one value.
+
+**The upload is stored, and only its address is kept.** 19.6 hands
+:func:`run_screening` the bytes an officer uploaded and the
+:class:`~app.storage.blob_store.EvidenceStore` to store them in; the flow
+writes the blob and puts the one token
+:meth:`~app.storage.blob_store.BlobRef.to_wire` spells on the row, so no row in
+this service holds the document.  A caller that wires no store stores nothing
+and the row carries ``None`` -- the flow never keeps a copy of its own.
+
 **The reader sits beside the writer, and that is the point.**
 :func:`screening_contributions` is the one place a stored row is asked what it
 scored, so the spelling of the ``flags`` column is written down once, by
@@ -18,6 +34,7 @@ two could disagree about the score without either noticing.
 
 import dataclasses
 import datetime
+import time
 import uuid
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -25,12 +42,14 @@ from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app import metrics
 from app.audit.emit import emit
 from app.audit.event_types import (
     ANALYSIS_COMPLETED,
     SCREENING_CREATED,
     TIER_COMPLETED,
 )
+from app.logging_config import current_request_id
 from app.pipeline.tier0 import document, runner
 from app.risk.engine import RiskResult, compute_risk
 from app.risk.flags import FlagValueError
@@ -42,6 +61,7 @@ from app.risk.weightsets.loader import (
     WeightsetError,
     load_weightset,
 )
+from app.storage.blob_store import BlobRef, EvidenceStore
 from app.storage.models import SCREENING_STATUSES, Screening
 from app.storage.repository import ScreeningRepository
 
@@ -101,6 +121,8 @@ def run_screening(
     image: Any,
     document_type: str,
     filename: str,
+    document: bytes | None = None,
+    evidence_store: EvidenceStore | None = None,
     reference_date: datetime.date | None = None,
     parsed_document: document.MrzDocument | None = None,
     watchlist: Watchlist | None = None,
@@ -117,6 +139,13 @@ def run_screening(
         row and handed to the runner as a claim (``D16``).
     :param filename: the name the upload arrived under.  **Stored on the row
         and carried into no event and no payload.**
+    :param document: the uploaded bytes, as they arrived.  Stored as an
+        encrypted blob and not kept anywhere else; ``None`` for a caller that
+        wired no store (19.6).
+    :param evidence_store: where ``document`` is stored, or ``None`` to store
+        nothing.  **A document with no store beside it is refused rather than
+        dropped**, so a caller cannot ask for a screening and lose the page
+        it was screened from.
     :param reference_date: the day Tier 0's date rules are measured against,
         or ``None`` for a caller that injected none.
     :param parsed_document: the caller's parse of this same page, which is
@@ -132,14 +161,18 @@ def run_screening(
     :raises WeightsetError: when ``weightset`` names no readable file.  The
         ``screening_created`` and ``tier_completed`` events are already in the
         trail by then, which is what "written before the score" means.
-    :raises ValueError: whatever the runner, the weightset loader or the
-        engine refuse, propagated rather than swallowed.
+    :raises ValueError: when ``document`` is given without ``evidence_store``,
+        whatever the runner, the weightset loader or the engine refuse,
+        propagated rather than swallowed.
     """
     height, width = image.shape[:2]
     columns = {"image_width": int(width), "image_height": int(height)}
+    reference = _stored_reference(evidence_store, document)
     created = ScreeningRepository(sessions).create(
         document_type=document_type,
         filename=filename,
+        image_blob_ref=None if reference is None else reference.to_wire(),
+        request_id=current_request_id(),
         **columns,
     )
     emit(
@@ -170,6 +203,31 @@ def run_screening(
     return row
 
 
+def _stored_reference(
+    evidence_store: EvidenceStore | None, document: bytes | None
+) -> BlobRef | None:
+    """The document stored as an encrypted blob, and the address it answers.
+
+    :param evidence_store: where the document is stored, or ``None``.
+    :param document: the uploaded bytes, or ``None``.
+    :returns: the :class:`~app.storage.blob_store.BlobRef` the document was
+        written under, or ``None`` when neither was given.
+    :raises ValueError: when one was given without the other.  A document no
+        store was given would be discarded while the row claimed a screening,
+        and a store with no document has nothing to write -- so the pair is
+        required together rather than half-honoured.
+    """
+    if (evidence_store is None) != (document is None):
+        raise ValueError(
+            "a screening is given the uploaded document and the store to "
+            "write it in together, or neither: storing nothing while "
+            "answering with a screening id would lose the document"
+        )
+    if evidence_store is None:
+        return None
+    return evidence_store.put(document)
+
+
 def _run_cascade(
     screening_id: uuid.UUID,
     *,
@@ -182,32 +240,55 @@ def _run_cascade(
 ) -> tuple[runner.TierResult, tuple[str, ...]]:
     """Run the plan, recording one ``tier_completed`` for each tier that ran.
 
-    A tier that hard fails ends the cascade, so the names answered back are
-    the tiers that ran and no others, and a cascade that raises part-way
-    leaves the trail naming exactly how far it got.
+    A hard fail ends the cascade, so the names answered back are the tiers
+    that ran and no others, and a cascade that raises part-way leaves the
+    trail naming exactly how far it got.
 
-    :returns: the last tier's result, and the tier names in the order they
-        ran.  The last one is what the risk engine is scored from.
+    26.8's two metrics are written around that run and from a ``finally``, so
+    a cascade that raised is measured as well as one that answered.
     """
     ran: list[str] = []
     tier: runner.TierResult | None = None
-    for name in CASCADE:
-        tier = _TIER_RUNNERS[name](
-            image,
-            document_type=document_type,
-            reference_date=reference_date,
-            parsed_document=parsed_document,
-            watchlist=watchlist,
+    outcome = metrics.OUTCOME_COMPLETED
+    started = _now()
+    try:
+        for name in CASCADE:
+            mark = _now()
+            tier = _TIER_RUNNERS[name](
+                image,
+                document_type=document_type,
+                reference_date=reference_date,
+                parsed_document=parsed_document,
+                watchlist=watchlist,
+            )
+            ran.append(name)
+            metrics.emit_tier_latency(
+                screening_id=screening_id,
+                tier=name,
+                elapsed_ms=_elapsed_ms(mark),
+                flags_found=len(tier.flags),
+                hard_failed=tier.hard_failed,
+            )
+            emit(
+                TIER_COMPLETED,
+                screening_id,
+                _tier_payload(name, tier),
+                sessions=sessions,
+            )
+            if tier.hard_failed:
+                outcome = metrics.OUTCOME_HARD_FAILED
+                break
+    except Exception:
+        outcome = metrics.OUTCOME_FAILED
+        raise
+    finally:
+        metrics.emit_cascade_outcome(
+            screening_id=screening_id,
+            outcome=outcome,
+            tiers_run=tuple(ran),
+            elapsed_ms=_elapsed_ms(started),
+            flags_found=0 if tier is None else len(tier.flags),
         )
-        ran.append(name)
-        emit(
-            TIER_COMPLETED,
-            screening_id,
-            _tier_payload(name, tier),
-            sessions=sessions,
-        )
-        if tier.hard_failed:
-            break
     if tier is None:
         raise ValueError(
             "the cascade ran no tier, and a screening with no tier result "
@@ -215,6 +296,26 @@ def _run_cascade(
             "this module rather than anything a screening carried"
         )
     return tier, tuple(ran)
+
+
+def _now() -> float:
+    """:returns: the monotonic counter's own reading, in seconds.
+
+    A stopwatch and not a calendar, on ``app.pipeline.tier0.runner``'s
+    reasoning: a latency is a duration, and the wall clock moves when the
+    host's time is corrected.
+    """
+    return time.perf_counter()
+
+
+def _elapsed_ms(started: float) -> float:
+    """:returns: milliseconds since a :func:`_now` reading, to 3 places.
+
+    Rounded the way ``app.api.request_logging`` rounds its own, so the
+    request line and the tier lines beside it share one spelling of a
+    duration.
+    """
+    return round((_now() - started) * 1000, 3)
 
 
 def _store_result(
