@@ -71,3 +71,5 @@ def test_the_documented_response_carries_the_notice():
     ]
 
     assert properties["notice"]["type"] == "string"
+    assert properties["tier_notice"]["type"] == "string"
+    assert properties["tier_checks"]["type"] == "array"

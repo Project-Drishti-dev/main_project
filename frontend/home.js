@@ -1,5 +1,6 @@
 (() => {
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+  const ANALYSIS_TIMEOUT_MS = 60000;
   const SUPPORTED_IMAGE_TYPES = new Set([
     "image/jpeg",
     "image/png",
@@ -27,6 +28,9 @@
   const resultsIntro = document.getElementById("results-intro");
   const overallResult = document.getElementById("overall-result");
   const analysisStatus = document.getElementById("analysis-status");
+  const tierCheckResults = document.getElementById("tier-check-results");
+  const tierStubNotice = document.getElementById("tier-stub-notice");
+  const tierStubNoticeText = document.getElementById("tier-stub-notice-text");
   const resultsCloseButton = document.getElementById("results-modal-close");
   const sourceMessage = document.getElementById("screening-source-message");
   const chooseAnotherButton = document.getElementById("choose-another-image");
@@ -48,6 +52,13 @@
     "skew",
     "coverage",
     "completeness",
+  ]);
+  const TIER_STATUSES = new Set([
+    "completed",
+    "unavailable",
+    "failed",
+    "stub",
+    "hard_fail",
   ]);
   const MODULE_KEYS_BY_LABEL = new Map([
     ["Sharpness", "sharpness"],
@@ -96,6 +107,15 @@
   backButton.addEventListener("click", () => {
     resetUpload();
     showSourceChooser();
+    uploadButton.focus();
+  });
+
+  startScreeningButton.addEventListener("click", () => {
+    resetUpload();
+    showSourceChooser();
+    screeningModal.classList.add("is-open");
+    activeModal = screeningModal;
+    document.body.style.overflow = "hidden";
     uploadButton.focus();
   });
 
@@ -165,6 +185,7 @@
       const response = await api.request("/api/analyze", {
         method: "POST",
         body: formData,
+        timeoutMs: ANALYSIS_TIMEOUT_MS,
       });
       let payload = null;
       try {
@@ -296,7 +317,10 @@
       payload.image.height <= 0 ||
       typeof payload.overall_pass !== "boolean" ||
       !Array.isArray(payload.modules) ||
-      payload.modules.length !== EXPECTED_MODULES.size
+      payload.modules.length !== EXPECTED_MODULES.size ||
+      !Array.isArray(payload.tier_checks) ||
+      payload.tier_checks.length === 0 ||
+      typeof payload.tier_notice !== "string"
     ) {
       return false;
     }
@@ -333,7 +357,37 @@
       receivedModules.add(moduleKey);
     }
 
-    return receivedModules.size === EXPECTED_MODULES.size;
+    if (receivedModules.size !== EXPECTED_MODULES.size) return false;
+
+    const receivedChecks = new Set();
+    for (const check of payload.tier_checks) {
+      if (
+        !isRecord(check) ||
+        ![0, 1, 2].includes(check.tier) ||
+        typeof check.module !== "string" ||
+        check.module === "" ||
+        receivedChecks.has(check.module) ||
+        typeof check.label !== "string" ||
+        !TIER_STATUSES.has(check.status) ||
+        (check.value !== null &&
+          (typeof check.value !== "number" ||
+            !Number.isFinite(check.value) ||
+            check.value < 0 ||
+            check.value > 1)) ||
+        typeof check.is_stub !== "boolean" ||
+        (check.model_version !== null &&
+          typeof check.model_version !== "string") ||
+        typeof check.detail !== "string" ||
+        (check.recognized_text !== undefined &&
+          check.recognized_text !== null &&
+          typeof check.recognized_text !== "string")
+      ) {
+        return false;
+      }
+      receivedChecks.add(check.module);
+    }
+
+    return receivedChecks.size > 0;
   }
 
   function isRecord(value) {
@@ -398,8 +452,8 @@
         ? ` · trimmed to ${result.trim_box.join(", ")}`
         : "");
     overallResult.textContent = result.overall_pass
-      ? "Overall result: Pass"
-      : "Overall result: Needs attention";
+      ? "Overall image-quality result: Pass"
+      : "Overall image-quality result: Needs attention";
     overallResult.classList.remove("is-pass", "is-fail");
     overallResult.classList.add(result.overall_pass ? "is-pass" : "is-fail");
 
@@ -442,11 +496,88 @@
             : "is-fail",
       );
     }
+
+    renderTierChecks(result.tier_checks, result.tier_notice);
+  }
+
+  function renderTierChecks(checks, notice) {
+    const rows = checks.map((check) => {
+      const item = document.createElement("li");
+      item.className = "ux4g-list-item";
+
+      const card = document.createElement("article");
+      card.className = "ux4g-card";
+      const body = document.createElement("div");
+      body.className = "ux4g-card-body";
+
+      const title = document.createElement("h4");
+      title.className = "ux4g-card-title";
+      title.textContent = check.label;
+
+      const status = document.createElement("p");
+      status.className = "ux4g-card-sub-title";
+      status.textContent = `Tier ${check.tier} · ${tierStatusLabel(check)}`;
+
+      const detail = document.createElement("p");
+      detail.textContent = check.detail;
+
+      body.appendChild(title);
+      body.appendChild(status);
+      body.appendChild(detail);
+      if (
+        check.module === "ocr" &&
+        check.status === "completed" &&
+        typeof check.recognized_text === "string" &&
+        check.recognized_text.trim() !== ""
+      ) {
+        const transcriptLabel = document.createElement("p");
+        transcriptLabel.className = "ux4g-card-sub-title";
+        transcriptLabel.textContent = "Detected text (prototype)";
+
+        const transcript = document.createElement("p");
+        transcript.dataset.ocrTranscript = "true";
+        transcript.textContent = check.recognized_text;
+        body.appendChild(transcriptLabel);
+        body.appendChild(transcript);
+      }
+      if (check.value !== null) {
+        const signal = document.createElement("p");
+        signal.textContent = `Module signal: ${check.value.toFixed(2)}`;
+        body.appendChild(signal);
+      }
+      if (check.model_version !== null) {
+        const version = document.createElement("p");
+        version.textContent = `Model version: ${check.model_version}`;
+        body.appendChild(version);
+      }
+
+      card.appendChild(body);
+      item.appendChild(card);
+      return item;
+    });
+
+    tierCheckResults.replaceChildren(...rows);
+    const hasStub = checks.some((check) => check.is_stub);
+    tierStubNotice.hidden = !hasStub;
+    tierStubNoticeText.textContent = hasStub ? notice : "";
+  }
+
+  function tierStatusLabel(check) {
+    if (check.is_stub) {
+      return check.status === "failed"
+        ? "Prototype stub · unable to run"
+        : "Prototype stub";
+    }
+    if (check.status === "hard_fail") return "Hard fail";
+    if (check.status === "unavailable") return "Unavailable";
+    if (check.status === "failed") return "Unable to run";
+    return "Completed";
   }
 
   function clearMetricResults() {
-    overallResult.textContent = "No analysis completed yet.";
+    overallResult.textContent = "No image-quality analysis completed yet.";
     overallResult.classList.remove("is-pass", "is-fail");
+    clearTierResults();
 
     for (const card of metricCards) {
       card.querySelector("[data-metric-score]").textContent = "—";
@@ -459,6 +590,12 @@
         .querySelector("[data-metric-status]")
         .classList.remove("is-pass", "is-fail", "is-na");
     }
+  }
+
+  function clearTierResults() {
+    tierCheckResults.replaceChildren();
+    tierStubNotice.hidden = true;
+    tierStubNoticeText.textContent = "";
   }
 
   function showSourceChooser() {

@@ -14,3 +14,4 @@ pyyaml>=6,<7
 # persistence: the ORM and its migration tool (app.storage, Part 8)
 sqlalchemy>=2.0,<3
 alembic>=1.13,<2
+pytesseract

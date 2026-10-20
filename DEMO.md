@@ -53,8 +53,8 @@ and the banner *Experimental image-quality checks only — not identity
 verification*.
 
 **Say:** one image in, nine quality signals out, so a person retakes a bad
-photo instead of submitting it. This screens image quality; it does not decide
-who a document belongs to.
+photo instead of submitting it. The upload result also shows separate,
+experimental Tier 0/1/2 signals. Neither view decides who a document belongs to.
 
 ---
 
@@ -154,32 +154,28 @@ not finished.
 
 ---
 
-## Known defect on this build — the "Try the demo" button 404s
+## Overview upload flow
 
-The Overview screen's primary call to action, **Try the demo**, points at
-`./screening.html`. The build does not write that file, so the button lands on
-a 404 and the image-upload overlay cannot be opened from the page. Steps 1 to 7
-do not touch it, so the walkthrough above runs without it.
+The Overview's **Start screening** button opens the in-page upload modal (D232).
+It calls `POST /api/analyze`, which keeps the image in memory and does not create
+a stored screening record. The separate `POST /api/screenings` route is not
+used by this modal.
 
-**The fix, if you want the upload flow in the demo.** Give `#start-screening` a
-click handler that calls the `showSourceChooser()` already defined in
-`frontend/home.js`, and remove the `href="./screening.html"` that
-`frontend/home.test.cjs` currently pins (the `START_HREF` constant and the
-assertion at line 315).
-
-**To try the upload flow by hand once it is wired**, draw a synthetic document
-from the repository's own corpus. Never use a real identity document:
+**To try the upload flow**, draw a synthetic document from the repository's
+own corpus. Never use a real identity document:
 
 ```powershell
 cd backend
 python -c "import cv2; from tests.fixtures import document_corpus as c; cv2.imwrite('sample.png', c.generate().image)"
 ```
 
-Then on the Overview screen: **Try the demo** → **Upload an image** → **Browse
-files** → choose `sample.png` → **Review quality checks**. The panel is built to
-list all nine checks with a score, a unit, a pass / fail / **N/A** state, the
-rule and the reasons. That is what the render path writes; nobody has watched
-it render, because on this build the button that opens it 404s.
+Then on the Overview screen: **Start screening** → choose **Upload an image**
+→ select `sample.png` → **Review quality checks**. The modal
+shows the nine quality checks and a separate tier list. Tier 1 displays the
+recognized OCR text for prototype inspection; it is not a verified field check
+and is not saved to a screening record.
+The seven Tier 2 outputs are marked as prototype stubs and do not contribute
+to the image-quality pass/fail.
 
 **Glare** and **Card coverage** return **N/A** when the request resolves to scan
 mode, with the reason *not applicable to flat scans / digital documents*. The
@@ -261,15 +257,15 @@ with what replaced them.
 | C27 | Camera capture is a placeholder. | Designed | The About page says so; nothing wires camera.js to a capture path. |
 | C28 | Nine signals, every published number carrying its dataset, unfinished parts labelled as unfinished. | Measured | 28.1; results-metrics.js and the limitations list. |
 
-### The known defect and the upload flow
+### The upload flow and its limits
 
 | # | Claim | Label | What backs it |
 |---|-------|-------|---------------|
-| C29 | *Try the demo* points at `./screening.html`, the build never writes it, so it 404s. | Measured | 28.1 landed on the 404; the build's page list has no screening.html. |
-| C30 | The upload overlay has no other entry point. | Measured | 28.1; nothing in the built pages opens `#screening-modal`. |
-| C31 | The fix is a handler calling `showSourceChooser()` plus dropping the pinned href. | Designed | A proposal, not a change. `showSourceChooser` is home.js:464; home.test.cjs:17 pins `START_HREF` and :315 pins the href in the markup. |
+| C29 | **Start screening** opens the in-page upload modal. | Designed | `home.js` calls `showSourceChooser()` and opens `screeningModal`; `home.test.cjs` covers the click path. |
+| C30 | The Overview modal calls `/api/analyze` and does not create a screening record. | Designed | `home.js` posts the image to `/api/analyze`; `analysis.py` returns in-memory results. |
+| C31 | The response contains nine quality modules plus Tier 0/1/2 summaries. | Designed | `AnalysisResponse`, `analysis.py` and `tier_checks.py`. |
 | C32 | The one-line corpus command draws a synthetic page. | Designed | `generate()` returns a SyntheticDocument carrying `.image`. The command has not been run here. |
-| C33 | The panel lists nine checks with score, unit, state, rule and reasons. | Designed | What the render path writes. Nobody has watched it render, because the button that opens it 404s. |
+| C33 | Tier 1 displays OCR text for prototype inspection; seven Tier 2 outputs are marked stubs. | Designed | `tier_checks.py` and the modal renderer. |
 | C34 | *Glare* and *Card coverage* return **N/A** on a flat page. | Rewritten | m5_glare.py:76-78 and m8_coverage.py:56-58 return N/A when `mode == "scan"`. The page sends `auto` and the service resolves it, so the resolved mode decides it, not the page's appearance, and it has not been observed. The paragraph now says that. |
 
 ## The bar this file holds to

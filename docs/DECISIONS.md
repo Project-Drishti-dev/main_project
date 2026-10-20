@@ -15524,3 +15524,31 @@ confirming a section that already happened to be right.
 That the documented commands work from a clean clone was verified by running
 them, not by this test. The test reads files; it does not install, migrate or
 serve. A dependency that stops installing is outside what it can see.
+
+## D232 -- The home page start action is a button that opens the in-page upload modal
+
+`#start-screening` was an anchor targeting `./screening.html`, a file the build does not write.
+It is now a `ux4g-btn` button with a click handler in `home.js` that resets any previous selection,
+calls `showSourceChooser()`, and opens `screeningModal`. This restores the public demo upload flow directly from the home screen without navigating away.
+
+## D233 -- The Overview upload returns non-persistent tier summaries beside image quality
+
+The Overview uploader calls `POST /api/analyze`, whose contract was nine image-quality results and no persistence. The tier code already has a Tier 0 runner, a Tier 1 OCR runner, and seven Tier 2 modules, but the page showed none of them.
+
+**Decision.** Keep that endpoint in memory and add separate Tier 0, Tier 1 and Tier 2 summaries to its response. The image-quality pass/fail stays independent. Tier 1 uses Tesseract only and never returns OCR text; Tier 2 checks carry `is_stub`, and successful results include `model_version`. The UI labels those signals as prototypes. The stored `/api/screenings` route remains a separate flow. Cross-document checks wait for case grouping.
+
+**Why Tesseract only.** EasyOCR creates its reader on first use and may download model files. The local Overview upload must not trigger an implicit model download; an absent Tesseract binary is returned as unavailable.
+
+**Not claimed.** The Tier 1 field, layout, barcode and face helpers are not composed into this runner. No tier score is an identity or authenticity decision, and the Tier 2 scores are not calibrated on real captures.
+
+## D234 -- The Overview displays Tier 1 OCR text for prototype inspection
+
+**Date:** October 18, 2026. **Status:** accepted. This supersedes D233's no-OCR-text rule for `POST /api/analyze` only.
+
+**Context.** Tesseract now runs locally, but an operator could only see that OCR completed, not inspect the words it read. The user requested the transcript for prototype review.
+
+**Decision.** Add optional `recognized_text` to the Tier 1 check summary returned by the non-persistent `/api/analyze` endpoint. Render the string as text in the Overview results card. Do not include OCR text in request logs, database records, or the separate `/api/screenings` flow. Label it as prototype output; it is not a verified extraction or an identity decision.
+
+**Why.** Seeing the OCR read makes it possible to review recognition quality while preserving the existing in-memory analysis path and avoiding accidental HTML interpretation.
+
+**Revisit condition.** Before production use, decide whether the transcript should be disabled or gated for deployed environments and review its privacy implications.

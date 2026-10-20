@@ -1998,7 +1998,37 @@ anything without one is labelled a design target.
   commit it — report the working-tree state to the user and let them decide.
   Verify: `scripts/check-all.ps1` exits 0.
 
+# Part 29 — Tier summaries in the Overview upload
+
+- [ ] [BLOCKED] **29.1** Add non-persistent Tier 0, Tier 1 and Tier 2 summaries to the
+  Overview upload response and render them beside the nine image-quality
+  results, with every Tier 2 stub labelled. Keep cross-document checks out
+  until uploads can be grouped into cases.
+  Verify: `scripts/check-all.ps1` exits 0.
+      — blocked: full check reports 45 backend failures; targeted feature tests and all 720 frontend tests pass.
+
 ---
+
+# Part 30 -- Local analysis request timeout
+
+- [x] **30.1** Give Overview image analysis a 60-second request budget to accommodate
+  local checks that take longer than the 15-second API default.
+  Verify: in `frontend/`, `npm test` and `npm run build` pass.
+      — verified: 720 frontend tests pass and the build completes.
+
+# Part 31 -- Prototype OCR transcript
+
+- [x] **31.1** Expose Tier 1 recognized text in the non-persistent Overview response
+  and display it as plain text in the results card.
+  Verify: targeted backend tests, `frontend/` `npm test`, and `npm run build` pass.
+      — verified: 24 targeted backend tests and 720 frontend tests pass; build and all 28 artefacts pass.
+
+# Part 32 -- Plain-language Tier 2 summaries
+
+- [x] **32.1** Simplify the Tier 2 stub labels, descriptions, and shared warning
+  for hackathon reviewers while keeping the prototype caveat clear.
+  Verify: targeted backend tests, `frontend/` `npm test`, and `npm run build` pass.
+      — verified: 25 targeted backend tests and 720 frontend tests pass; build and all 28 artefacts pass.
 
 # Deferred — deliberately not in this list
 

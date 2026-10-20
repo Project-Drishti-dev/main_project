@@ -16,15 +16,21 @@ Nothing here is aspirational, and nothing here is phrased as a plan.
 
 ---
 
-## 1. The cascade runs Tier 0 and nothing else
+## 1. The stored screening cascade runs Tier 0 only
 
 `backend/app/screening.py:83` maps one name — `runner.TIER_NAME` — to one
 runner, `runner.run_tier0`, and `CASCADE` at line 90 is `tuple(_TIER_RUNNERS)`.
-So a screening submitted today runs the deterministic MRZ parser and stops.
+So a screening submitted today runs Tier 0's deterministic MRZ-format detection
+and stops.
 
-**Designed.** Tier 1's OCR engines and Tier 2's seven modules, and the
-`crossdoc` package, all exist, all have tests, and none of them is reachable
-from `POST /api/screenings`.
+The Overview's `/api/analyze` route is separate: it now returns non-persistent
+Tier 0/1/2 summaries beside the nine image-quality results. Those summaries do
+not create screening flags or a stored record.
+
+**Designed.** The stored `POST /api/screenings` route does not run Tier 1, Tier
+2 or `crossdoc`. The Overview route runs Tesseract availability/recognition and
+the seven Tier 2 summaries, but it does not extract or validate fields and it
+does not persist their results.
 
 This is the single largest gap in the project. A flag from Tier 2 cannot appear
 in a real screening record today, because nothing calls the module that would
@@ -108,13 +114,12 @@ browser.** That has changed, and this is the honest account of how far.
 
 **Still unverified:**
 
-- **The full screening flow has never been driven end to end.** 25.11 is
-  `[BLOCKED]`: `screening.html` is never written by the build, so the Overview
-  screen's **Try the demo** CTA links to a 404 and the upload overlay has no
-  other entry point. Nobody has watched the nine-check panel render. The fix is
-  a click handler on `#start-screening` calling the `showSourceChooser()`
-  already in `frontend/home.js`, plus dropping the `href="./screening.html"`
-  that `home.test.cjs:17` (as `START_HREF`) and `:335` pin.
+- **The persisted record flow is separate from the Overview upload.** The user
+  reports the Overview upload and its image-quality/tier results work locally.
+  It calls the non-persistent `/api/analyze` route; `screening.html` remains
+  absent, and the Overview modal does not create a row through
+  `POST /api/screenings`. This task's API and UI tests cover the response and
+  rendering, but no independent browser capture was made here.
 - **No history row has ever been drawn in a browser.** Without
   `alembic upgrade head` the screen reads *Could not load the history*. That is
   why `DEMO.md` labels the search box a measured control with designed

@@ -1,8 +1,9 @@
 # DRISHTI image-quality API
 
-This Python API accepts an image, runs the nine quality checks, and returns a
-JSON report for the website. It is designed to deploy independently from the
-static frontend to Google Cloud Run.
+This Python API accepts an image, runs the nine quality checks and the available
+single-image tier checks, and returns a JSON report for the website. The
+in-memory analysis route is designed to deploy independently from the static
+frontend to Google Cloud Run.
 
 ## Layout
 
@@ -56,9 +57,14 @@ Successful response:
 }
 ```
 
-The response contains all nine module results, including `rule`, `reasons`,
-and `details`. Internal outline arrays are intentionally omitted. Errors use
-the same shape:
+The response contains all nine module results, plus `tier_checks` summaries for
+Tier 0 MRZ-format detection, Tier 1 Tesseract status, and seven Tier 2 modules.
+Tier 2 results include `is_stub` and `model_version`; their values are
+experimental signals, not authenticity probabilities. Tier 1 may return
+`recognized_text` in the non-persistent Overview response. The response also
+carries a `tier_notice` explaining that
+the Tier 2 modules are prototypes. Internal outline arrays are omitted. Errors
+use the same shape:
 
 ```json
 {
@@ -69,10 +75,11 @@ the same shape:
 }
 ```
 
-The API does not persist uploaded images to storage or a database. Multipart
-parsing may use framework-managed temporary spooling, which is closed at the
-end of the request. The checker thresholds are still experimental; results
-are suitable for a prototype, not as a production identity-verification
+`POST /api/analyze` does not persist uploaded images to storage or a database.
+Multipart parsing may use framework-managed temporary spooling, which is closed
+at the end of the request. `POST /api/screenings` is a separate persisted route;
+its database-backed cascade currently runs Tier 0 only. The checks and
+thresholds are experimental and are not a production identity-verification
 decision.
 
 ## Run locally

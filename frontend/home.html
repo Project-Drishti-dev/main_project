@@ -35,10 +35,10 @@
       signals before moving on.
     </p>
   </div>
-  <a
+  <button
     class="ux4g-btn ux4g-btn-primary ux4g-btn-lg screening-start"
     id="start-screening"
-    href="./screening.html"
+    type="button"
   >
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5Z" />
@@ -47,7 +47,7 @@
     </svg>
     Try the demo
     <span aria-hidden="true">→</span>
-  </a>
+  </button>
 </section>
 
 <section class="workspace-cards" aria-label="Workspace information">
@@ -225,7 +225,7 @@
       <div class="ux4g-modal-box ux4g-modal-l results-modal-box">
         <div class="ux4g-modal-header">
           <div>
-            <p class="eyebrow">IMAGE QUALITY OVERVIEW</p>
+            <p class="eyebrow">IMAGE QUALITY AND TIER CHECKS</p>
             <h2 id="results-modal-title">Screening results</h2>
           </div>
           <button
@@ -251,7 +251,7 @@
             Upload and run the quality checks to see the analysis here.
           </p>
           <p id="overall-result" class="overall-result" role="status" aria-live="polite">
-            No analysis completed yet.
+            No image-quality analysis completed yet.
           </p>
           <ul class="metric-grid" aria-label="Quality check results">
             <li class="metric-card" data-module="sharpness">
@@ -363,6 +363,29 @@
               </div>
             </li>
           </ul>
+          <section
+            class="ux4g-d-flex ux4g-flex-column ux4g-gap-y-m"
+            aria-labelledby="tier-results-title"
+          >
+            <h3 id="tier-results-title">Document screening tiers</h3>
+            <div
+              id="tier-stub-notice"
+              class="ux4g-alert ux4g-alert-warning"
+              role="note"
+              hidden
+            >
+              <div class="ux4g-alert-content">
+                <p class="ux4g-alert-title">Tier 2 prototype results</p>
+                <p id="tier-stub-notice-text" class="ux4g-alert-message"></p>
+              </div>
+            </div>
+            <ul
+              id="tier-check-results"
+              class="ux4g-list ux4g-list-default ux4g-d-flex ux4g-flex-column ux4g-gap-y-m"
+              aria-label="Tier check results"
+              aria-live="polite"
+            ></ul>
+          </section>
           <div class="results-actions">
             <button
               class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"

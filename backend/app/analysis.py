@@ -7,6 +7,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .config import MAX_IMAGE_PIXELS, MAX_UPLOAD_BYTES
 from .errors import APIError
+from .pipeline.tier_checks import TIER_NOTICE, run_tier_checks
 from .quality_checker.engine import analyze_image
 
 
@@ -21,8 +22,9 @@ ALLOWED_MODES: Final = {"auto", "photo", "scan"}
 #: the contract and the tests cannot drift. It travels beside the findings
 #: rather than replacing any of them.
 SYNTHETIC_IMAGE_NOTICE: Final = (
-    "Synthetic images only. These checks measure image quality and do not "
-    "verify identity, so never upload a real identity document."
+    "Synthetic images only. Image-quality checks and tier signals are "
+    "experimental; they do not verify identity or document authenticity. "
+    "Never upload a real identity document."
 )
 
 
@@ -31,18 +33,16 @@ def analyze_uploaded_image(
     content_type: str | None,
     requested_mode: str = "auto",
 ) -> dict[str, Any]:
-    """The engine's findings for one upload, with the notice beside them.
+    """Run quality and tier checks on one uploaded image.
 
-    :param contents: the uploaded bytes; ``content_type`` is what the client
-        declared and ``requested_mode`` its mode claim.
-    :returns: every key :func:`analyze_image` answers with, and
-        :data:`SYNTHETIC_IMAGE_NOTICE` under ``notice``.
+    :param contents: uploaded bytes; ``content_type`` is the client claim.
+    :returns: quality modules, safe tier summaries and prototype notices.
     """
+    image = read_uploaded_image(contents, content_type, requested_mode)
     return {
-        **analyze_image(
-            read_uploaded_image(contents, content_type, requested_mode),
-            requested_mode=requested_mode,
-        ),
+        **analyze_image(image, requested_mode=requested_mode),
+        "tier_checks": [check.to_wire() for check in run_tier_checks(image)],
+        "tier_notice": TIER_NOTICE,
         "notice": SYNTHETIC_IMAGE_NOTICE,
     }
 

@@ -12,12 +12,9 @@ const { renderPage } = require("./build.cjs");
 function readHomePage() {
   return renderPage(fs.readFileSync(homePath, "utf8"), "home.html");
 }
-// The start action is a link, so its destination lives in the rendered
-// markup rather than in a handler that could disagree with it (D183).
-const START_HREF = 'href=\"./screening.html\"';
-
+// The start action is a button that opens the modal (D232).
 function startActionTag(html) {
-  return html.match(/<a\b[^>]*\bid="start-screening"[^>]*>/)?.[0] ?? "";
+  return html.match(/<button\b[^>]*\bid="start-screening"[^>]*>/)?.[0] ?? "";
 }
 
 const MODULE_KEYS = [
@@ -166,6 +163,9 @@ function loadHomeScript({
     "results-intro",
     "overall-result",
     "analysis-status",
+    "tier-check-results",
+    "tier-stub-notice",
+    "tier-stub-notice-text",
     "screening-source-message",
     "choose-another-image",
     "start-screening",
@@ -208,9 +208,11 @@ function loadHomeScript({
     },
   };
   const armedTimers = new Map();
+  const timerDelays = [];
   let nextTimerId = 1;
   const clock = {
     pending: () => armedTimers.size,
+    delays: () => timerDelays,
     fire() {
       const callbacks = Array.from(armedTimers.values());
       armedTimers.clear();
@@ -235,6 +237,7 @@ function loadHomeScript({
         callback();
         return 0;
       }
+      timerDelays.push(delay);
       const id = nextTimerId;
       nextTimerId += 1;
       armedTimers.set(id, callback);
@@ -266,6 +269,40 @@ function makeAnalysisResponse(overrides = {}) {
     image: { width: 1200, height: 800 },
     trim_box: null,
     overall_pass: false,
+    tier_checks: [
+      {
+        tier: 0,
+        module: "mrz_detection",
+        label: "MRZ format detection",
+        status: "completed",
+        value: null,
+        is_stub: false,
+        model_version: null,
+        detail: "No MRZ format detected.",
+      },
+      {
+        tier: 1,
+        module: "ocr",
+        label: "OCR engine",
+        status: "unavailable",
+        value: null,
+        is_stub: false,
+        model_version: null,
+        detail: "Tesseract is unavailable; OCR was not run.",
+      },
+      {
+        tier: 2,
+        module: "tamper_ela",
+        label: "Compression patterns",
+        status: "stub",
+        value: 0.2,
+        is_stub: true,
+        model_version: "heuristic-v0",
+        detail: "Looks for areas that change differently when the image is saved again.",
+      },
+    ],
+    tier_notice:
+      "These are prototypes, not proof. They may highlight patterns to review, but they cannot tell whether a document is genuine.",
     modules: MODULE_KEYS.map((module, index) => ({
       module,
       label: module[0].toUpperCase() + module.slice(1),
@@ -312,30 +349,29 @@ test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
   assert.match(html, /DRISHTI image-quality demo/);
   assert.match(html, /Experimental image-quality checks only—not identity\s+verification/);
   assert.match(html, /Use synthetic images; do not upload real identity\s+documents/);
-  assert.match(html, /<a\b[^>]*id="start-screening"[^>]*href="\.\/screening\.html"/);
+  assert.match(html, /<button\b[^>]*id="start-screening"/);
   assert.match(html, /id="screening-modal"[^>]*role="dialog"/);
   assert.match(html, /id="results-modal"[^>]*role="dialog"/);
   assert.doesNotMatch(html, /type="password"|Forgot password\?|Personnel ID|Register/);
 });
 
-test("the home page start action navigates to the screening page", () => {
+test("the home page start action opens the screening modal", () => {
   const tag = startActionTag(readHomePage());
 
-  assert.notEqual(tag, "", "the start action must be a link on the rendered page");
-  assert.match(tag, /href="\.\/screening\.html"/);
-  assert.doesNotMatch(tag, /data-modal-target/);
-  assert.doesNotMatch(
+  assert.notEqual(tag, "", "the start action must be a button on the rendered page");
+  assert.match(tag, /id="start-screening"/);
+  assert.match(
     fs.readFileSync(path.join(__dirname, "home.js"), "utf8"),
     /startScreeningButton\.addEventListener\("click"/,
   );
 });
 
-test("a start action aimed at another page turns the navigation case red", () => {
+test("a start action missing the id turns the modal case red", () => {
   const html = readHomePage();
-  const mutated = html.replace(START_HREF, 'href=\"./screenings.html\"');
+  const mutated = html.replace('id="start-screening"', 'id="other-action"');
   assert.notEqual(mutated, html, "the mutation must have landed");
 
-  assert.doesNotMatch(startActionTag(mutated), /href="\.\/screening\.html"/);
+  assert.equal(startActionTag(mutated), "");
 });
 
 test("homescreen includes a compact expandable sidebar with working navigation", () => {
@@ -513,6 +549,17 @@ test("valid image selection previews locally without requesting analysis", () =>
 test("analysis posts the selected image and renders all API results as text", async () => {
   const calls = [];
   const payload = makeAnalysisResponse({
+    tier_checks: makeAnalysisResponse().tier_checks.map((check, index) =>
+      index === 1
+        ? {
+            ...check,
+            status: "completed",
+            recognized_text: "<script>synthetic OCR</script>",
+          }
+        : index === 2
+        ? { ...check, detail: "<script>untrusted tier output</script>" }
+        : check,
+    ),
     modules: makeAnalysisResponse().modules.map((module, index) =>
       index === 0
         ? {
@@ -564,6 +611,21 @@ test("analysis posts the selected image and renders all API results as text", as
   assert.match(elements.get("results-intro").textContent, /1200 × 800/);
   assert.match(elements.get("overall-result").textContent, /needs attention/i);
   assert.equal(metricCards.length, 9);
+  const tierCards = elements.get("tier-check-results").children;
+  assert.equal(tierCards.length, 3);
+  assert.equal(elements.get("tier-stub-notice").hidden, false);
+  assert.equal(
+    elements.get("tier-stub-notice-text").textContent,
+    payload.tier_notice,
+  );
+  assert.match(tierCards[2].textContent, /Compression patterns/);
+  assert.match(tierCards[2].textContent, /prototype stub/i);
+  assert.match(tierCards[2].textContent, /<script>untrusted tier output<\/script>/);
+  const ocrTranscript = tierCards[1].children[0].children[0].children.find(
+    (child) => child.dataset.ocrTranscript === "true",
+  );
+  assert.ok(ocrTranscript);
+  assert.equal(ocrTranscript.textContent, "<script>synthetic OCR</script>");
   assert.match(metricCards[0].querySelector("[data-metric-status]").textContent, /pass/i);
   assert.equal(
     metricCards[0].querySelector("[data-metric-rule]").textContent,
@@ -814,6 +876,7 @@ test("a request that outruns its budget is named as a timeout, not a lost connec
 
   const pending = runButton.listeners.click();
   assert.equal(clock.pending(), 1);
+  assert.deepEqual(clock.delays(), [60000]);
   clock.fire();
   await pending;
 

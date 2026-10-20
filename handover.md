@@ -1,18 +1,14 @@
 # DRISHTI Project -- Handover
 
-**Updated:** October 6, 2026 -- 28.6 is the last completed task. `scripts/check-all.ps1`
-was re-run today and exits 0 on all four stages: backend 7841 passed / 4 skipped,
-frontend 720 passed, build and the 28-artefact check clean.
+**Updated:** October 18, 2026 -- Tier 2 stub labels and explanations now use
+shorter, plain-language copy; prototype caveats remain visible.
 
 ## Last Completed Task
 
-- **28.6** -- Every environment variable is listed once, in `README.md` under
-  `## Environment variables`, mirrored by `.env.example`. Six cases in
-  `backend/tests/unit/test_env_reference_contract.py` compare the two lists and the
-  variables the code reads. Two real drifts were fixed: `DRISHTI_STATION_LABEL`
-  (read by `frontend/build.cjs`, documented nowhere) and `LOCAL_LLM_ENABLED`
-  (tagged `[PLAN]` while `app/explain/summarizer.py` reads it). Rationale in
-  `docs/DECISIONS.md` D231.
+- **32.1 Plain-language Tier 2 summaries** -- The Overview uses shorter labels
+  and explanations for each Tier 2 stub and a simpler shared caution. The 25
+  targeted backend tests, all 720 frontend tests, build, and 28 artefact checks
+  pass; scores and stub status are unchanged.
 
 ## Git State
 
@@ -37,9 +33,9 @@ Read from that file -- **not re-run today**.
 
 ## What Is Verified
 
-- **`scripts/check-all.ps1` exits 0, 4 of 4 stages** (re-run today): backend
-  `7841 passed, 4 skipped`; frontend `720 pass, 0 fail`; `npm run build` and
-  `check-artefacts` (28 artefacts) both clean.
+- **Latest full verification is blocked.** `check-all.ps1` returns nonzero;
+  backend pytest reports 45 failures, 7806 passed and 4 skipped. The frontend
+  suite passes 720 tests and all 28 artefacts are present.
 - **22 environment variables, listed once.** README `## Environment variables`
   carries two tables -- four frontend-build rows and eighteen backend rows -- each
   with the function that reads it, its status, and the value it ships as.
@@ -48,16 +44,22 @@ Read from that file -- **not re-run today**.
 - **The contract test is held to its red state.** A variable added to
   `.env.example` alone (`DRISHTI_MUTANT_CHECK`) was reported as listed in one file
   and not the other, and green again once the file was restored.
-- **The cascade is Tier 0 only.** `backend/app/screening.py:83-85` registers one
-  runner, `run_tier0`, and `CASCADE` at line 90 is `tuple(_TIER_RUNNERS)`. Tier 1,
-  Tier 2 and `crossdoc` are unreachable from `POST /api/screenings`.
-- **`tasks.md` holds 345 boxes: 338 checked, 7 unchecked** -- `4.7`, which is
-  parked, and `28.7` through `28.12`.
+- **The Overview upload now includes tier summaries.** `/api/analyze` still runs
+  the nine quality modules in memory and now returns Tier 0, the Tesseract-only
+  Tier 1 check with optional recognized text, and seven Tier 2 stub checks. It
+  does not create a screening record.
+- **Overview image analysis has a 60-second request budget.** The shared API
+  default remains 15 seconds for other requests.
+- **The persistent cascade remains Tier 0 only.** `backend/app/screening.py`
+  still registers `run_tier0`; Tier 1, Tier 2 and `crossdoc` do not run through
+  `POST /api/screenings`.
+- **Task 31.1 is checked.** The first unchecked task remains 4.7; 29.1 remains
+  blocked on the full backend suite.
 - **CI mirrors the local stages.** `.github/workflows/ci.yml` runs two jobs,
   `backend` and `frontend`, the latter covering test, build and the artefact check.
 - **The browser evidence is committed:** `docs/viewport-shots/` (41 files),
   `docs/theme-shots/` (21), `docs/private-check/` (1), `docs/deployed-check/` (1).
-- **The latest recorded decision is D231** (`docs/DECISIONS.md`).
+- **The latest recorded decision is D234** (`docs/DECISIONS.md`).
 - **No identity claim is possible from this build.** Every number is drawn only
   beside its synthetic dataset and nothing on the results page is a measurement
   about a real document.
@@ -67,9 +69,13 @@ Read from that file -- **not re-run today**.
 - **4.7 is `[BLOCKED]` with no blocker recorded.** It is the only unfinished task
   outside Part 28, it sits at line 377, and its box carries no note saying what
   stopped it. Either finish it or say why it is parked.
-- **The upload flow has no entry point.** `frontend/dist/` holds no
-  `screening.html`, and `frontend/home.test.cjs:17` pins `href="./screening.html"`.
-  The full screening flow has never been driven in a browser (25.11, `[BLOCKED]`).
+- **29.1 is `[BLOCKED]`** because the required full verification exits nonzero.
+  The feature tests pass; the full backend suite has 45 failures, including an
+  MRZ-region test that also fails when run alone.
+- **The Overview modal uses non-persistent `/api/analyze`.** It returns nine
+  quality results and tier summaries. The separate `/api/screenings` record flow
+  remains Tier 0 only. The user reports the local upload works; no browser capture
+  was made in this turn.
 - **No history row has been drawn in a browser.** Without `alembic upgrade head` the
   screen reads *Could not load the history*.
 - **The Results page has never been opened in a browser.** Its table is proved by
@@ -85,9 +91,6 @@ Read from that file -- **not re-run today**.
   `test_alembic_migration.py:423` and `test_traveler_case.py:257-258` assert absent.
 - **The env contract compares names and statuses, not prose.** A row whose reader or
   shipped value has gone stale is outside what the test can see.
-- **The sandbox rejected every sandboxed command this session** (deny-read ACL on
-  exec, reparse-point error on the patch tool), so all reads and writes went through
-  escalated PowerShell.
 
 ## Current State & Key Decisions
 
@@ -109,9 +112,12 @@ Read from that file -- **not re-run today**.
 - **Unchanged from earlier.** A rate with no denominator is `--`, never a zero;
   `evaluate` scores over four disjoint denominators; every Tier 2 module ships
   `is_stub=True`.
+- **The Overview's tier summaries are not a verdict.** The quality pass/fail is
+  separate, Tier 1 uses Tesseract and displays prototype OCR text, and Tier 2
+  signals are stubbed with plain-language labels and descriptions. OCR text is
+  not logged or stored. Cross-document checks remain deferred until case grouping.
 
 ## Immediate Next Step
 
-- **28.7** -- Document the local run path for both halves: backend on 8080,
-  frontend built and served, and the allowed localhost origins. Every variable it
-  touches is already named in the README table, and no local setup needs one.
+- **4.7 [BLOCKED]** -- Infer the document format from line count and median glyph
+  count per line (2×44, 3×30, 2×36), with a test per format.

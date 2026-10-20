@@ -30,7 +30,10 @@ configure_logging()
 
 app = FastAPI(
     title="DRISHTI Image Quality API",
-    description="Runs the nine DRISHTI image-quality checks on an uploaded image.",
+    description=(
+        "Runs nine image-quality checks and the available Tier 0, Tier 1, and "
+        "Tier 2 checks on an uploaded image."
+    ),
     version="0.1.0",
     redoc_url=None,
 )

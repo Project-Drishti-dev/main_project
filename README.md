@@ -1,9 +1,9 @@
 # DRISHTI
 
-A hackathon prototype that screens an uploaded document image and reports only
-what it can honestly measure: the nine image-quality checks, and what a
-deterministic parser reads from the machine-readable zone. Two halves — a
-FastAPI service and a static frontend — with a tested contract between them.
+A hackathon prototype whose Overview upload returns nine image-quality checks
+plus separate Tier 0 MRZ-format, Tier 1 OCR-status and Tier 2 prototype signals.
+It does not verify identity or decide document authenticity. A separate
+screening-record API stores encrypted evidence and currently runs Tier 0 only.
 
 Nothing here is an identity-verification decision, and no page in this
 repository asks for a login.
@@ -14,7 +14,7 @@ repository asks for a login.
 | --- | --- |
 | [`DEMO.md`](DEMO.md) | The three-minute judge walkthrough, plus a 34-row ledger marking each claim Measured or Designed. |
 | [`LIMITATIONS.md`](LIMITATIONS.md) | What this build does not do, under those same two labels. Read it before believing a number. |
-| [`tasks.md`](tasks.md) | The executable checklist this project is driven from -- 344 tasks, one behaviour and its test each. An unchecked box is unfinished work. |
+| [`tasks.md`](tasks.md) | The executable checklist this project is driven from -- one behaviour and its test per task. An unchecked box is unfinished work. |
 | [`ROADMAP.md`](ROADMAP.md) | The strategic plan the checklist was derived from. |
 | [`HANDOVER.md`](HANDOVER.md) | Session state: last completed task, live invariants, blockers, next task. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Why the build is the way it is, one numbered decision per heading. |
@@ -27,9 +27,9 @@ repository asks for a login.
   `frontend/dist/`. UX4G components come from the pinned
   `ux4g-web-components@2.1.0`, loaded out of `node_modules` and never from a
   CDN. See [`frontend/README.md`](frontend/README.md).
-- `backend/` — the FastAPI service: the nine-check quality gate, the screening
-  cascade, screening records and their SQLite store, and the Alembic
-  migrations. See [`backend/README.md`](backend/README.md) for the API
+- `backend/` — the FastAPI service: the nine-check quality gate, in-memory
+  tier summaries for Overview uploads, a separate screening-record cascade,
+  the SQLite store, and Alembic migrations. See [`backend/README.md`](backend/README.md) for the API
   contract, the local run path and the Cloud Run settings.
 - `docs/` — `DECISIONS.md`, the UX4G preflight record, and the browser
   evidence: `viewport-shots/`, `theme-shots/`, `private-check/` and
@@ -46,15 +46,15 @@ repository asks for a login.
 
 ## What is implemented
 
-- **The nine-check quality gate.** `POST /api/analyze` takes a JPEG, PNG or WebP
-  up to 10 MiB and 20 million pixels, and returns all nine module results with
-  scores, pass/fail/N/A state, rules, reasons and details.
+- **The Overview upload.** `POST /api/analyze` returns the nine quality modules
+  and safe Tier 0/1/2 summaries. It does not persist the image or return OCR
+  text. Tier 1 uses Tesseract when installed; Tier 2 outputs carry `is_stub`.
 - **Screening records.** `POST /api/screenings`, the list and detail routes, a
   report, an operator decision, progress polling and an SSE progress stream,
   plus an audit re-verification route. Records live in SQLite, and `alembic
   upgrade head` creates the schema the service reads.
-- **Tier 0 of the cascade.** A submitted screening runs the deterministic MRZ
-  parser and stops. That is the whole cascade today.
+- **Persistent screening records.** `POST /api/screenings` stores encrypted
+  evidence and currently runs only the Tier 0 MRZ-format check.
 - **Ten built pages** — home, screenings, result, cases, results, audit,
   profile, settings, guide, about — each filled from the shared shell, in light
   and dark themes, checked at 320, 768, 1024 and 1440 CSS pixels.
@@ -66,18 +66,19 @@ repository asks for a login.
 [`LIMITATIONS.md`](LIMITATIONS.md) is the full list, with evidence per item.
 The short version:
 
-- **Tier 1 and Tier 2 never run.** Their modules exist and are tested, but the
-  cascade registers Tier 0 only, so a flag from them cannot appear in a real
-  screening record.
-- **Every Tier 2 module is a labelled stand-in** (`is_stub=True`), and no model
-  weights ship or can be trained here. A real classifier drops in behind the
-  interface; the interface is the seam, not the implementation.
+- **Tier 1 field extraction is not wired.** The Overview reports whether its
+  local Tesseract OCR check ran and displays recognized text for prototype
+  inspection, but it does not validate extracted fields.
+- **Tier 2 checks are all labelled stand-ins** (`is_stub=True`). No trained
+  model weights or validation data ship, so their scores are exploratory
+  signals, not authenticity findings.
+- **Cross-document checks are not wired.** The upload flow has no case grouping
+  API or way to submit multiple related documents.
 - **No authentication, by decision** (`docs/DECISIONS.md` D2). No login, no
-  session, no credential field, and the public endpoint is unauthenticated and
-  unrated.
-- **The upload flow has no entry point.** The home screen's upload CTA links to
-  a page the build never writes, so the full screening flow has never been
-  driven end to end in a browser. That is task 25.11, `[BLOCKED]`.
+  session, and no credential field. The public API is unauthenticated and
+  rate-limited.
+- **The full record-and-audit upload flow is separate from the Overview demo.**
+  The home modal uses `/api/analyze`; it does not create a stored screening row.
 - **The history needs its migration.** Without `alembic upgrade head` the
   screenings screen reads *Could not load the history*, so no history row has
   been drawn in a browser either.
@@ -164,13 +165,12 @@ is all a local run needs.
 
 - **It shows both halves talking.** A synthetic PNG posted to
   `POST http://localhost:8080/api/analyze` with the preview page's origin
-  answers `200` with all nine modules and echoes
+  answers `200` with all nine quality modules and the tier summaries, and echoes
   `access-control-allow-origin: http://127.0.0.1:5500`.
-- **It does not show the screening flow.** The *Try an image-quality check*
-  button on the home screen is a plain link to `screening.html` by decision
-  (`docs/DECISIONS.md` D183), and this build never writes that page, so the
-  button answers 404. That is task 25.11, `[BLOCKED]`, and it is a missing page
-  rather than a broken run path.
+- **It does not create a stored screening record.** The Overview modal uses
+  `/api/analyze`, which returns in-memory results and no screening id or audit
+  row. The separate `/api/screenings` endpoint stores encrypted evidence and
+  currently runs Tier 0 only.
 - **No `.env` file is read.** Nothing in the backend loads one, so copying
   `.env.example` to `.env` changes nothing. Set a variable in the shell --
   `$env:CORS_ORIGINS = "http://localhost:5500"` -- to use one.

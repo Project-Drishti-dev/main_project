@@ -31,6 +31,20 @@ class ModuleResult(BaseModel):
     mode: Literal["photo", "scan"]
 
 
+class TierCheckResponse(BaseModel):
+    """One tier check summary, with optional prototype OCR text."""
+
+    tier: Literal[0, 1, 2]
+    module: str
+    label: str
+    status: Literal["completed", "unavailable", "failed", "stub", "hard_fail"]
+    value: float | None
+    is_stub: bool
+    model_version: str | None
+    detail: str
+    recognized_text: str | None = None
+
+
 class AnalysisResponse(BaseModel):
     """What one analysis found, and the advisory that travels with it.
 
@@ -43,6 +57,8 @@ class AnalysisResponse(BaseModel):
     trim_box: list[int] | None
     overall_pass: bool
     modules: list[ModuleResult]
+    tier_checks: list[TierCheckResponse]
+    tier_notice: str
     notice: str
 
 

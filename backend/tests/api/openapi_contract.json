@@ -122,6 +122,99 @@
                   "title": "Overall Pass",
                   "type": "boolean"
                 },
+                "tier_checks": {
+                  "items": {
+                    "properties": {
+                      "detail": {
+                        "title": "Detail",
+                        "type": "string"
+                      },
+                      "is_stub": {
+                        "title": "Is Stub",
+                        "type": "boolean"
+                      },
+                      "label": {
+                        "title": "Label",
+                        "type": "string"
+                      },
+                      "model_version": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Model Version"
+                      },
+                      "module": {
+                        "title": "Module",
+                        "type": "string"
+                      },
+                      "recognized_text": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Recognized Text"
+                      },
+                      "status": {
+                        "enum": [
+                          "completed",
+                          "unavailable",
+                          "failed",
+                          "stub",
+                          "hard_fail"
+                        ],
+                        "title": "Status",
+                        "type": "string"
+                      },
+                      "tier": {
+                        "enum": [
+                          0,
+                          1,
+                          2
+                        ],
+                        "title": "Tier",
+                        "type": "integer"
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "title": "Value"
+                      }
+                    },
+                    "required": [
+                      "tier",
+                      "module",
+                      "label",
+                      "status",
+                      "value",
+                      "is_stub",
+                      "model_version",
+                      "detail"
+                    ],
+                    "title": "TierCheckResponse",
+                    "type": "object"
+                  },
+                  "title": "Tier Checks",
+                  "type": "array"
+                },
+                "tier_notice": {
+                  "title": "Tier Notice",
+                  "type": "string"
+                },
                 "trim_box": {
                   "anyOf": [
                     {
@@ -143,6 +236,8 @@
                 "trim_box",
                 "overall_pass",
                 "modules",
+                "tier_checks",
+                "tier_notice",
                 "notice"
               ],
               "title": "AnalysisResponse",

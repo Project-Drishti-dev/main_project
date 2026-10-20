@@ -24,22 +24,21 @@
    That builds `frontend/dist/` and serves it at `http://127.0.0.1:5500/`.
    See **Build, then serve** below for the whole workflow.
 
-4. `dist/index.html` links to `home.html`. **The image-quality check cannot
-   be started from the page in this build**: the *Try an image-quality check*
-   button is a plain link to `screening.html` by decision (`docs/DECISIONS.md`
-   D183), and the build never writes that page, so it answers 404. That is
-   task 25.11, `[BLOCKED]`. The API half of the path still works -- a request
-   to `http://localhost:8080/api/analyze` carrying this origin is answered
-   with all nine modules.
+4. `dist/index.html` links to `home.html`. **Start screening** opens the
+   Overview upload modal. Submitting an image calls
+   `http://localhost:8080/api/analyze`, which returns nine image-quality
+   results plus Tier 0 MRZ-format detection, Tier 1 OCR status, and seven Tier 2
+   prototype signals.
 
 The UX4G CSS and runtime are loaded from the local `node_modules` directory, so
 the page does not depend on the UX4G CDN at runtime.
 
-The home screen posts the selected image to the local quality API and displays
-its nine module scores, pass/fail/N/A state, rules, reasons, and details. The
-prototype checker thresholds are experimental and are not an
-identity-verification decision. The API does not persist image files; use
-synthetic images for local testing and avoid real identity documents.
+The home screen displays the nine image-quality results and tier checks in a
+separate section. Tier 1 uses Tesseract when installed and never returns OCR
+text. All seven Tier 2 checks are labelled prototype stubs; their scores are
+not an authenticity verdict and are not combined into the quality pass/fail
+result. `POST /api/analyze` does not persist image files. Use synthetic images
+for local testing and avoid real identity documents.
 
 The public demo has no login, registration, password-reset, or logout flow.
 It does not authenticate users or make identity-verification decisions.

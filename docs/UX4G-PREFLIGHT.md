@@ -929,3 +929,35 @@ Nothing of Part 27 has been seen in a browser. The four columns at 320, 768 and
 page's own tags, dark-theme contrast of the dataset column, and the heading
 order (`h1` page, `h2` panel) are all open questions. This page is proved
 against the stub DOM, as the others are.
+
+---
+
+## Part 29 — `frontend/home.html` tier results in the existing modal
+
+### Delivery method and theme
+
+- **Delivery:** the existing local npm `ux4g-web-components@2.1.0` package.
+- **Theme:** the settled default light theme from D3; no token overrides.
+
+### Components, variants and sizes
+
+| Component | Classes | Variant | Size | Where |
+|---|---|---|---|---|
+| Modal | `.ux4g-modal-backdrop`, `.ux4g-modal-box` | backdrop `-50` and `-blur` | `ux4g-modal-l` | Existing result modal; unchanged. |
+| Alert | `.ux4g-alert` + `.ux4g-alert-content`, `.ux4g-alert-title`, `.ux4g-alert-message` | `.ux4g-alert-warning` | none ships | Notice above the Tier 2 prototype results. |
+| List | `.ux4g-list` + `.ux4g-list-item` | `.ux4g-list-default` | none ships | Semantic list of tier checks. |
+| Card | `.ux4g-card` + `.ux4g-card-body`, `.ux4g-card-title`, `.ux4g-card-sub-title` | none named | none ships | One result per Tier 0, Tier 1 or Tier 2 check. |
+| Layout utility | `.ux4g-d-flex`, `.ux4g-flex-column`, `.ux4g-gap-y-m` | n/a | `gap-y-m` | The warning and check list stack. |
+
+No custom CSS is needed: the existing modal scrolls, and the UX4G list,
+card and spacing utilities provide the new result layout.
+
+### Amendment for prototype OCR text
+
+- **Delivery:** existing local npm `ux4g-web-components@2.1.0`.
+- **Theme:** default light theme; no token overrides.
+- **Components:** no new component. The transcript is a plain text paragraph
+  inside the existing Tier 1 Card (`.ux4g-card` and `.ux4g-card-body`, with no
+  variant or size); the existing result Modal and default List remain unchanged.
+- **Safety:** render OCR output through `textContent`; no custom CSS or HTML
+  interpretation is needed.
