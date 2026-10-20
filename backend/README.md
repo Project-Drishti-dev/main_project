@@ -194,3 +194,5 @@ treat this endpoint as a secure document-processing service.
 After deployment, configure the website to call the service's `/api/analyze`
 endpoint and add the website's production origin (and later its custom-domain
 origin) to `CORS_ORIGINS`.
+
+Triggering cloud deployment.
