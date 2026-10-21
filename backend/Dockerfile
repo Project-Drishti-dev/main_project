@@ -73,7 +73,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
  
 RUN tesseract --version \
- && python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
+ && python -c "import shutil, pytesseract; print(shutil.which('tesseract')); print(pytesseract.get_tesseract_version())"
 # Everything above this line runs as root to build the image; nothing below it
 # does. The virtualenv stays root-owned and world-readable, so the service user
 # can import from it and write only under /app.
