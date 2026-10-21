@@ -18,7 +18,7 @@ FROM python:3.13-slim-bookworm@sha256:5024f48ba9441d4b13a95d3945abc6365538e3a311
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_ROOT_USER_ACTION=IGNORE
+    PIP_ROOT_USER_ACTION=ignore
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
