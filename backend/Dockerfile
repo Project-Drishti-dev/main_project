@@ -68,6 +68,10 @@ RUN chmod 0755 /app/docker-entrypoint.sh \
  && mkdir -p /app/evidence \
  && chown -R drishti:drishti /app
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+ && rm -rf /var/lib/apt/lists/*
+ 
 # Everything above this line runs as root to build the image; nothing below it
 # does. The virtualenv stays root-owned and world-readable, so the service user
 # can import from it and write only under /app.
