@@ -1,0 +1,73 @@
+# The four stages `scripts/check-all.ps1` runs locally, as two CI jobs.
+#
+# Every push runs both. They are separate jobs because the halves need
+# different runtimes -- CPython for the backend, Node for the frontend -- and
+# because a frontend failure must not hide the backend result behind it.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Read-only: nothing here pushes, deploys or writes to the API.
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests (pytest)
+    runs-on: ubuntu-latest
+    # A cold image build resolves every wheel from PyPI, which 26.1's case
+    # allows 30 minutes for on its own, inside the suite collected below.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # The interpreter the image pins (D214), not the runner default.
+          python-version: "3.13"
+          cache: pip
+          # Both files, because requirements-dev.txt includes requirements.txt
+          # and the cache key has to follow the one that changes.
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install the backend dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      # The command and the path check-all.ps1 runs, from the repository root
+      # so pytest finds backend/pytest.ini. This collects tests/deploy as well,
+      # which builds the image: the runner has the daemon this machine lacks.
+      - name: Run the backend suite
+        run: python -m pytest backend/tests -q
+
+  frontend:
+    name: Frontend tests, build and artefacts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the frontend dependencies
+        run: npm ci
+
+      - name: Run the frontend tests
+        run: npm test
+
+      - name: Build the frontend
+        run: npm run build
+
+      # Only now is there a dist/ to read, so the check follows the build.
+      - name: Check the built artefacts
+        run: npm run check-artefacts

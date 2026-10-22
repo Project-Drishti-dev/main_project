@@ -84,8 +84,36 @@ def _scan_skew(img_bgr):
     return float(best)
 
 
+def text_skew(img_bgr, mode="scan"):
+    """The **signed** angle in degrees the text of this image sits at.
+
+    ``assess`` reports ``abs()`` of this number, and that is the whole of what
+    a quality gate needs: "is this straight enough" has no direction in it.  A
+    caller that has to *act* on the angle rather than judge it does --
+    ``app.pipeline.tier0.mrz_region.deskew`` rotates the working image upright
+    before looking for the MRZ, and rotating the wrong way doubles the skew
+    instead of removing it.  So the signed reading is published here rather
+    than re-derived at the call site, which is the only way there is one
+    answer to "how far round is this image".
+
+    ``mode`` picks the estimator, and both are the ones this module already
+    used: ``"scan"`` is the row-projection search over +/-15 degrees, which is
+    the right reading for a flat or digital capture, and ``"photo"`` is the
+    text-block ``minAreaRect``, which is what a camera photo of a document has
+    always fallen back to when no card outline could be found.
+
+    Returns ``None`` when the text-block estimator finds no text at all.  The
+    scan estimator always returns a number, and on an image with no text in it
+    that number sits on the edge of its search -- which is why a caller that
+    acts on this angle has to bound it before it acts.
+    """
+    if mode == "scan":
+        return _scan_skew(img_bgr)
+    return _text_skew(img_bgr)
+
+
 def _assess_scan(img_bgr):
-    skew = _scan_skew(img_bgr)
+    skew = text_skew(img_bgr, mode="scan")
     reasons = [] if abs(skew) <= MAX_SKEW_DEG else ["rotated"]
     return {
         "module": "skew", "score": round(abs(skew), 2), "unit": "estimated text skew in degrees (lower = straighter)",
@@ -113,7 +141,7 @@ def assess(img_bgr, mode="photo"):
                     ratio(np.linalg.norm(bl - tl), np.linalg.norm(br - tr)))
         method = f"card outline ({card['method']})"
     else:
-        skew = _text_skew(img_bgr)
+        skew = text_skew(img_bgr, mode="photo")
         persp = None
         method = "text-block fallback (rough)"
         if skew is None:

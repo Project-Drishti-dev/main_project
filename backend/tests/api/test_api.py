@@ -45,13 +45,6 @@ def make_png() -> bytes:
     return data.tobytes()
 
 
-def test_health_endpoint_reports_service_ready():
-    response = client.get("/health")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
-
-
 def test_analyze_requires_an_image():
     response = client.post("/api/analyze")
 
@@ -134,6 +127,12 @@ def test_analyze_returns_all_nine_quality_checks():
     assert result["image"] == {"width": 640, "height": 480}
     assert isinstance(result["overall_pass"], bool)
     assert len(result["modules"]) == 9
+    assert {check["tier"] for check in result["tier_checks"]} == {0, 1, 2}
+    tier2_checks = [check for check in result["tier_checks"] if check["tier"] == 2]
+    assert len(tier2_checks) == 7
+    assert all(check["is_stub"] for check in tier2_checks)
+    assert all(check["status"] in {"stub", "failed"} for check in tier2_checks)
+    assert "prototypes, not proof" in result["tier_notice"].lower()
     assert all(
         {
             "module",

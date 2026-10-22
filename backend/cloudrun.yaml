@@ -1,0 +1,92 @@
+# The one place DRISHTI's Cloud Run service settings are written down.
+#
+# Applied with:
+#   gcloud builds submit --config cloudbuild.yaml
+#   gcloud run services replace cloudrun.yaml --allow-unauthenticated
+#
+# `gcloud run deploy --source .` is deliberately not used: a source deploy
+# writes its own revision template and would overwrite every setting below on
+# the next deploy. `services replace` applies this file as written, so the
+# checked-in values are the deployed values.
+#
+# This is a v2 Service definition. The three settings the task names, and why
+# each is what it is:
+#
+#   maxInstanceRequestConcurrency: 1
+#     One request at a time per instance. The cascade holds a CPU and an
+#     inference model for the whole of a request, and the service keeps
+#     per-process state a second concurrent request would interleave with:
+#     the in-memory rate-limit budget (D78) and the Merkle batching window are
+#     both counted per process, so concurrency above 1 makes them
+#     per-instance accounting rather than per-service. Concurrency 1 is also
+#     what the image's single uvicorn process expects; nothing in the repo
+#     runs more than one worker.
+#
+#   scaling.maxInstanceCount: 2
+#     Small on purpose. This is an unauthenticated public demo endpoint on a
+#     shared project, so the instance ceiling is a cost and abuse bound, not
+#     a throughput setting: two instances cap what one address can make the
+#     project pay for. minInstanceCount stays 0 so an idle demo costs nothing.
+#     Raise this only alongside a real queue and a rate limit that is
+#     per-service rather than per-process.
+#
+#   timeout: 600s
+#     Sized for the cascade, not copied from a default. The abstract budgets
+#     Tier 0 under 0.3 s, Tier 1 at 0.5-1 s and Tier 2 at 1-2 s, which is a
+#     few seconds of work on the hardware those targets assume; this demo runs
+#     the same cascade on a shared CPU instance with no GPU, cold-start model
+#     load included. 600 s is roughly a hundred times the tier targets, which
+#     leaves room for a cold start and a slow Tier 2 while staying far under
+#     the 60-minute platform maximum. The summariser's own 30 s budget
+#     (LOCAL_LLM_TIMEOUT_SECONDS) is the largest single step and sits well
+#     inside it. Cloud Run's documented ceiling is 3600 s (60 minutes); this is
+#     set below it on purpose, and
+#     `tests/unit/test_cloudrun_config_contract.py` holds the line.
+#
+# Verified against the Cloud Run Admin API v2 schema
+# (run.googleapis.com/$discovery/rest?version=v2): concurrency is
+# `maxInstanceRequestConcurrency`, the instance ceiling is
+# `scaling.maxInstanceCount`, and the timeout is a `google-duration` string.
+
+apiVersion: run.googleapis.com/v2
+kind: Service
+
+metadata:
+  name: drishti-quality-api
+  labels:
+    app: drishti
+    component: backend
+
+spec:
+  # Public access is granted on the command that applies this file
+  # (--allow-unauthenticated), not written here, so this file holds capacity
+  # settings only and the public-access decision stays an explicit act at
+  # deploy time.
+  template:
+    # One request at a time per instance. See the note above.
+    maxInstanceRequestConcurrency: 1
+
+    # Scale to zero when idle; never run more than two instances. See above.
+    scaling:
+      minInstanceCount: 0
+      maxInstanceCount: 2
+
+    # Ten minutes: enough for a cold start and a slow Tier 2 on a shared CPU
+    # instance, well under the 60-minute platform ceiling. See above.
+    timeout: 600s
+
+    containers:
+      # Built and pushed by cloudbuild.yaml, which reads the same pinned
+      # Dockerfile the image contract tests read.
+      - image: asia-south1-docker.pkg.dev/DRISHTI_PROJECT/drishti-backend:latest
+        ports:
+          # The port the image serves and exposes (26.1).
+          - containerPort: 8080
+        env:
+          - name: APP_ENV
+            # 19.1: a deployed revision holds real evidence, so a missing
+            # EVIDENCE_ENCRYPTION_KEY must stop the service rather than
+            # generate one per instance.
+            value: production
+          - name: LOG_LEVEL
+            value: INFO

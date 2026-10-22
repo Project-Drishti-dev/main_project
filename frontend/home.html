@@ -1,226 +1,89 @@
-<!doctype html>
-<html lang="en" data-theme="light">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Public DRISHTI image-quality demo. No accounts or sign-in."
-    />
-    <title>Image quality demo | DRISHTI</title>
-    <link
-      rel="stylesheet"
-      href="./node_modules/ux4g-web-components/styles/ux4g.css"
-    />
-    <link rel="stylesheet" href="./home.css" />
-  </head>
-  <body class="workspace-page">
-    <div id="workspace-shell" class="workspace-shell">
-      <aside id="app-sidebar" class="app-sidebar" aria-label="Workspace sidebar">
-        <a class="app-brand" href="./home.html" aria-label="DRISHTI workspace">
-          <span class="app-brand__mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" focusable="false">
-              <path d="M4 16s4.4-8 12-8 12 8 12 8-4.4 8-12 8S4 16 4 16Z" />
-              <circle cx="16" cy="16" r="3.5" />
-            </svg>
-          </span>
-          <span class="sidebar-label app-brand__name">DRISHTI</span>
-        </a>
-
-        <button
-          class="sidebar-toggle ux4g-icon-btn ux4g-icon-btn-text-primary ux4g-icon-btn-md"
-          id="sidebar-toggle"
-          type="button"
-          aria-label="Expand sidebar"
-          aria-controls="sidebar-navigation"
-          aria-expanded="false"
-          title="Expand sidebar"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="m9 5 7 7-7 7" />
-          </svg>
-        </button>
-
-        <div class="sidebar-profile">
-          <span class="profile-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false">
-              <circle cx="12" cy="8" r="3.5" />
-              <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
-            </svg>
-          </span>
-          <span class="sidebar-label profile-name">Demo</span>
-        </div>
-
-        <nav id="sidebar-navigation" class="sidebar-navigation" aria-label="Main navigation">
-          <ul>
-            <li>
-              <button
-                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Previous screenings"
-                aria-label="Previous screenings"
-                title="Previous screenings"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M4 7h16M4 12h16M4 17h10" />
-                  <path d="M3 4v16" />
-                </svg>
-                <span class="sidebar-label">Previous screenings</span>
-              </button>
-            </li>
-            <li>
-              <button
-                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Settings"
-                aria-label="Settings"
-                title="Settings"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="12" cy="12" r="3" />
-                  <path d="m19 13.5 1.2 1-.9 1.6-1.5-.3a7 7 0 0 1-1.4.8l-.4 1.5h-1.9l-.5-1.5a7 7 0 0 1-1.4-.8l-1.5.3-.9-1.6 1.2-1a6 6 0 0 1 0-1.6l-1.2-1 .9-1.6 1.5.3a7 7 0 0 1 1.4-.8l.5-1.5h1.9l.4 1.5a7 7 0 0 1 1.4.8l1.5-.3.9 1.6-1.2 1a6 6 0 0 1 0 1.6Z" />
-                </svg>
-                <span class="sidebar-label">Settings</span>
-              </button>
-            </li>
-            <li>
-              <button
-                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="Guide"
-                aria-label="Guide"
-                title="Guide"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M9.6 9a2.5 2.5 0 1 1 4.5 1.5c-.8 1-2.1 1.2-2.1 2.8M12 17h.01" />
-                </svg>
-                <span class="sidebar-label">Guide</span>
-              </button>
-            </li>
-            <li>
-              <button
-                class="sidebar-link ux4g-btn ux4g-btn-text-neutral ux4g-btn-md"
-                type="button"
-                data-sidebar-placeholder="About"
-                aria-label="About"
-                title="About"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 11v5M12 8h.01" />
-                </svg>
-                <span class="sidebar-label">About</span>
-              </button>
-            </li>
-          </ul>
-
-        </nav>
-        <p id="sidebar-status" class="sidebar-status" role="status" aria-live="polite"></p>
-      </aside>
-
-      <div class="workspace-main">
-        <header class="workspace-topbar">
-          <p class="workspace-topbar__label">
-            <span class="topbar-mark" aria-hidden="true"></span>
-            Public image-quality demo
-          </p>
-          <span class="workspace-topbar__state">
-            <span aria-hidden="true"></span>
-            Prototype
-          </span>
-        </header>
-
-        <main class="workspace-content">
-          <section class="welcome-banner ux4g-card ux4g-p-l" aria-labelledby="welcome-title">
-            <div class="welcome-copy">
-              <p class="eyebrow">PUBLIC PROTOTYPE · NO SIGN-IN</p>
-              <h1 id="welcome-title">DRISHTI image-quality demo</h1>
-              <p>
-                Experimental image-quality checks only—not identity
-                verification. Use synthetic images; do not upload real identity
-                documents.
-              </p>
-            </div>
-            <div class="welcome-art" aria-hidden="true">
-              <div class="welcome-art__orbit welcome-art__orbit--outer"></div>
-              <div class="welcome-art__orbit welcome-art__orbit--inner"></div>
-              <div class="welcome-art__document">
-                <span></span>
-                <i></i><i></i><i></i>
-                <b></b>
-              </div>
-              <span class="welcome-art__spark welcome-art__spark--one"></span>
-              <span class="welcome-art__spark welcome-art__spark--two"></span>
-            </div>
-          </section>
-
-          <section class="screening-callout ux4g-card ux4g-p-l" aria-labelledby="screening-title">
-            <div class="screening-callout__copy">
-              <p class="eyebrow">READY WHEN YOU ARE</p>
-              <h2 id="screening-title">Try an image-quality check</h2>
-              <p>
-                Check image clarity, lighting, framing, and other quality
-                signals before moving on.
-              </p>
-            </div>
-            <button
-              class="ux4g-btn ux4g-btn-primary ux4g-btn-lg screening-start"
-              id="start-screening"
-              type="button"
-              data-modal-target="#screening-modal"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5Z" />
-                <circle cx="9" cy="9" r="1.5" />
-                <path d="m5 17 5-5 3 3 2-2 4 4" />
-              </svg>
-              Try the demo
-              <span aria-hidden="true">→</span>
-            </button>
-          </section>
-
-          <section class="workspace-cards" aria-label="Workspace information">
-            <article class="info-card ux4g-card ux4g-p-l">
-              <div class="info-card__icon info-card__icon--quality" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M4 5h16v14H4zM8 9h8M8 12h5M8 15h3" />
-                  <path d="m16 15 1.5 1.5L20 13" />
-                </svg>
-              </div>
-              <p class="eyebrow">IMAGE QUALITY</p>
-              <h2>Nine signals, one clearer view</h2>
-              <p>
-                The checker is designed to review sharpness, noise, exposure,
-                glare, framing, and more.
-              </p>
-            </article>
-
-            <article class="info-card ux4g-card ux4g-p-l">
-              <div class="info-card__icon info-card__icon--prototype" aria-hidden="true">
-                <svg viewBox="0 0 24 24" focusable="false">
-                  <path d="M12 3 4.5 6v5.5c0 4.5 3.2 7.8 7.5 9.5 4.3-1.7 7.5-5 7.5-9.5V6Z" />
-                  <path d="M12 8v4M12 15h.01" />
-                </svg>
-              </div>
-              <p class="eyebrow">IMAGE HANDLING</p>
-              <h2>Sent only when you submit</h2>
-              <p>
-                The selected image is sent to the configured quality API for
-                analysis. The prototype API does not save image files.
-              </p>
-            </article>
-          </section>
-        </main>
-
-        <footer class="workspace-footer">
-          <span>DRISHTI</span>
-          <span>Document quality screening prototype</span>
-        </footer>
-      </div>
+{{pageTitle}}Image quality demo
+{{pageDescription}}Public DRISHTI image-quality demo. No accounts or sign-in.
+{{pageHeading}}Public image-quality demo
+{{activeNavKey}}home
+{{content}}
+<section class="welcome-banner ux4g-card ux4g-p-l" aria-labelledby="welcome-title">
+  <div class="welcome-copy">
+    <p class="eyebrow">PUBLIC PROTOTYPE · NO SIGN-IN</p>
+    <h1 id="welcome-title">DRISHTI image-quality demo</h1>
+    <p>
+      Experimental image-quality checks only—not identity
+      verification. Use synthetic images; do not upload real identity
+      documents.
+    </p>
+  </div>
+  <div class="welcome-art" aria-hidden="true">
+    <div class="welcome-art__orbit welcome-art__orbit--outer"></div>
+    <div class="welcome-art__orbit welcome-art__orbit--inner"></div>
+    <div class="welcome-art__document">
+      <span></span>
+      <i></i><i></i><i></i>
+      <b></b>
     </div>
+    <span class="welcome-art__spark welcome-art__spark--one"></span>
+    <span class="welcome-art__spark welcome-art__spark--two"></span>
+  </div>
+</section>
 
-    <div
+<section class="screening-callout ux4g-card ux4g-p-l" aria-labelledby="screening-title">
+  <div class="screening-callout__copy">
+    <p class="eyebrow">READY WHEN YOU ARE</p>
+    <h2 id="screening-title">Try an image-quality check</h2>
+    <p>
+      Check image clarity, lighting, framing, and other quality
+      signals before moving on.
+    </p>
+  </div>
+  <button
+    class="ux4g-btn ux4g-btn-primary ux4g-btn-lg screening-start"
+    id="start-screening"
+    type="button"
+  >
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5Z" />
+      <circle cx="9" cy="9" r="1.5" />
+      <path d="m5 17 5-5 3 3 2-2 4 4" />
+    </svg>
+    Try the demo
+    <span aria-hidden="true">→</span>
+  </button>
+</section>
+
+<section class="workspace-cards" aria-label="Workspace information">
+  <article class="info-card ux4g-card ux4g-p-l">
+    <div class="info-card__icon info-card__icon--quality" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M4 5h16v14H4zM8 9h8M8 12h5M8 15h3" />
+        <path d="m16 15 1.5 1.5L20 13" />
+      </svg>
+    </div>
+    <p class="eyebrow">IMAGE QUALITY</p>
+    <h2>Nine signals, one clearer view</h2>
+    <p>
+      The checker is designed to review sharpness, noise, exposure,
+      glare, framing, and more.
+    </p>
+  </article>
+
+  <article class="info-card ux4g-card ux4g-p-l">
+    <div class="info-card__icon info-card__icon--prototype" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M12 3 4.5 6v5.5c0 4.5 3.2 7.8 7.5 9.5 4.3-1.7 7.5-5 7.5-9.5V6Z" />
+        <path d="M12 8v4M12 15h.01" />
+      </svg>
+    </div>
+    <p class="eyebrow">IMAGE HANDLING</p>
+    <h2>Sent only when you submit</h2>
+    <p>
+      The selected image is sent to the configured quality API for
+      analysis. The prototype API does not save image files.
+    </p>
+  </article>
+</section>
+{{/content}}
+{{overlays}}
+<div
       id="screening-modal"
       class="ux4g-modal-backdrop ux4g-modal-backdrop-50 ux4g-modal-backdrop-blur"
       role="dialog"
@@ -362,7 +225,7 @@
       <div class="ux4g-modal-box ux4g-modal-l results-modal-box">
         <div class="ux4g-modal-header">
           <div>
-            <p class="eyebrow">IMAGE QUALITY OVERVIEW</p>
+            <p class="eyebrow">IMAGE QUALITY AND TIER CHECKS</p>
             <h2 id="results-modal-title">Screening results</h2>
           </div>
           <button
@@ -388,7 +251,7 @@
             Upload and run the quality checks to see the analysis here.
           </p>
           <p id="overall-result" class="overall-result" role="status" aria-live="polite">
-            No analysis completed yet.
+            No image-quality analysis completed yet.
           </p>
           <ul class="metric-grid" aria-label="Quality check results">
             <li class="metric-card" data-module="sharpness">
@@ -500,6 +363,29 @@
               </div>
             </li>
           </ul>
+          <section
+            class="ux4g-d-flex ux4g-flex-column ux4g-gap-y-m"
+            aria-labelledby="tier-results-title"
+          >
+            <h3 id="tier-results-title">Document screening tiers</h3>
+            <div
+              id="tier-stub-notice"
+              class="ux4g-alert ux4g-alert-warning"
+              role="note"
+              hidden
+            >
+              <div class="ux4g-alert-content">
+                <p class="ux4g-alert-title">Tier 2 prototype results</p>
+                <p id="tier-stub-notice-text" class="ux4g-alert-message"></p>
+              </div>
+            </div>
+            <ul
+              id="tier-check-results"
+              class="ux4g-list ux4g-list-default ux4g-d-flex ux4g-flex-column ux4g-gap-y-m"
+              aria-label="Tier check results"
+              aria-live="polite"
+            ></ul>
+          </section>
           <div class="results-actions">
             <button
               class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
@@ -519,9 +405,7 @@
         </div>
       </div>
     </div>
-
-    <script src="./node_modules/ux4g-web-components/dist/runtime/design-system.js"></script>
-    <script src="./api-config.js"></script>
-    <script src="./home.js"></script>
-  </body>
-</html>
+{{/overlays}}
+{{pageScripts}}
+<script src="./home.js"></script>
+{{/pageScripts}}

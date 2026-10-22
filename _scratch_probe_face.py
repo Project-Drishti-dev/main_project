@@ -1,0 +1,10 @@
+from pathlib import Path
+p = Path(r"D:\sih\main_project\backend\app\pipeline\tier1\insightface_embedder.py")
+raw = p.read_bytes()
+text = raw.decode("utf-8")
+print("bytes:", len(raw), "lines:", text.count(chr(10)))
+print("has CR:", b"\r\n" in raw)
+print("ends with newline:", raw.endswith(b"\n"))
+print("first line:", text.splitlines()[0])
+print("last line:", text.splitlines()[-1])
+print("classes:", [n for n in ("class InsightFaceEmbedder(Embedder):", "def is_available", "def embed", "def _recogniser_for") if n in text])

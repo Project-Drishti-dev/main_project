@@ -1,0 +1,80 @@
+{{pageTitle}}Results
+{{pageDescription}}Every metric this prototype has measured, each one beside the dataset it was read over.
+{{pageHeading}}Results
+{{activeNavKey}}results
+{{content}}
+<section class="page-header" aria-labelledby="results-title">
+  <div class="page-header__copy">
+    <p class="eyebrow">RESULTS</p>
+    <h1 id="results-title">Results</h1>
+    <p class="page-header__description">
+      Every metric this prototype has measured, each one beside the dataset it
+      was read over. A number with no dataset behind it is not shown here; the
+      abstract's own targets are marked as design targets instead.
+    </p>
+  </div>
+</section>
+
+<section class="table-panel ux4g-card" aria-labelledby="results-metrics-title">
+  <h2 id="results-metrics-title" class="visually-hidden">Measured metrics</h2>
+  <div class="ux4g-card-body">
+    <div class="table-toolbar">
+      <p class="table-toolbar__meta" id="results-count" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- 27.12: the metric rows. The markup is a container, not a record --
+       `results.js` reads `results-metrics.js` and draws one row per metric, so
+       the page ships no sample row. The metrics themselves are written by
+       `tests/fixtures/results_view.py`, which is the only reader the four
+       Part 27 harnesses have on the way to a screen; nothing on this page
+       computes or rounds a number. Gate 27 is held in two places: the harness
+       refuses to emit a row that shows a number and names no dataset, and
+       `results.js` refuses to draw one if a file reaches the page anyway. The
+       grid is UX4G's own responsive table and the page adds no CSS of its
+       own. -->
+  <div class="table-scroll">
+    <table class="ux4g-table ux4g-table-m ux4g-table-responsive" id="results-metrics">
+      <caption class="visually-hidden">
+        Measured metrics, each with the dataset it was read over
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Metric</th>
+          <th scope="col">Result</th>
+          <th scope="col">Source</th>
+          <th scope="col">Dataset</th>
+          <th scope="col">Read by</th>
+        </tr>
+      </thead>
+
+      <tbody id="results-body"></tbody>
+    </table>
+  </div>
+
+  <!-- 27.12: the empty state. A metrics file that carried no metric at all is
+       an answer rather than a failure, and it is the only other state this
+       page has: `results-metrics.js` is a script the page loads rather than a
+       route it reads, so there is no request in flight to describe and no
+       failure the service can word. Design.md 13 forbids a bespoke empty
+       illustration, so none is drawn. -->
+  <div class="ux4g-card-body" id="results-empty" hidden>
+    <div class="ux4g-empty-state">
+      <div class="ux4g-empty-state-content">
+        <h2>No metric has been read yet</h2>
+        <p>
+          The measurement harnesses have not written a result to this page. No
+          number is shown in their place, because a number with no dataset
+          behind it is the one thing this page refuses to show.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+{{/content}}
+{{overlays}}
+{{/overlays}}
+{{pageScripts}}
+<script src="./results-metrics.js"></script>
+<script src="./results.js"></script>
+{{/pageScripts}}

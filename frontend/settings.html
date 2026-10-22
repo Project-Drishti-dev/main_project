@@ -1,0 +1,227 @@
+{{pageTitle}}Settings
+{{pageDescription}}Adjust DRISHTI display preferences such as theme and text size.
+{{pageHeading}}Settings
+{{activeNavKey}}settings
+{{content}}
+<section class="page-header" aria-labelledby="settings-title">
+  <div class="page-header__copy">
+    <p class="eyebrow">PREFERENCES</p>
+    <h1 id="settings-title">Settings</h1>
+    <p class="page-header__description">
+      Appearance options are saved in this browser and apply to every
+      DRISHTI page. Screening options below are placeholders.
+    </p>
+  </div>
+</section>
+
+<div class="ux4g-alert ux4g-alert-info" role="note">
+  <span
+    ><strong>Stored on this device only.</strong> Theme and text size are
+    kept in your browser&rsquo;s local storage. No account is involved and
+    nothing is sent to a server.</span
+  >
+</div>
+
+<section class="ux4g-card ux4g-p-l settings-group" aria-labelledby="appearance-title">
+  <h2 class="settings-group__title" id="appearance-title">Appearance</h2>
+  <p class="settings-group__hint">
+    Uses the UX4G colour themes. Changes apply immediately.
+  </p>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong id="theme-label">Theme</strong>
+      <small>Light, dark, or follow your device setting.</small>
+    </div>
+    <div
+      class="settings-row__control choice-group"
+      role="radiogroup"
+      aria-labelledby="theme-label"
+      id="theme-options"
+    >
+      <label class="ux4g-radio ux4g-radio-md">
+        <input
+          class="ux4g-radio-input"
+          type="radio"
+          name="theme"
+          value="light"
+          checked
+        />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">Light</span>
+      </label>
+      <label class="ux4g-radio ux4g-radio-md">
+        <input class="ux4g-radio-input" type="radio" name="theme" value="dark" />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">Dark</span>
+      </label>
+      <label class="ux4g-radio ux4g-radio-md">
+        <input class="ux4g-radio-input" type="radio" name="theme" value="system" />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">System</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong id="text-size-label">Text size</strong>
+      <small>Scales the whole interface. Your choice is remembered.</small>
+    </div>
+    <div
+      class="settings-row__control choice-group"
+      role="radiogroup"
+      aria-labelledby="text-size-label"
+      id="text-size-options"
+    >
+      <label class="ux4g-radio ux4g-radio-md">
+        <input
+          class="ux4g-radio-input"
+          type="radio"
+          name="text-size"
+          value="default"
+          checked
+        />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">Default</span>
+      </label>
+      <label class="ux4g-radio ux4g-radio-md">
+        <input
+          class="ux4g-radio-input"
+          type="radio"
+          name="text-size"
+          value="large"
+        />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">Large</span>
+      </label>
+      <label class="ux4g-radio ux4g-radio-md">
+        <input
+          class="ux4g-radio-input"
+          type="radio"
+          name="text-size"
+          value="x-large"
+        />
+        <span class="ux4g-radio-control"><span class="ux4g-radiomark"></span></span>
+        <span class="ux4g-radio-content">Extra large</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong>Preview</strong>
+      <small id="text-size-summary">
+        Default text size. Sample: sharpness, glare, and framing.
+      </small>
+    </div>
+    <div class="settings-row__control">
+      <button
+        class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+        id="reset-preferences"
+        type="button"
+      >
+        Reset to defaults
+      </button>
+    </div>
+  </div>
+</section>
+
+<section class="ux4g-card ux4g-p-l settings-group" aria-labelledby="screening-title">
+  <h2 class="settings-group__title" id="screening-title">Screening</h2>
+  <p class="settings-group__hint">
+    Placeholder controls. These are not connected to the analysis API.
+  </p>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong>Run checks automatically</strong>
+      <small>Start the quality checks as soon as an image is selected.</small>
+    </div>
+    <div class="settings-row__control">
+      <label class="ux4g-switch ux4g-switch-md">
+        <input
+          class="ux4g-switch-input"
+          type="checkbox"
+          role="switch"
+          data-placeholder-switch
+          checked
+        />
+        <span class="ux4g-switch-control">
+          <span class="ux4g-switch-track"><span class="ux4g-switch-thumb"></span></span>
+        </span>
+        <span class="visually-hidden">Run checks automatically</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong>Show detailed reasons</strong>
+      <small>Display the rule and measured value behind each check.</small>
+    </div>
+    <div class="settings-row__control">
+      <label class="ux4g-switch ux4g-switch-md">
+        <input
+          class="ux4g-switch-input"
+          type="checkbox"
+          role="switch"
+          data-placeholder-switch
+          checked
+        />
+        <span class="ux4g-switch-control">
+          <span class="ux4g-switch-track"><span class="ux4g-switch-thumb"></span></span>
+        </span>
+        <span class="visually-hidden">Show detailed reasons</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong>Keep the preview after checking</strong>
+      <small>Leave the selected image on screen when results appear.</small>
+    </div>
+    <div class="settings-row__control">
+      <label class="ux4g-switch ux4g-switch-md">
+        <input
+          class="ux4g-switch-input"
+          type="checkbox"
+          role="switch"
+          data-placeholder-switch
+        />
+        <span class="ux4g-switch-control">
+          <span class="ux4g-switch-track"><span class="ux4g-switch-thumb"></span></span>
+        </span>
+        <span class="visually-hidden">Keep the preview after checking</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="settings-row">
+    <div class="settings-row__copy">
+      <strong>Camera capture</strong>
+      <small>Not available yet. Use an existing image for now.</small>
+    </div>
+    <div class="settings-row__control">
+      <label class="ux4g-switch ux4g-switch-md">
+        <input
+          class="ux4g-switch-input"
+          type="checkbox"
+          role="switch"
+          data-placeholder-switch
+          disabled
+        />
+        <span class="ux4g-switch-control">
+          <span class="ux4g-switch-track"><span class="ux4g-switch-thumb"></span></span>
+        </span>
+        <span class="visually-hidden">Camera capture (coming soon)</span>
+      </label>
+    </div>
+  </div>
+</section>
+{{/content}}
+{{overlays}}
+{{/overlays}}
+{{pageScripts}}
+{{/pageScripts}}

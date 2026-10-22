@@ -5,6 +5,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from app.logging_config import log_event
+
 from . import (
     m1_sharpness,
     m2_noise,
@@ -122,7 +124,12 @@ def detect_mode(image: np.ndarray) -> str:
     try:
         card = m8_coverage.find_card(image)
     except Exception:
-        logger.exception("Card detection failed while determining image mode")
+        log_event(
+            logger,
+            "card_detection_failed",
+            level=logging.ERROR,
+            exc_info=True,
+        )
         card = None
 
     if card is None or card["touches_border"] or card["area_frac"] > 0.85:
@@ -185,7 +192,13 @@ def run_all(
             result["mode"] = mode
             results.append(_json_safe(result))
         except Exception:
-            logger.exception("Quality-check module failed: %s", module.__name__)
+            log_event(
+                logger,
+                "quality_check_module_failed",
+                level=logging.ERROR,
+                exc_info=True,
+                module=module.__name__,
+            )
             results.append(
                 {
                     "module": module.__name__,

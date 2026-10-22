@@ -1,0 +1,1 @@
+﻿backtick 	ick and 'single' and [bracket] {brace} (paren) %percent% #hash |pipe| ;semi& amp* star

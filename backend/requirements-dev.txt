@@ -1,3 +1,5 @@
 -r requirements.txt
+# cryptography versions as 4X.Y.Z, so <50 caps the 4x line
+cryptography>=42,<50
 httpx>=0.27,<1
 pytest>=8,<10

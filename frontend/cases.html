@@ -1,0 +1,123 @@
+{{pageTitle}}Case
+{{pageDescription}}The documents of one traveler, side by side, each with its band and the cross-document flags raised against it.
+{{pageHeading}}Case
+{{activeNavKey}}screenings
+{{content}}
+<section class="page-header" aria-labelledby="case-title">
+  <div class="page-header__copy">
+    <p class="eyebrow">CASE</p>
+    <h1 id="case-title">Case</h1>
+    <p class="page-header__description">
+      Every document screened for one traveler, side by side. Each card shows
+      the kind of document, the band it was scored at, and the rules that
+      compared it with another document.
+    </p>
+  </div>
+</section>
+
+<section class="table-panel ux4g-card" aria-labelledby="case-documents-title">
+  <h2 id="case-documents-title" class="visually-hidden">Documents in this case</h2>
+  <div class="ux4g-card-body">
+    <div class="table-toolbar">
+      <p class="table-toolbar__meta" id="case-count" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- 24.11: the documents, side by side. The markup is a container, not a
+       record -- `cases.js` reads `GET /api/screenings/{id}` once per `id` the
+       query string names and draws one card per document, so the page ships
+       no sample card. G15: no route groups a traveler's documents into a
+       case, so the grouping is the set of ids the page was opened with. The
+       grid is UX4G's own (one column, two from 768px, three from 1200px) and
+       the page adds no CSS of its own. -->
+  <div class="ux4g-card-body">
+    <div
+      class="ux4g-grid ux4g-grid-cols-1 ux4g-md-grid-cols-2 ux4g-xl-grid-cols-3 ux4g-gap-m"
+      id="case-documents"
+    ></div>
+  </div>
+
+  <!-- 24.11: the loading state, 24.7's composition. `aria-busy` on the
+       container and `aria-hidden` on every shape, written by the same call
+       that switches them, because the skeleton ships no ARIA (G2). G8: all
+       seven shapes only carry size and colour inside
+       .ux4g-application-submission, so these draw nothing until that rule
+       lands. The same debt result.html, screenings.html and audit.html carry. -->
+  <div class="ux4g-card-body" id="case-loading" aria-busy="true">
+    <p class="visually-hidden">Loading the case.</p>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+    <div class="ux4g-skeleton-block" aria-hidden="true"></div>
+  </div>
+
+  <!-- 24.11: the error state, said in the failure's own words. `cases.js`
+       writes the message the service wrote into the paragraph. role="alert"
+       because it arrives after a read, not on page load. -->
+  <div class="ux4g-card-body" id="case-error" hidden>
+    <div class="ux4g-alert ux4g-alert-error" role="alert">
+      <div class="ux4g-alert-content">
+        <h2 class="ux4g-alert-title">Could not load the case</h2>
+        <p class="ux4g-alert-message" id="case-error-message"></p>
+      </div>
+      <div class="ux4g-alert-actions">
+        <button
+          class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md"
+          id="case-retry"
+          type="button"
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 24.11: the empty state. A page opened with no `id` in its query string
+       was never asked about a document, which is an answer rather than a
+       failure. The sheet's own composition and no icon: Design.md 13 forbids
+       a bespoke illustration, and G12 -- which screenings.html still carries --
+       is not repeated here. A case that named one document is a different
+       answer and does not come through here: that is #case-single below. -->
+  <div class="ux4g-card-body" id="case-empty" hidden>
+    <div class="ux4g-empty-state">
+      <div class="ux4g-empty-state-content">
+        <h2>No document was named</h2>
+        <p>
+          This page was opened without a screening to read. Open it from a
+          screening to see that document beside the others in the case.
+        </p>
+        <a class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" href="./screenings.html">
+          Previous screenings
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 24.12: the one-document case. A document was named, so #case-empty's
+       "no document was named" would be false here, and the case is not empty
+       either: it holds one real screening. D205 forbids inventing a second
+       document to compare it against, so the lone card drops its
+       cross-document section rather than claim no flag was raised when no
+       cross-document rule could have run, and the panel below says why. The
+       card keeps the document's own kind, id, band and score. -->
+  <div class="ux4g-card-body" id="case-single" hidden>
+    <div class="ux4g-empty-state">
+      <div class="ux4g-empty-state-content">
+        <h2>One document in this case</h2>
+        <p>
+          This case holds one document, so there is nothing beside it to
+          compare against. Cross-document checks compare two documents of the
+          same traveler; screening the other one fills this in.
+        </p>
+        <a class="ux4g-btn ux4g-btn-outline-primary ux4g-btn-md" href="./screenings.html">
+          Previous screenings
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+{{/content}}
+{{overlays}}
+{{/overlays}}
+{{pageScripts}}
+<script src="./cases.js"></script>
+{{/pageScripts}}

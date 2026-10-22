@@ -1,0 +1,52 @@
+# The one documented list of where the DRISHTI frontend is served and which
+# API it is built against (26.4).
+#
+# Two settings have to agree or a deployed origin quietly stops working, and
+# neither failure names the other:
+#
+#   CORS_ORIGINS          the allowlist the API enforces, read by
+#                         app.config.get_cors_origins() and applied by the
+#                         CORS_ORIGINS entry in cloudrun.yaml's env block. An
+#                         origin absent from it is refused by the browser.
+#   DRISHTI_API_BASE_URL  the API origin baked into dist/api-config.js when
+#                         the frontend is built. A frontend with no baked-in
+#                         origin issues no request at all, so nothing ever
+#                         reaches the allowlist to refuse it.
+#
+# The first is a backend setting, changed when a revision is deployed; the
+# second is a frontend setting, changed when the site is rebuilt. They are
+# written here as one list so that adding an origin is one row rather than two
+# edits in two files that have to be found separately.
+#
+# Every entry below is an origin that actually serves the frontend, read from
+# the run in docs/deployed-check/README.md (2026-10-05, a real Chromium against
+# the live deployment): the Cloudflare Pages host rendered the page and posted
+# an image, and the .tech host rendered it. Two origins the live revision
+# happened to allow are deliberately absent:
+#
+#   http://project-drishti.tech  that URL redirects, so the browser's
+#                                location.origin was the https one and the http
+#                                origin is never the origin on the wire.
+#   the github.io hosts          nothing in the run showed them serving this
+#                                frontend, so allowing them would be a guess.
+#
+# A wildcard is not an acceptable entry in either column. app.config refuses
+# "*", along with any other entry that is not a bare scheme://host[:port]
+# origin, and tests/unit/test_cors_allowlist_contract.py holds that line.
+#
+# The .tech host is listed ahead of its build being fixed: it renders, and the
+# frontend README's build step is what makes it reach the API. The allowlist
+# entry is what stops the browser refusing it once it does.
+#
+# apiBaseUrl: the API origin every deployment below is built against. One
+# service, so one value: the frontend build bakes this in as
+# DRISHTI_API_BASE_URL.
+apiBaseUrl: https://main-project-888645637790.asia-south1.run.app
+#
+# frontends: the origins that serve the frontend. This list, joined with
+# commas in the order written, is the CORS_ORIGINS value cloudrun.yaml applies.
+frontends:
+  - name: cloudflare-pages
+    frontendOrigin: https://project-drishti.pages.dev
+  - name: tech
+    frontendOrigin: https://project-drishti.tech

@@ -7,6 +7,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .config import MAX_IMAGE_PIXELS, MAX_UPLOAD_BYTES
 from .errors import APIError
+from .pipeline.tier_checks import TIER_NOTICE, run_tier_checks
 from .quality_checker.engine import analyze_image
 
 
@@ -17,12 +18,52 @@ ALLOWED_IMAGE_TYPES: Final = {
 }
 ALLOWED_MODES: Final = {"auto", "photo", "scan"}
 
+#: The advisory every analysis answers with, spelled once here so the route,
+#: the contract and the tests cannot drift. It travels beside the findings
+#: rather than replacing any of them.
+SYNTHETIC_IMAGE_NOTICE: Final = (
+    "Synthetic images only. Image-quality checks and tier signals are "
+    "experimental; they do not verify identity or document authenticity. "
+    "Never upload a real identity document."
+)
+
 
 def analyze_uploaded_image(
     contents: bytes,
     content_type: str | None,
     requested_mode: str = "auto",
 ) -> dict[str, Any]:
+    """Run quality and tier checks on one uploaded image.
+
+    :param contents: uploaded bytes; ``content_type`` is the client claim.
+    :returns: quality modules, safe tier summaries and prototype notices.
+    """
+    image = read_uploaded_image(contents, content_type, requested_mode)
+    return {
+        **analyze_image(image, requested_mode=requested_mode),
+        "tier_checks": [check.to_wire() for check in run_tier_checks(image)],
+        "tier_notice": TIER_NOTICE,
+        "notice": SYNTHETIC_IMAGE_NOTICE,
+    }
+
+
+def read_uploaded_image(
+    contents: bytes,
+    content_type: str | None,
+    requested_mode: str = "auto",
+) -> np.ndarray:
+    """The frame an upload is, once the checks both endpoints share have run.
+
+    :param contents: the uploaded bytes.
+    :param content_type: what the client declared, checked against what the
+        bytes turn out to be.
+    :param requested_mode: the caller's ``auto``/``photo``/``scan`` claim.
+    :returns: the decoded BGR frame.
+    :raises APIError: for every upload this service refuses, with the same
+        status and code ``/api/analyze`` answers with -- the caps, the media
+        types and the mode vocabulary are spelled once, here, so 11.1's
+        endpoint cannot answer differently from 11.9's.
+    """
     if len(contents) > MAX_UPLOAD_BYTES:
         raise APIError(413, "IMAGE_TOO_LARGE", "Choose an image that is 10 MB or smaller.")
     if not contents:
@@ -86,5 +127,4 @@ def analyze_uploaded_image(
             "INVALID_IMAGE",
             "The uploaded file is empty or is not a supported image.",
         )
-
-    return analyze_image(image, requested_mode=requested_mode)
+    return image

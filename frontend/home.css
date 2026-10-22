@@ -264,6 +264,31 @@ body.workspace-page {
   background: var(--ux4g-bg-secondary-strong);
 }
 
+.workspace-topbar__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ux4g-gap-column-s);
+  margin: 0;
+  color: var(--ux4g-text-neutral-secondary);
+  font-size: var(--ux4g-font-size-12);
+}
+
+.workspace-topbar__status::before {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: var(--ux4g-radius-full);
+  background: currentcolor;
+}
+
+.workspace-topbar__status[data-state="online"] {
+  color: var(--ux4g-text-status-success);
+}
+
+.workspace-topbar__status[data-state="unreachable"] {
+  color: var(--ux4g-text-status-error);
+}
+
 .topbar-mark {
   width: 0.625rem;
   height: 0.625rem;

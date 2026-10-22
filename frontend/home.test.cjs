@@ -5,6 +5,18 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const homePath = path.join(__dirname, "home.html");
+const { renderPage } = require("./build.cjs");
+
+// The shell reaches a page at build time, so the markup a page ships is
+// the rendered page rather than the fragment the build reads.
+function readHomePage() {
+  return renderPage(fs.readFileSync(homePath, "utf8"), "home.html");
+}
+// The start action is a button that opens the modal (D232).
+function startActionTag(html) {
+  return html.match(/<button\b[^>]*\bid="start-screening"[^>]*>/)?.[0] ?? "";
+}
+
 const MODULE_KEYS = [
   "sharpness",
   "noise",
@@ -132,7 +144,6 @@ function loadHomeScript({
     "workspace-shell",
     "app-sidebar",
     "sidebar-toggle",
-    "sidebar-status",
     "source-chooser",
     "upload-step",
     "choose-upload",
@@ -152,22 +163,15 @@ function loadHomeScript({
     "results-intro",
     "overall-result",
     "analysis-status",
+    "tier-check-results",
+    "tier-stub-notice",
+    "tier-stub-notice-text",
     "screening-source-message",
     "choose-another-image",
     "start-screening",
   ];
   const elements = new Map(ids.map((id) => [id, createElement()]));
   const metricCards = MODULE_KEYS.map(createMetricCard);
-  const sidebarOptions = [
-    "Previous screenings",
-    "Settings",
-    "Guide",
-    "About",
-  ].map((label) => {
-    const option = createElement();
-    option.setAttribute("data-sidebar-placeholder", label);
-    return option;
-  });
   const document = {
     body: { style: {} },
     activeElement: null,
@@ -179,7 +183,6 @@ function loadHomeScript({
       return createElement(tagName);
     },
     querySelectorAll(selector) {
-      if (selector === "[data-sidebar-placeholder]") return sidebarOptions;
       if (selector === ".metric-card") return metricCards;
       return [];
     },
@@ -187,7 +190,7 @@ function loadHomeScript({
       this.listeners[event] = callback;
     },
   };
-  for (const element of [...elements.values(), ...sidebarOptions]) {
+  for (const element of elements.values()) {
     element.focus = function focus() {
       this.focused = true;
       document.activeElement = this;
@@ -204,18 +207,60 @@ function loadHomeScript({
       objectUrls.push({ revoked: url });
     },
   };
-  const source = fs.readFileSync(path.join(__dirname, "home.js"), "utf8");
-  vm.runInNewContext(source, {
+  const armedTimers = new Map();
+  const timerDelays = [];
+  let nextTimerId = 1;
+  const clock = {
+    pending: () => armedTimers.size,
+    delays: () => timerDelays,
+    fire() {
+      const callbacks = Array.from(armedTimers.values());
+      armedTimers.clear();
+      for (const callback of callbacks) callback();
+    },
+  };
+  const sandbox = {
     document,
     URL: urlApi,
     FormData: MockFormData,
     fetch: fetchImpl,
-    window: { DRISHTI_CONFIG: { apiBaseUrl } },
-    setTimeout(callback) {
-      callback();
+    // Loaded empty on purpose: status.js probes at load, and an empty base
+    // settles "unconfigured" without dialling, so the probe puts no request
+    // and no timer into the counts the cases below assert on. The base is
+    // filled in once that module has settled, before home.js reads it.
+    window: { DRISHTI_CONFIG: {} },
+    AbortController,
+    // api.js arms an abort timer for its request budget; a case never fires
+    // it unless it asks for it, while home.js's zero-delay focus call runs.
+    setTimeout(callback, delay) {
+      if (delay === 0) {
+        callback();
+        return 0;
+      }
+      timerDelays.push(delay);
+      const id = nextTimerId;
+      nextTimerId += 1;
+      armedTimers.set(id, callback);
+      return id;
     },
-  });
-  return { elements, document, metricCards, objectUrls, sidebarOptions };
+    clearTimeout(id) {
+      armedTimers.delete(id);
+    },
+  };
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "api.js"), "utf8"),
+    sandbox,
+  );
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "status.js"), "utf8"),
+    sandbox,
+  );
+  sandbox.window.DRISHTI_CONFIG.apiBaseUrl = apiBaseUrl;
+  vm.runInNewContext(
+    fs.readFileSync(path.join(__dirname, "home.js"), "utf8"),
+    sandbox,
+  );
+  return { elements, document, metricCards, objectUrls, clock };
 }
 
 function makeAnalysisResponse(overrides = {}) {
@@ -224,6 +269,40 @@ function makeAnalysisResponse(overrides = {}) {
     image: { width: 1200, height: 800 },
     trim_box: null,
     overall_pass: false,
+    tier_checks: [
+      {
+        tier: 0,
+        module: "mrz_detection",
+        label: "MRZ format detection",
+        status: "completed",
+        value: null,
+        is_stub: false,
+        model_version: null,
+        detail: "No MRZ format detected.",
+      },
+      {
+        tier: 1,
+        module: "ocr",
+        label: "OCR engine",
+        status: "unavailable",
+        value: null,
+        is_stub: false,
+        model_version: null,
+        detail: "Tesseract is unavailable; OCR was not run.",
+      },
+      {
+        tier: 2,
+        module: "tamper_ela",
+        label: "Compression patterns",
+        status: "stub",
+        value: 0.2,
+        is_stub: true,
+        model_version: "heuristic-v0",
+        detail: "Looks for areas that change differently when the image is saved again.",
+      },
+    ],
+    tier_notice:
+      "These are prototypes, not proof. They may highlight patterns to review, but they cannot tell whether a document is genuine.",
     modules: MODULE_KEYS.map((module, index) => ({
       module,
       label: module[0].toUpperCase() + module.slice(1),
@@ -259,7 +338,7 @@ function selectPreviewImage(elements, file = {
 }
 
 test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
-  const html = fs.readFileSync(homePath, "utf8");
+  const html = readHomePage();
 
   assert.match(html, /<html lang="en" data-theme="light">/);
   assert.match(html, /node_modules\/ux4g-web-components\/styles\/ux4g\.css/);
@@ -270,28 +349,58 @@ test("homescreen keeps the light UX4G theme and uses local UX4G assets", () => {
   assert.match(html, /DRISHTI image-quality demo/);
   assert.match(html, /Experimental image-quality checks only—not identity\s+verification/);
   assert.match(html, /Use synthetic images; do not upload real identity\s+documents/);
-  assert.match(html, /id="start-screening"[^>]*data-modal-target="#screening-modal"/);
+  assert.match(html, /<button\b[^>]*id="start-screening"/);
   assert.match(html, /id="screening-modal"[^>]*role="dialog"/);
   assert.match(html, /id="results-modal"[^>]*role="dialog"/);
   assert.doesNotMatch(html, /type="password"|Forgot password\?|Personnel ID|Register/);
 });
 
-test("homescreen includes a compact expandable sidebar and placeholder options", () => {
-  const html = fs.readFileSync(homePath, "utf8");
+test("the home page start action opens the screening modal", () => {
+  const tag = startActionTag(readHomePage());
+
+  assert.notEqual(tag, "", "the start action must be a button on the rendered page");
+  assert.match(tag, /id="start-screening"/);
+  assert.match(
+    fs.readFileSync(path.join(__dirname, "home.js"), "utf8"),
+    /startScreeningButton\.addEventListener\("click"/,
+  );
+});
+
+test("a start action missing the id turns the modal case red", () => {
+  const html = readHomePage();
+  const mutated = html.replace('id="start-screening"', 'id="other-action"');
+  assert.notEqual(mutated, html, "the mutation must have landed");
+
+  assert.equal(startActionTag(mutated), "");
+});
+
+test("homescreen includes a compact expandable sidebar with working navigation", () => {
+  const html = readHomePage();
   const css = fs.readFileSync(path.join(__dirname, "home.css"), "utf8");
 
   assert.match(html, /id="sidebar-toggle"[^>]*aria-expanded="false"/);
   assert.match(html, /class="profile-avatar/);
   assert.match(css, /\.profile-name\s*\{[^}]*visibility:\s*visible/s);
   assert.match(css, /\.workspace-shell\.is-sidebar-expanded \.sidebar-label/);
-  for (const option of [
-    "Previous screenings",
-    "Settings",
-    "Guide",
-    "About",
+  for (const [href, label] of [
+    ["./home.html", "Overview"],
+    ["./screenings.html", "Previous screenings"],
+    ["./profile.html", "Profile"],
+    ["./settings.html", "Settings"],
+    ["./guide.html", "Guide"],
+    ["./about.html", "About"],
   ]) {
-    assert.ok(html.includes(option), `sidebar should include ${option}`);
+    assert.ok(html.includes(label), `sidebar should include ${label}`);
+    assert.match(
+      html,
+      new RegExp(`href="${href.replace(".", "\\.")}"`),
+      `sidebar should link to ${href}`,
+    );
   }
+  assert.match(html, /href="\.\/home\.html"[^>]*aria-current="page"|aria-current="page"[^>]*href="\.\/home\.html"/);
+  assert.match(html, /data-nav="home"/);
+  assert.doesNotMatch(html, /data-sidebar-placeholder/);
+  assert.doesNotMatch(html, /sidebar-status/);
   assert.doesNotMatch(html, /Logout|sidebar-logout/);
 });
 
@@ -310,7 +419,8 @@ test("selected images preview locally and are sent only when analysis is request
 
   assert.match(script, /URL\.createObjectURL/);
   assert.match(script, /URL\.revokeObjectURL/);
-  assert.match(script, /\bfetch\s*\(/);
+  assert.match(script, /window\.DRISHTI_API/);
+  assert.match(script, /api\.request\(/);
   assert.match(script, /new FormData/);
   assert.doesNotMatch(script, /localStorage|sessionStorage|indexedDB/);
 });
@@ -375,15 +485,6 @@ test("sidebar expands and updates its accessible state", () => {
   assert.equal(toggle.attributes["aria-expanded"], "false");
 });
 
-test("sidebar placeholder options announce that they are not implemented", () => {
-  const { elements, sidebarOptions } = loadHomeScript();
-
-  sidebarOptions[0].listeners.click();
-
-  assert.match(elements.get("sidebar-status").textContent, /Previous screenings/);
-  assert.match(elements.get("sidebar-status").textContent, /placeholder/);
-});
-
 test("screening modal traps keyboard focus within the open dialog", () => {
   const { elements, document } = loadHomeScript();
   const modal = elements.get("screening-modal");
@@ -393,7 +494,6 @@ test("screening modal traps keyboard focus within the open dialog", () => {
   modal.focusableElements = [closeButton, uploadButton, cameraButton];
   modal.classList.add("is-open");
 
-  elements.get("start-screening").listeners.click();
   closeButton.focus();
   const event = {
     key: "Tab",
@@ -409,7 +509,7 @@ test("screening modal traps keyboard focus within the open dialog", () => {
   assert.equal(document.activeElement, cameraButton);
 });
 
-test("closing and reopening screening returns to the source choices", () => {
+test("closing the screening modal returns to the source choices", () => {
   const { elements } = loadHomeScript();
   const sourceChooser = elements.get("source-chooser");
   const uploadStep = elements.get("upload-step");
@@ -420,7 +520,6 @@ test("closing and reopening screening returns to the source choices", () => {
   assert.equal(uploadStep.hidden, false);
 
   modal.listeners.click({ target: modal });
-  elements.get("start-screening").listeners.click();
 
   assert.equal(sourceChooser.hidden, false);
   assert.equal(uploadStep.hidden, true);
@@ -450,6 +549,17 @@ test("valid image selection previews locally without requesting analysis", () =>
 test("analysis posts the selected image and renders all API results as text", async () => {
   const calls = [];
   const payload = makeAnalysisResponse({
+    tier_checks: makeAnalysisResponse().tier_checks.map((check, index) =>
+      index === 1
+        ? {
+            ...check,
+            status: "completed",
+            recognized_text: "<script>synthetic OCR</script>",
+          }
+        : index === 2
+        ? { ...check, detail: "<script>untrusted tier output</script>" }
+        : check,
+    ),
     modules: makeAnalysisResponse().modules.map((module, index) =>
       index === 0
         ? {
@@ -501,6 +611,21 @@ test("analysis posts the selected image and renders all API results as text", as
   assert.match(elements.get("results-intro").textContent, /1200 × 800/);
   assert.match(elements.get("overall-result").textContent, /needs attention/i);
   assert.equal(metricCards.length, 9);
+  const tierCards = elements.get("tier-check-results").children;
+  assert.equal(tierCards.length, 3);
+  assert.equal(elements.get("tier-stub-notice").hidden, false);
+  assert.equal(
+    elements.get("tier-stub-notice-text").textContent,
+    payload.tier_notice,
+  );
+  assert.match(tierCards[2].textContent, /Compression patterns/);
+  assert.match(tierCards[2].textContent, /prototype stub/i);
+  assert.match(tierCards[2].textContent, /<script>untrusted tier output<\/script>/);
+  const ocrTranscript = tierCards[1].children[0].children[0].children.find(
+    (child) => child.dataset.ocrTranscript === "true",
+  );
+  assert.ok(ocrTranscript);
+  assert.equal(ocrTranscript.textContent, "<script>synthetic OCR</script>");
   assert.match(metricCards[0].querySelector("[data-metric-status]").textContent, /pass/i);
   assert.equal(
     metricCards[0].querySelector("[data-metric-rule]").textContent,
@@ -617,16 +742,26 @@ test("API and network errors stay in the upload flow and allow retry", async () 
       fetchImpl: async () => {
         throw new TypeError("Failed to fetch");
       },
-      expectedMessage: /could not connect|unable to reach/i,
+      expectedMessage: /CORS/,
     },
     {
       fetchImpl: async () => ({
         ok: false,
-        json: async () => ({
-          error: { code: "IMAGE_TOO_LARGE", message: "The image is too large." },
-        }),
+        status: 413,
+        text: async () =>
+          JSON.stringify({
+            error: { code: "IMAGE_TOO_LARGE", message: "The image is too large." },
+          }),
       }),
       expectedMessage: /too large/i,
+    },
+    {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 502,
+        text: async () => "<html>Bad Gateway</html>",
+      }),
+      expectedMessage: /502/,
     },
   ];
 
@@ -644,6 +779,111 @@ test("API and network errors stay in the upload flow and allow retry", async () 
     assert.equal(elements.get("analysis-status").textContent, "");
     assert.equal(runButton.focused, true);
   }
+});
+
+test("a CORS refusal reads unlike a 5xx, a validation error and no configuration", async () => {
+  const cases = [
+    {
+      name: "a CORS refusal or a service that is down",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => {
+            throw new TypeError("Failed to fetch");
+          },
+        }),
+      expected: /CORS/,
+    },
+    {
+      name: "a server error",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => ({
+            ok: false,
+            status: 503,
+            text: async () => "<html>Service Unavailable</html>",
+          }),
+        }),
+      expected: /503/,
+    },
+    {
+      name: "a validation error",
+      load: () =>
+        loadHomeScript({
+          fetchImpl: async () => ({
+            ok: false,
+            status: 400,
+            text: async () =>
+              JSON.stringify({
+                error: {
+                  code: "INVALID_IMAGE",
+                  message: "The image could not be decoded.",
+                },
+              }),
+          }),
+        }),
+      expected: /could not be decoded/,
+    },
+    {
+      name: "a build with no configured service",
+      load: () => loadHomeScript({ apiBaseUrl: "" }),
+      expected: /no quality service configured/,
+    },
+  ];
+
+  const shown = [];
+  for (const { name, load, expected } of cases) {
+    const { elements } = load();
+    selectPreviewImage(elements);
+    await elements.get("run-screening").listeners.click();
+    const text = elements.get("file-error").textContent;
+    assert.match(text, expected, name);
+    shown.push({ name: name, text: text });
+  }
+
+  // The browser raises a CORS refusal and an unreachable host as one
+  // TypeError, so the sentence names both causes and both checks. The text it
+  // replaced named one cause and told an operator to start a running backend.
+  assert.match(shown[0].text, /running/);
+  assert.match(shown[0].text, /allows this site's origin/);
+  assert.doesNotMatch(shown[0].text, /Could not connect/);
+
+  for (let i = 0; i < shown.length; i += 1) {
+    for (let j = i + 1; j < shown.length; j += 1) {
+      assert.notEqual(
+        shown[i].text,
+        shown[j].text,
+        shown[i].name + " and " + shown[j].name + " must not read alike",
+      );
+    }
+  }
+});
+
+test("a request that outruns its budget is named as a timeout, not a lost connection", async () => {
+  const { elements, clock } = loadHomeScript({
+    fetchImpl: (url, options) =>
+      new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () =>
+          reject(
+            Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+            }),
+          ),
+        );
+      }),
+  });
+  selectPreviewImage(elements);
+  const runButton = elements.get("run-screening");
+
+  const pending = runButton.listeners.click();
+  assert.equal(clock.pending(), 1);
+  assert.deepEqual(clock.delays(), [60000]);
+  clock.fire();
+  await pending;
+
+  assert.match(elements.get("file-error").textContent, /timed out/i);
+  assert.doesNotMatch(elements.get("file-error").textContent, /CORS/i);
+  assert.equal(elements.get("results-modal").classList.contains("is-open"), false);
+  assert.equal(runButton.disabled, false);
 });
 
 test("malformed API responses are rejected without rendering partial results", async () => {
